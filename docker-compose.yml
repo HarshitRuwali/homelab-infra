@@ -1,0 +1,124 @@
+# Run the full Open Memory Stack on one machine.
+#
+# Usage:
+#   cp .env.example .env
+#   mkdir -p memory-lxc/data/qdrant memory-lxc/data/postgres memory-lxc/data/redis fastapi-lxc/logs
+#   docker compose up -d --build
+
+name: open-memory-stack
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.9.2
+    container_name: open-memory-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_HTTP_PORT:?QDRANT_HTTP_PORT must be set}:6333"
+      - "${QDRANT_GRPC_PORT:?QDRANT_GRPC_PORT must be set}:6334"
+    volumes:
+      - ./memory-lxc/data/qdrant:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: 6333
+      QDRANT__SERVICE__GRPC_PORT: 6334
+      QDRANT__STORAGE__SNAPSHOTS_PATH: /qdrant/storage/snapshots
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: open-memory-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_HOST_PORT:?POSTGRES_HOST_PORT must be set}:5432"
+    volumes:
+      - ./memory-lxc/data/postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command: >
+      postgres
+        -c max_connections=100
+        -c shared_buffers=256MB
+        -c effective_cache_size=1GB
+        -c wal_level=replica
+        -c synchronous_commit=on
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:?POSTGRES_USER must be set} -d ${POSTGRES_DB:?POSTGRES_DB must be set}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: open-memory-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_HOST_PORT:?REDIS_HOST_PORT must be set}:6379"
+    volumes:
+      - ./memory-lxc/data/redis:/data
+    command: >
+      redis-server
+        --appendonly yes
+        --appendfsync everysec
+        --maxmemory 2gb
+        --maxmemory-policy allkeys-lru
+        --save 3600 1
+        --save 300 100
+        --save 60 10000
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  fastapi:
+    build:
+      context: ./fastapi-lxc
+    container_name: open-memory-api
+    restart: unless-stopped
+    ports:
+      - "${FASTAPI_PORT:?FASTAPI_PORT must be set}:${APP_PORT:?APP_PORT must be set}"
+    volumes:
+      - ./fastapi-lxc/logs:/app/logs
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_HOST: ${POSTGRES_HOST:?POSTGRES_HOST must be set}
+      POSTGRES_PORT: ${POSTGRES_PORT:?POSTGRES_PORT must be set}
+      QDRANT_HOST: ${QDRANT_HOST:?QDRANT_HOST must be set}
+      QDRANT_PORT: ${QDRANT_PORT:?QDRANT_PORT must be set}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:?QDRANT_COLLECTION must be set}
+      VECTOR_DIM: ${VECTOR_DIM:?VECTOR_DIM must be set}
+      REDIS_HOST: ${REDIS_HOST:?REDIS_HOST must be set}
+      REDIS_PORT: ${REDIS_PORT:?REDIS_PORT must be set}
+      AI_VM_HOST: ${AI_VM_HOST:?AI_VM_HOST must be set}
+      LLM_PORT: ${LLM_PORT:?LLM_PORT must be set}
+      EMBED_PORT: ${EMBED_PORT:?EMBED_PORT must be set}
+      APP_HOST: ${APP_HOST:?APP_HOST must be set}
+      APP_PORT: ${APP_PORT:?APP_PORT must be set}
+      LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL must be set}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:?UVICORN_WORKERS must be set}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${APP_PORT:?APP_PORT must be set}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
