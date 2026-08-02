@@ -1,0 +1,32 @@
+---
+# Patching policy.
+#
+# Two plays, deliberately separated by group so that the "install things"
+# behaviour and the "look but do not touch" behaviour can never be confused
+# by a single mis-set variable.
+#
+# Staged rollout (see docs/fleet-ansible.md):
+#   --limit ubuntu-dev            # 0 pending, proves config at zero risk
+#   --limit ubuntu-ai             # 3 pending, first real installs
+#   --limit rpi5                  # 25 pending, SUPERVISED, image the card first
+#   --limit rpi4b                 # 29 pending, SUPERVISED
+#   --limit cloud-services
+#   --limit lan_guests
+#   --limit monitor-lxc           # stack packages blacklisted, see group_vars/central
+#   --limit tailscale-router      # LAST: tailscale + pve blacklists matter here
+
+- name: Enable auto-applied security updates
+  hosts: autoupdate
+  become: true
+  vars:
+    uu_enable_installs: true
+  roles:
+    - unattended_upgrades
+
+- name: Keep package lists fresh without installing anything
+  hosts: no_autoupdate
+  become: true
+  vars:
+    uu_enable_installs: false
+  roles:
+    - unattended_upgrades

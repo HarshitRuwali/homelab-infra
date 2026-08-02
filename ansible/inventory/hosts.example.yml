@@ -1,0 +1,106 @@
+# Example inventory. Copy to hosts.local.yml and fill in your own values:
+#
+#   cp inventory/hosts.example.yml inventory/hosts.local.yml
+#
+# hosts.local.yml is gitignored and is what ansible.cfg actually loads. Real
+# addresses, usernames and domains belong there, never in this file: this
+# repository is public, and an inventory is a complete map of your estate
+# (ingest endpoint, internal addressing, valid usernames, and which box to hit
+# to blind your monitoring).
+#
+# Group semantics:
+#   monitored      -> gets the Alloy collector and the update-metrics exporter
+#   autoupdate     -> ALSO gets unattended-upgrades (auto-apply, never auto-reboot)
+#   no_autoupdate  -> monitored but NEVER auto-patched
+#
+# Membership in `autoupdate` is the ONLY thing that enables patching. The
+# unattended_upgrades role has no internal host conditional on purpose: a
+# conditional inside a role is one typo away from auto-upgrading a hypervisor.
+
+all:
+  vars:
+    ansible_user: youruser
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+    ansible_python_interpreter: /usr/bin/python3
+
+    # Public hostname of the central stack. Used to build the remote_write and
+    # Loki push URLs in group_vars/all/main.yml.
+    monitoring_domain: monitor.example.com
+
+  children:
+
+    monitored:
+      children:
+
+        # --- Hosts reachable directly (e.g. over a VPN/overlay network) -----
+        tailnet_fleet:
+          hosts:
+            server-01:
+              ansible_host: 10.0.0.11
+              monitor_role: server
+            workstation-01:
+              ansible_host: 10.0.0.12
+              ansible_user: someoneelse
+              monitor_role: workstation
+
+        # --- ARM SBCs. Kernel/bootloader packages are blacklisted; see
+        #     group_vars/pi/main.yml for why that matters without reboots.
+        pi:
+          hosts:
+            pi-01:
+              ansible_host: 10.0.0.21
+              monitor_role: pi
+
+        # --- Hosts running a Proxmox (pve) kernel --------------------------
+        proxmox:
+          hosts:
+            router-01:
+              ansible_host: 10.0.0.31
+              ansible_user: root
+              monitor_role: router
+
+        # --- Guests with no direct route from the controller ---------------
+        # Reached via ProxyJump through `lan_jump_host`. See
+        # group_vars/lan_guests/main.yml, and set lan_use_jump_host=false when
+        # running from a controller already on that network.
+        lan_guests:
+          hosts:
+            app-01:
+              pve_vmid: 103
+              ansible_host: 10.0.1.11
+              monitor_role: service
+
+        # --- The central monitoring stack itself ---------------------------
+        central:
+          hosts:
+            monitor-lxc:
+              pve_vmid: 112
+              ansible_host: 10.0.1.99
+              ansible_user: root
+              monitor_role: central
+              # monitor_hostname is pinned in host_vars/monitor-lxc.yml to the
+              # value already in /etc/default/alloy on that box. Renaming it
+              # forks its history in Prometheus and Loki.
+
+    # ---------------------------------------------------------------------
+    # Patching policy
+    # ---------------------------------------------------------------------
+    autoupdate:
+      hosts:
+        server-01: {}
+        workstation-01: {}
+        pi-01: {}
+        router-01: {}
+        app-01: {}
+        # The central stack auto-applies OS and security patches, but the
+        # monitoring services themselves (grafana, prometheus, loki, alloy,
+        # nginx) are blacklisted in group_vars/central. Those stay on the
+        # deliberate `scripts/lxc-update.sh central` path, so an unattended
+        # run can never restart the stack that is watching the fleet.
+        monitor-lxc: {}
+
+    # Hosts here get package lists refreshed, so pending counts stay honest,
+    # but nothing is installed. Good for a hypervisor or anything you want to
+    # see but never touch automatically.
+    no_autoupdate:
+      hosts: {}

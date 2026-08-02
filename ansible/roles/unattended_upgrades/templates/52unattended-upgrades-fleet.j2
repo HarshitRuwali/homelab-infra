@@ -1,0 +1,56 @@
+// Managed by ansible/roles/unattended_upgrades. Do not edit by hand.
+// Rendered for {{ inventory_hostname }}.
+//
+// Filename is numbered above 50 so it overrides the distro's stock
+// /etc/apt/apt.conf.d/50unattended-upgrades rather than fighting it.
+
+Unattended-Upgrade::Origins-Pattern {
+        "origin=Debian,codename=${distro_codename},label=Debian-Security";
+        "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
+        "origin=Ubuntu,archive=${distro_codename}-security,label=Ubuntu";
+{% if not uu_apply_security_only %}
+        "origin=Debian,codename=${distro_codename}-updates";
+        "origin=Ubuntu,archive=${distro_codename}-updates,label=Ubuntu";
+{% endif %}
+};
+
+Unattended-Upgrade::Package-Blacklist {
+{% for pkg in uu_package_blacklist %}
+        "{{ pkg }}";
+{% endfor %}
+};
+
+// Recover automatically from a dpkg run interrupted by a power cut or a
+// reboot. Without this a single bad night leaves apt wedged until someone
+// notices; fleet_dpkg_needs_configure alerts if it happens anyway.
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+
+// Upgrade in smaller transactions so an interruption resumes cleanly.
+// Matters most on the SD-card Pis.
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::InstallOnShutdown "false";
+
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "{{ uu_remove_unused_kernels | ternary('true', 'false') }}";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "false";
+
+// ---------------------------------------------------------------------
+// HARD REQUIREMENT: never auto-reboot.
+// Automatic-Reboot-Time is deliberately NOT set: setting it would re-enable
+// rebooting even with Automatic-Reboot "false" on some versions.
+// ---------------------------------------------------------------------
+Unattended-Upgrade::Automatic-Reboot "{{ uu_automatic_reboot | ternary('true', 'false') }}";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
+
+// Load-bearing: every action lands in the journal, which Alloy already ships
+// to Loki. That gives a central audit trail of every package applied on every
+// host, queryable as {unit="unattended-upgrades.service"}, with no extra
+// plumbing and no per-host log files to collect.
+Unattended-Upgrade::SyslogEnable "true";
+Unattended-Upgrade::SyslogFacility "daemon";
+
+Unattended-Upgrade::Mail "";
+Unattended-Upgrade::OnlyOnACPower "false";
+Unattended-Upgrade::Skip-Updates-On-Metered-Connections "true";
+Unattended-Upgrade::Verbose "false";
+Unattended-Upgrade::Debug "false";

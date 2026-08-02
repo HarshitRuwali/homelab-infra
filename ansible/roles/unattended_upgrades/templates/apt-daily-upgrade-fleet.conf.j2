@@ -1,0 +1,10 @@
+[Timer]
+# Clear the vendor OnCalendar before setting ours, otherwise systemd unions
+# the two and the job also runs at the distro default time.
+OnCalendar=
+OnCalendar={{ uu_upgrade_oncalendar }}
+
+# Spread the fleet across an hour so a dozen hosts do not hammer the same
+# mirror at 03:00, and the Pis do not all thrash their SD cards at once.
+RandomizedDelaySec={{ uu_upgrade_randomized_delay }}
+Persistent=true

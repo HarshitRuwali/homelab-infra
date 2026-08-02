@@ -1,0 +1,19 @@
+---
+# Raspberry Pi overrides for rpi5 and rpi4b.
+#
+# The kernel/bootloader blacklist is the important part. On Raspberry Pi OS the
+# kernel, its modules, and the /boot/firmware payload are updated by separate
+# packages. Applying those without the reboot that this fleet policy forbids is
+# the classic way to end up with a running kernel whose modules are no longer
+# on disk. Leave them to a supervised manual upgrade + reboot.
+uu_package_blacklist:
+  - "tailscale"
+  - "raspberrypi-kernel"
+  - "raspberrypi-bootloader"
+  - "linux-image-rpi-.*"
+  - "docker-ce"
+  - "containerd.io"
+
+# These are SD-card hosts with 25-29 pending packages each. Keep the metrics
+# exporter off the critical path for IO.
+update_metrics_randomized_delay: 600

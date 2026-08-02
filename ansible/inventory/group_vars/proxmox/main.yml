@@ -1,0 +1,36 @@
+---
+# Proxmox-safe overrides for hosts running a PVE kernel.
+#
+# Currently only tailscale-router (Proxmox guest 106). The t7920 hypervisor
+# itself is deliberately out of scope; see inventory/hosts.yml.
+#
+# Two distinct hazards are handled here:
+#   1. Cardinality. PVE enumerates hundreds of transient per-guest systemd
+#      units (lxc@103, qemu@110, scopes, slices). Left alone the systemd
+#      collector alone emits ~2000 series per host.
+#   2. Journal volume. A hypervisor journal is enormous; backfilling 12h of
+#      it on first Alloy start is the fastest way to hit Loki ingest limits.
+
+alloy_systemd_unit_exclude: '.+\.(automount|device|mount|scope|slice|socket|swap|path)|(lxc|qemu|pve-container|user|session|run-r|systemd-fsck|systemd-cryptsetup|blockdev)@.+'
+
+# /etc/pve is a FUSE mount that always reports 100% full; lxcfs binds mirror
+# guest filesystems. Both would fire the disk alert permanently.
+alloy_fs_mount_points_exclude: '^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+|var/lib/lxcfs|etc/pve|rpool(/.*)?)($|/)'
+
+alloy_journal_max_age: 1h
+alloy_enable_docker: false
+
+# --- Patching ---
+# Never let unattended-upgrades autoremove a Proxmox kernel, and never let it
+# restart pveproxy/pvedaemon under running guests.
+uu_remove_unused_kernels: false
+uu_package_blacklist:
+  - "tailscale"
+  - "proxmox-kernel-.*"
+  - "pve-kernel-.*"
+  - "pve-manager"
+  - "pve-cluster"
+  - "libpve-.*"
+  - "zfs.*"
+  - "docker-ce"
+  - "containerd.io"

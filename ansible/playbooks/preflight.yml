@@ -1,0 +1,64 @@
+---
+# Read-only. Run this before anything else and before every rollout phase.
+# It changes nothing and answers "can Ansible actually drive this fleet".
+
+- name: Preflight checks
+  hosts: monitored
+  gather_facts: true
+  become: false
+  tasks:
+    - name: Confirm SSH and Python work
+      ansible.builtin.ping:
+
+    - name: Confirm passwordless sudo
+      ansible.builtin.command: sudo -n true
+      register: pf_sudo
+      changed_when: false
+      failed_when: false
+
+    - name: Check for an existing Alloy install
+      ansible.builtin.stat:
+        path: /etc/alloy/config.alloy
+      register: pf_alloy
+
+    - name: Check whether Ansible already owns the Alloy config
+      ansible.builtin.stat:
+        path: /etc/alloy/.ansible-managed
+      register: pf_marker
+
+    - name: Check for a Docker socket
+      ansible.builtin.stat:
+        path: /var/run/docker.sock
+      register: pf_docker
+
+    - name: Check whether a reboot is already pending
+      ansible.builtin.stat:
+        path: /run/reboot-required
+      register: pf_reboot
+
+    - name: Count pending package upgrades
+      ansible.builtin.shell:
+        cmd: apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c '^Inst ' || true
+      register: pf_pending
+      changed_when: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}
+          os={{ ansible_distribution }} {{ ansible_distribution_version }}
+          arch={{ ansible_architecture }}
+          sudo={{ 'ok' if pf_sudo.rc == 0 else 'NEEDS PASSWORD' }}
+          alloy={{ 'present' if pf_alloy.stat.exists else 'absent' }}
+          ansible_managed={{ pf_marker.stat.exists }}
+          docker={{ pf_docker.stat.exists }}
+          reboot_pending={{ pf_reboot.stat.exists }}
+          pending_pkgs={{ pf_pending.stdout | trim }}
+
+    - name: Warn where sudo needs a password
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} needs a become password. Either add a
+          NOPASSWD sudoers line, or set ansible_become_password in
+          inventory/host_vars/{{ inventory_hostname }}.yml from the vault.
+      when: pf_sudo.rc != 0

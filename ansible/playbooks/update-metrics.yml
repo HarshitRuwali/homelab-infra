@@ -1,0 +1,12 @@
+---
+# Deploy the apt/reboot textfile exporter to every monitored host.
+#
+# This is also what surfaces the packages that unattended-upgrades is
+# deliberately NOT installing (blacklisted ones, e.g. the monitoring stack on
+# the central node), so a blacklist never becomes a silent blind spot.
+
+- name: Deploy the update-metrics exporter
+  hosts: monitored
+  become: true
+  roles:
+    - update_metrics

@@ -1,0 +1,20 @@
+---
+grafana_provisioning_dir: /etc/grafana/provisioning
+grafana_alerting_dir: "{{ grafana_provisioning_dir }}/alerting"
+grafana_env_file: /etc/default/grafana-monitoring
+grafana_api_url: http://127.0.0.1:3000
+
+# The `host` label of the central node itself. Must match MONITOR_HOSTNAME in
+# /etc/default/alloy on the central LXC, which is read during Phase 0.
+central_host_label: "{{ hostvars[groups['central'][0]].monitor_hostname | default('main-server') }}"
+
+# Committed alerting files copied verbatim. rules-availability.yaml is NOT
+# here: it is templated from the inventory.
+grafana_alerting_static_files:
+  - contactpoints.yaml
+  - templates.yaml
+  - policies.yaml
+  - mute-timings.yaml
+  - rules-resources.yaml
+  - rules-updates.yaml
+  - rules-services.yaml

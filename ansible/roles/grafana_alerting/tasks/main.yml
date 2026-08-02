@@ -1,0 +1,79 @@
+---
+- name: Ensure the Grafana alerting provisioning directory exists
+  ansible.builtin.file:
+    path: "{{ grafana_alerting_dir }}"
+    state: directory
+    owner: root
+    group: grafana
+    mode: "0750"
+
+- name: Install the committed alerting provisioning files
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../grafana/provisioning/alerting/{{ item }}"
+    dest: "{{ grafana_alerting_dir }}/{{ item }}"
+    owner: root
+    group: grafana
+    mode: "0640"
+  loop: "{{ grafana_alerting_static_files }}"
+  notify: restart grafana-server
+
+- name: Render the inventory-derived availability rules
+  ansible.builtin.template:
+    src: rules-availability.yaml.j2
+    dest: "{{ grafana_alerting_dir }}/rules-availability.yaml"
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: restart grafana-server
+
+# The contact point references these with $__env{}. Grafana resolves them at
+# provisioning time from its own environment, so they must be in the unit's
+# EnvironmentFile, not just the shell.
+- name: Inject the Matrix relay secrets into Grafana's environment
+  ansible.builtin.lineinfile:
+    path: "{{ grafana_env_file }}"
+    regexp: "^{{ item.key }}="
+    line: '{{ item.key }}="{{ item.value }}"'
+    owner: root
+    group: root
+    mode: "0600"
+    create: true
+  loop:
+    - { key: MATRIX_WEBHOOK_API_KEY, value: "{{ vault_matrix_webhook_api_key }}" }
+    - { key: MATRIX_ALERT_ROOM_ID, value: "{{ vault_matrix_alert_room_id }}" }
+  no_log: true
+  notify: restart grafana-server
+
+# Grafana reads provisioning ONLY at startup. Copying files without a restart
+# is a silent no-op, so flush before verifying.
+- name: Flush handlers so Grafana reloads provisioning
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the Grafana API
+  ansible.builtin.uri:
+    url: "{{ grafana_api_url }}/api/health"
+    status_code: [200]
+  register: ga_health
+  retries: 20
+  delay: 3
+  until: ga_health is succeeded
+
+- name: Read back the provisioned alert rules
+  ansible.builtin.uri:
+    url: "{{ grafana_api_url }}/api/v1/provisioning/alert-rules"
+    user: admin
+    password: "{{ vault_grafana_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: ga_rules
+  no_log: true
+
+- name: Assert the expected rules are live
+  ansible.builtin.assert:
+    that:
+      - "'fleet-host-down' in (ga_rules.json | map(attribute='uid') | list)"
+      - "'fleet-dpkg-wedged' in (ga_rules.json | map(attribute='uid') | list)"
+    fail_msg: >-
+      Alerting provisioning did not load. Check:
+      journalctl -u grafana-server -n 100 | grep -i provision
+    success_msg: "{{ ga_rules.json | length }} alert rules provisioned."

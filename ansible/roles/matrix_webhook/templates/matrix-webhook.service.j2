@@ -1,0 +1,24 @@
+[Unit]
+Description=matrix-webhook relay for Grafana unified alerting
+Documentation=https://github.com/nim65s/matrix-webhook
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ matrix_webhook_user }}
+Group={{ matrix_webhook_user }}
+EnvironmentFile={{ matrix_webhook_env_dir }}/matrix-webhook.env
+ExecStart={{ matrix_webhook_venv }}/bin/matrix-webhook
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=matrix-webhook
+ReadWritePaths=/var/lib/matrix-webhook
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# Managed by ansible/roles/update_metrics. Do not edit by hand.
+#
+# Writes node_exporter textfile-collector metrics describing this host's
+# patch state. Alloy's prometheus.exporter.unix reads the directory and
+# remote-writes the result, so `apt_upgrades_pending` and friends show up
+# centrally without any per-host scraping.
+#
+# Deliberately does NOT run `apt-get update`: it reads the existing cache
+# only, so it is safe to run every 15 minutes. apt-daily.timer owns cache
+# refresh (enabled even on no_autoupdate hosts, which install nothing).
+
+set -uo pipefail
+export LC_ALL=C DEBIAN_FRONTEND=noninteractive
+
+DIR="{{ update_metrics_dir }}"
+OUT="${DIR}/{{ update_metrics_file }}"
+TMP="$(mktemp "${OUT}.XXXXXX")"
+trap 'rm -f "${TMP}"' EXIT
+START="$(date +%s.%N)"
+
+{
+  # --- pending upgrades, grouped by origin -------------------------------
+  echo '# HELP apt_upgrades_pending Apt packages pending upgrade, by origin.'
+  echo '# TYPE apt_upgrades_pending gauge'
+  pending="$(apt-get --just-print dist-upgrade 2>/dev/null \
+    | awk -F'[()]' '/^Inst/ { print $2 }' \
+    | awk '{ print $NF }' \
+    | sort | uniq -c \
+    | awk '{ printf "apt_upgrades_pending{origin=\"%s\"} %d\n", $2, $1 }')"
+  if [ -z "${pending}" ]; then
+    echo 'apt_upgrades_pending{origin=""} 0'
+  else
+    echo "${pending}"
+  fi
+
+  # --- the security subset, as one series that is easy to alert on -------
+  sec="$(apt-get --just-print dist-upgrade 2>/dev/null \
+    | grep -c -E '^Inst .*(Debian-Security|-security)' || true)"
+  echo '# HELP apt_upgrades_security_pending Security upgrades pending.'
+  echo '# TYPE apt_upgrades_security_pending gauge'
+  echo "apt_upgrades_security_pending ${sec:-0}"
+
+  # --- reboot required ---------------------------------------------------
+  echo '# HELP node_reboot_required Node requires a reboot to finish updates.'
+  echo '# TYPE node_reboot_required gauge'
+  if [ -f /run/reboot-required ] || [ -f /var/run/reboot-required ]; then
+    echo 'node_reboot_required 1'
+    # /run is tmpfs and cleared on boot, so mtime IS the moment a reboot
+    # became necessary. Emitted ONLY while pending: when the host reboots the
+    # series stops, Alloy forwards a staleness marker, and the alert resolves
+    # on its own rather than needing a separate "reboot happened" signal.
+    ts="$(stat -c %Y /run/reboot-required 2>/dev/null \
+          || stat -c %Y /var/run/reboot-required 2>/dev/null)"
+    if [ -n "${ts:-}" ]; then
+      echo '# HELP fleet_reboot_required_since_timestamp_seconds When a reboot first became required.'
+      echo '# TYPE fleet_reboot_required_since_timestamp_seconds gauge'
+      echo "fleet_reboot_required_since_timestamp_seconds ${ts}"
+    fi
+  else
+    echo 'node_reboot_required 0'
+  fi
+
+{% if update_metrics_use_needrestart %}
+  # --- needrestart -------------------------------------------------------
+  # Debian only ships /run/reboot-required when update-notifier-common is
+  # installed, which it usually is not. needrestart is the portable check,
+  # and it also catches services still running deleted binaries after an
+  # upgrade, which matters a lot on a fleet that never auto-reboots.
+  if command -v needrestart >/dev/null 2>&1; then
+    nr="$(needrestart -b 2>/dev/null)"
+    ksta="$(printf '%s\n' "${nr}" | awk -F': ' '/NEEDRESTART-KSTA/ {print $2}')"
+    ksvc="$(printf '%s\n' "${nr}" | grep -c '^NEEDRESTART-SVC' || true)"
+    echo '# HELP needrestart_kernel_status 0=unknown 1=current 2=ABI upgrade pending 3=version upgrade pending.'
+    echo '# TYPE needrestart_kernel_status gauge'
+    echo "needrestart_kernel_status ${ksta:-0}"
+    echo '# HELP needrestart_services_count Services running outdated binaries.'
+    echo '# TYPE needrestart_services_count gauge'
+    echo "needrestart_services_count ${ksvc:-0}"
+  fi
+{% endif %}
+
+  # --- unattended-upgrades health ----------------------------------------
+  echo '# HELP fleet_unattended_upgrades_enabled 1 when the apt-daily-upgrade timer is enabled.'
+  echo '# TYPE fleet_unattended_upgrades_enabled gauge'
+  if systemctl is-enabled --quiet apt-daily-upgrade.timer 2>/dev/null; then
+    echo 'fleet_unattended_upgrades_enabled 1'
+  else
+    echo 'fleet_unattended_upgrades_enabled 0'
+  fi
+
+  echo '# HELP fleet_unattended_upgrades_last_run_timestamp_seconds Last unattended-upgrades run.'
+  echo '# TYPE fleet_unattended_upgrades_last_run_timestamp_seconds gauge'
+  for f in /var/lib/apt/periodic/unattended-upgrades-stamp \
+           /var/lib/apt/periodic/upgrade-stamp; do
+    if [ -e "$f" ]; then
+      echo "fleet_unattended_upgrades_last_run_timestamp_seconds $(stat -c %Y "$f")"
+      break
+    fi
+  done
+
+  # Proves the apt cache is fresh. On no_autoupdate hosts this is the only
+  # thing keeping the pending counts above honest.
+  echo '# HELP fleet_apt_last_update_timestamp_seconds Last successful apt-get update.'
+  echo '# TYPE fleet_apt_last_update_timestamp_seconds gauge'
+  if [ -e /var/lib/apt/periodic/update-success-stamp ]; then
+    echo "fleet_apt_last_update_timestamp_seconds $(stat -c %Y /var/lib/apt/periodic/update-success-stamp)"
+  fi
+
+  # --- dpkg wedged? ------------------------------------------------------
+  # Half-configured packages are the worst outcome of unattended upgrades and
+  # would otherwise be completely invisible until the next manual apt run.
+  echo '# HELP fleet_dpkg_needs_configure Packages in a half-configured state.'
+  echo '# TYPE fleet_dpkg_needs_configure gauge'
+  echo "fleet_dpkg_needs_configure $(dpkg -l 2>/dev/null | grep -c -E '^i[FHU]' || true)"
+
+  echo '# HELP fleet_update_metrics_duration_seconds Runtime of this exporter script.'
+  echo '# TYPE fleet_update_metrics_duration_seconds gauge'
+  echo "fleet_update_metrics_duration_seconds $(awk -v s="${START}" 'BEGIN { printf "%.3f", systime() - s }')"
+} > "${TMP}"
+
+# Write-then-rename: the textfile collector must never observe a partial file,
+# which it would otherwise report as a parse error.
+chmod 0644 "${TMP}"
+mv -f "${TMP}" "${OUT}"
+trap - EXIT

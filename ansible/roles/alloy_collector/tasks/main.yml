@@ -1,0 +1,124 @@
+---
+- name: Configure the Grafana APT repository
+  ansible.builtin.include_tasks: repo.yml
+
+- name: Install Alloy
+  ansible.builtin.apt:
+    name: alloy
+    state: "{{ alloy_package_state }}"
+    update_cache: true
+    cache_valid_time: 3600
+
+# --- Docker autodetection ------------------------------------------------
+# Mirrors the `[[ -S /var/run/docker.sock ]]` conditional in
+# scripts/lxc-install.sh so the two paths agree on what a host looks like.
+- name: Check for a Docker socket
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: alloy_docker_sock
+
+- name: Resolve the alloy_enable_docker `auto` sentinel
+  ansible.builtin.set_fact:
+    alloy_docker_effective: >-
+      {{
+        alloy_docker_sock.stat.exists
+        if (alloy_enable_docker | string) == 'auto'
+        else (alloy_enable_docker | bool)
+      }}
+
+- name: Report the resolved collector shape
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: role={{ monitor_role }}
+      docker={{ alloy_docker_effective }}
+      journal_max_age={{ alloy_journal_max_age }}
+
+# --- Directories ---------------------------------------------------------
+- name: Ensure the Alloy and textfile-collector directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/alloy
+    - "{{ alloy_textfile_dir }}"
+
+# --- Permissions ---------------------------------------------------------
+# Alloy runs unprivileged. It needs systemd-journal to read the journal, adm
+# for /var/log, and docker for the socket. Group changes only take effect on
+# process restart, hence the notify.
+- name: Grant the alloy user the groups it needs
+  ansible.builtin.user:
+    name: alloy
+    groups: "{{ alloy_required_groups | join(',') }}"
+    append: true
+  vars:
+    alloy_required_groups: >-
+      {{
+        ['systemd-journal', 'adm']
+        + (['docker'] if alloy_docker_effective else [])
+      }}
+  notify: restart alloy
+
+# --- Config --------------------------------------------------------------
+# `validate` runs `alloy fmt` against the candidate file BEFORE it is moved
+# into place. A syntax error therefore fails the play instead of leaving a
+# crash-looping unit, which matters most on tailscale-router (exit node) and
+# the central LXC.
+- name: Write the Alloy configuration
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_path }}"
+    owner: alloy
+    group: alloy
+    mode: "0644"
+    validate: /usr/bin/alloy fmt %s
+    backup: true
+  notify: restart alloy
+
+- name: Write the Alloy environment file
+  ansible.builtin.template:
+    src: alloy.env.j2
+    dest: "{{ alloy_env_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: restart alloy
+
+# --- Ownership marker ----------------------------------------------------
+# scripts/lxc-install.sh checks for this file and skips write_alloy_config()
+# when it exists, so `lxc-update.sh central` can no longer silently revert
+# this config back to its embedded heredoc.
+- name: Mark the Alloy config as Ansible-managed
+  ansible.builtin.copy:
+    content: |
+      Managed by ansible/roles/alloy_collector. Do not edit /etc/alloy/config.alloy
+      by hand and do not let scripts/lxc-install.sh regenerate it.
+      To change it: ansible-playbook playbooks/collectors.yml --limit {{ inventory_hostname }}
+    dest: "{{ alloy_marker_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable and start Alloy
+  ansible.builtin.systemd:
+    name: alloy
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers so the readiness check tests the new config
+  ansible.builtin.meta: flush_handlers
+
+# --- Proof of life -------------------------------------------------------
+- name: Wait for Alloy to become ready
+  ansible.builtin.uri:
+    url: "http://{{ alloy_listen_addr }}/-/ready"
+    status_code: [200]
+  register: alloy_ready
+  retries: 10
+  delay: 3
+  until: alloy_ready is succeeded

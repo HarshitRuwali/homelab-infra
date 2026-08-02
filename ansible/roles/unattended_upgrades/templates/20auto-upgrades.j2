@@ -1,0 +1,16 @@
+// Managed by ansible/roles/unattended_upgrades. Do not edit by hand.
+{% if uu_enable_installs | default(true) %}
+// Full auto-apply host.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::Unattended-Upgrade "1";
+{% else %}
+// no_autoupdate host: refresh the package lists ONLY.
+// This keeps apt_upgrades_pending honest so the dashboards show real numbers,
+// while installing precisely nothing.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "0";
+APT::Periodic::Unattended-Upgrade "0";
+{% endif %}
+APT::Periodic::AutocleanInterval "7";
+APT::Periodic::Verbose "1";

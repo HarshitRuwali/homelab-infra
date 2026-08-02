@@ -1,0 +1,39 @@
+---
+# The central stack pushes to itself over loopback. It must NOT go out through
+# Cloudflare and back in: that would make its own telemetry depend on the WAN
+# being up, which is exactly when you most need it.
+prometheus_remote_write_url: http://127.0.0.1:9090/api/v1/write
+loki_write_url: http://127.0.0.1:3100/loki/api/v1/push
+
+# nginx on this box terminates the basic auth for everyone else, so the local
+# push does not present credentials at all.
+collector_basic_auth_required: false
+
+alloy_enable_docker: false
+
+# --- Patching ------------------------------------------------------------
+# This host DOES auto-apply security updates, but never to the monitoring
+# stack itself. Those five packages are upgraded deliberately by
+# `scripts/lxc-update.sh central`, which re-renders their configs in the same
+# run. Letting unattended-upgrades bump them instead would:
+#   - restart grafana/prometheus/loki, blinding the fleet at 03:00
+#   - reload nginx, briefly 502-ing every collector's ingest path
+#   - upgrade a package whose config file this repo owns, without
+#     re-rendering that config
+#
+# So: OS and security patches here, stack upgrades stay a supervised action.
+uu_package_blacklist:
+  - "tailscale"
+  - "grafana"
+  - "grafana-.*"
+  - "prometheus"
+  - "prometheus-.*"
+  - "loki"
+  - "alloy"
+  - "nginx"
+  - "nginx-.*"
+  - "docker-ce"
+  - "containerd.io"
+
+# Losing the kernel this box booted from is not worth the disk saving.
+uu_remove_unused_kernels: false

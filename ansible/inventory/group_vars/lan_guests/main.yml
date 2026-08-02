@@ -1,0 +1,27 @@
+---
+# Proxmox guests with no direct route from the controller.
+#
+# --- Reaching them -------------------------------------------------------
+# From a controller off the Proxmox LAN these are only reachable by jumping
+# through a host that sits on BOTH the overlay network and the LAN.
+#
+# From a controller that is ALREADY on the LAN, no jump is needed. Jumping
+# would in fact mean ProxyJump-ing through the very host running the play,
+# which fails. `lan_use_jump_host` handles that:
+#
+#   ansible-playbook playbooks/collectors.yml --limit lan_guests \
+#     -e lan_use_jump_host=false
+#
+# See docs/fleet-ansible.md.
+lan_use_jump_host: true
+lan_jump_host: workstation-01   # override in hosts.local.yml
+
+ansible_ssh_common_args: >-
+  {% if lan_use_jump_host | bool %}
+  -o ProxyJump={{ hostvars[lan_jump_host].ansible_user }}@{{ hostvars[lan_jump_host].ansible_host }}
+  {% endif %}
+  -o StrictHostKeyChecking=accept-new
+
+# These are single-purpose service containers. Their journals are small and
+# they run application workloads worth seeing container metrics for.
+alloy_journal_max_age: 12h

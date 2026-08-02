@@ -7,6 +7,20 @@
 data/
 logs/
 
+# Ansible.
+# NOTE: inventory/group_vars/all/vault.yml IS committed on purpose. It is
+# ansible-vault encrypted; the point is encrypted-at-rest in git. The vault
+# password itself lives at ~/.config/ansible/monitorting-vault-pass, outside
+# this repo, and must be backed up separately.
+#
+# `*.local` above only matches names ENDING in .local, so it would not catch
+# secrets.local.yml. Hence the explicit pattern below.
+ansible/*.retry
+ansible/.vault-pass
+ansible/**/*.local.yml
+ansible/collections/
+ansible/roles/**/files/*.local
+
 # Editor and tooling noise.
 .vscode/
 .idea/

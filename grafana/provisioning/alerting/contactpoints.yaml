@@ -1,0 +1,23 @@
+apiVersion: 1
+
+# Matrix has no native Grafana contact point, so alerts go out through a
+# matrix-webhook relay running on this same LXC and listening on loopback
+# only. The relay is never exposed through nginx.
+#
+# $__env{} interpolation keeps the API key and room ID out of git while this
+# file stays committed. Both values are written to
+# /etc/default/grafana-monitoring (mode 0600) by write_grafana_config() in
+# scripts/lxc-install.sh.
+contactPoints:
+  - orgId: 1
+    name: matrix-homelab
+    receivers:
+      - uid: matrix-homelab
+        type: webhook
+        disableResolveMessage: false
+        settings:
+          url: http://127.0.0.1:4785/?formatter=grafana&key=$__env{MATRIX_WEBHOOK_API_KEY}&room_id=$__env{MATRIX_ALERT_ROOM_ID}
+          httpMethod: POST
+          title: '{{ if eq .Status "firing" }}FIRING{{ else }}RESOLVED{{ end }}: {{ .CommonLabels.alertname }}'
+          message: |
+            {{ template "fleet.message" . }}

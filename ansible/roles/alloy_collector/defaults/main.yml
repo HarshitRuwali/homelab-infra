@@ -1,0 +1,23 @@
+---
+# `present`, never `latest`: Ansible must not silently upgrade Alloy on every
+# run. Bump deliberately with -e alloy_package_state=latest.
+alloy_package_state: present
+
+alloy_config_path: /etc/alloy/config.alloy
+alloy_env_path: /etc/default/alloy
+alloy_listen_addr: 127.0.0.1:12345
+alloy_marker_path: /etc/alloy/.ansible-managed
+
+alloy_scrape_interval: 15s
+alloy_journal_max_age: 12h
+
+# auto | true | false. `auto` stats /var/run/docker.sock, mirroring the
+# conditional in scripts/lxc-install.sh.
+alloy_enable_docker: auto
+
+alloy_fs_mount_points_exclude: '^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)'
+alloy_fs_types_exclude: '^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|fuse\.lxcfs|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$'
+alloy_systemd_unit_exclude: '.+\.(automount|device|mount|scope|slice)'
+
+# The central node pushes over loopback and lets nginx own auth.
+collector_basic_auth_required: true

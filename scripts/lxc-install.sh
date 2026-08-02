@@ -251,9 +251,20 @@ schema_config:
         period: 24h
 
 limits_config:
-  retention_period: 720h
+  retention_period: ${LOKI_RETENTION_PERIOD:-720h}
   allow_structured_metadata: true
   volume_enabled: true
+  # Defaults are 4MB/s ingest and 3MB/s per stream. Onboarding a whole fleet
+  # at once means every collector backfills its journal simultaneously on
+  # first start, which blows straight through those and 429s. Raise them
+  # BEFORE rolling collectors out, not after it looks broken.
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+  per_stream_rate_limit: 8MB
+  per_stream_rate_limit_burst: 16MB
+  max_global_streams_per_user: 10000
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
 
 compactor:
   working_directory: /var/lib/loki/compactor
@@ -342,6 +353,11 @@ EOF
   write_env_assignment "$env_file" GF_SECURITY_DISABLE_GRAVATAR "true"
   write_env_assignment "$env_file" GF_SNAPSHOTS_EXTERNAL_ENABLED "false"
 
+  # Consumed by $__env{} in grafana/provisioning/alerting/contactpoints.yaml.
+  # Kept out of git by living only in this 0600 file.
+  write_env_assignment "$env_file" MATRIX_WEBHOOK_API_KEY "${MATRIX_WEBHOOK_API_KEY:-}"
+  write_env_assignment "$env_file" MATRIX_ALERT_ROOM_ID "${MATRIX_ALERT_ROOM_ID:-}"
+
   cat > /etc/systemd/system/grafana-server.service.d/monitoring.conf <<'EOF'
 [Service]
 EnvironmentFile=-/etc/default/grafana-monitoring
@@ -361,6 +377,39 @@ EOF
   log "Grafana admin user: '$admin_user'"
   log "Grafana admin password: '***'"
   log "Login URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}"
+}
+
+write_grafana_alerting_config() {
+  local file
+  local found=0
+
+  log "Writing Grafana unified alerting provisioning."
+  install -d -m 0755 /etc/grafana/provisioning/alerting
+
+  shopt -s nullglob
+  for file in "$ROOT_DIR"/grafana/provisioning/alerting/*.yaml \
+              "$ROOT_DIR"/grafana/provisioning/alerting/*.yml; do
+    install -m 0644 "$file" "/etc/grafana/provisioning/alerting/$(basename "$file")"
+    found=1
+  done
+  shopt -u nullglob
+
+  if [[ "$found" -eq 0 ]]; then
+    log "No alerting provisioning files found in the repo; skipping."
+  fi
+
+  # rules-availability.yaml is intentionally absent from the repo: it is
+  # rendered from the Ansible inventory by roles/grafana_alerting, because
+  # the host-down expression needs a per-host constant floor for every
+  # machine in the fleet. See that role's template for why.
+  if [[ ! -e /etc/grafana/provisioning/alerting/rules-availability.yaml ]]; then
+    log "NOTE: host-down alerting is not installed yet. Run:"
+    log "      ansible-playbook playbooks/central-alerting.yml"
+  fi
+
+  if id -u grafana >/dev/null 2>&1; then
+    chown -R root:grafana /etc/grafana/provisioning/alerting
+  fi
 }
 
 write_alloy_config() {
@@ -387,8 +436,19 @@ write_alloy_config() {
       ;;
   esac
 
+  # Ansible (ansible/roles/alloy_collector) is the single source of truth for
+  # every native Alloy config in the fleet. Without this guard,
+  # `lxc-update.sh central` -> sync_configs() -> lxc-install.sh --config-only
+  # would silently revert an Ansible-managed config back to the heredoc below,
+  # dropping the textfile collector and the per-host tuning with it.
+  if [[ -e /etc/alloy/.ansible-managed ]]; then
+    log "Alloy config is Ansible-managed (/etc/alloy/.ansible-managed present); skipping."
+    log "To change it: ansible-playbook playbooks/collectors.yml --limit \$(hostname -s)"
+    return 0
+  fi
+
   log "Writing Alloy config for $mode mode."
-  install -d -m 0755 /etc/alloy /var/lib/alloy
+  install -d -m 0755 /etc/alloy /var/lib/alloy /var/lib/node_exporter/textfile_collector
 
   cat > /etc/alloy/config.alloy <<'EOF'
 logging {
@@ -416,6 +476,13 @@ prometheus.remote_write "central" {
 prometheus.exporter.unix "host" {
   enable_collectors = ["systemd", "processes"]
 
+  // Kept in parity with ansible/roles/alloy_collector/templates/config.alloy.j2
+  // so a fresh bootstrap is not missing update metrics. Ansible owns this
+  // file once /etc/alloy/.ansible-managed exists.
+  textfile {
+    directory = "/var/lib/node_exporter/textfile_collector"
+  }
+
   filesystem {
     mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/.+)($|/)"
   }
@@ -424,6 +491,7 @@ prometheus.exporter.unix "host" {
     enable_restarts = true
     start_time      = true
     task_metrics    = true
+    unit_exclude    = ".+\\.(automount|device|mount|scope|slice)"
   }
 }
 
@@ -662,6 +730,7 @@ render_configs() {
       write_prometheus_config
       write_loki_config
       write_grafana_config
+      write_grafana_alerting_config
       write_alloy_config central
       write_nginx_config
       ;;

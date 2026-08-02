@@ -24,8 +24,9 @@
       "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
       "id": 1,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(count by (host) (node_uname_info{host=~\"$host\"}))", "refId": "A"}],
-      "title": "Hosts Reporting",
+      "description": "Distinct hosts seen in the last 6h. Wrapped in max_over_time because this stack is push-based: a dead host stops sending and would otherwise vanish from this count without a trace.",
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(count by (host) (max_over_time(node_uname_info{host=~\"$host\"}[6h])))", "refId": "A"}],
+      "title": "Hosts Reporting (6h)",
       "type": "stat"
     },
     {

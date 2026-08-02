@@ -1,0 +1,7 @@
+---
+update_metrics_dir: "{{ alloy_textfile_dir }}"
+update_metrics_file: fleet-updates.prom
+update_metrics_script: /usr/local/bin/fleet-update-metrics.sh
+update_metrics_oncalendar: "*:0/15"
+update_metrics_randomized_delay: 300
+update_metrics_use_needrestart: true

@@ -1,0 +1,237 @@
+apiVersion: 1
+
+# Resource-pressure alerts.
+#
+# The mountpoint/fstype exclusions are Proxmox-safety, not cosmetics: /etc/pve
+# is a FUSE mount that always reports 100% full, and lxcfs binds mirror guest
+# filesystems. Without them tailscale-router would alert forever.
+
+groups:
+  - orgId: 1
+    name: resources
+    folder: Fleet
+    interval: 1m
+    rules:
+
+      # ---------------------------------------------------------------
+      - uid: fleet-disk-high
+        title: Disk Usage High
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Filesystem is over 85% full.
+          runbook: "ncdu / or: du -xh --max-depth=2 / | sort -h | tail -20"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                100 * (1 - (
+                  node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\.lxcfs",mountpoint!~"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*"}
+                  /
+                  node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\.lxcfs",mountpoint!~"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*"}
+                ))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [85]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-disk-critical
+        title: Disk Usage Critical
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Filesystem is over 95% full. Writes are about to start failing.
+          runbook: "Free space now. On the central LXC check /var/lib/loki and /var/lib/prometheus first."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                100 * (1 - (
+                  node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\.lxcfs",mountpoint!~"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*"}
+                  /
+                  node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\.lxcfs",mountpoint!~"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*"}
+                ))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [95]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-disk-will-fill
+        title: Root Disk Will Fill Within 24h
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: Root filesystem is trending to full within 24 hours at the current rate.
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 21600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # The `and` clause is a noise guard: without it a machine sitting
+              # at 5% used with normal churn can trend "to zero" and page you.
+              expr: |
+                predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[6h], 24*3600)
+                  and on (host) (
+                    node_filesystem_avail_bytes{mountpoint="/"}
+                    / node_filesystem_size_bytes{mountpoint="/"} < 0.30
+                  )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [0]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-memory-high
+        title: Memory Usage High
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Available memory is under 10%.
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: 100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [90]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-oom-kills
+        title: OOM Killer Active
+        condition: C
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: The kernel OOM killer has terminated a process in the last 15 minutes.
+          runbook: "journalctl -k --since '-30m' | grep -i 'out of memory'"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum by (host) (increase(node_vmstat_oom_kill[15m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-load-high
+        title: Load Average High
+        condition: C
+        for: 20m
+        labels:
+          severity: warning
+        annotations:
+          summary: 15-minute load average is over 2x the core count.
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1200, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # Normalised by core count so a 4-core Pi and a 20-core
+              # hypervisor can share one threshold.
+              expr: |
+                max by (host) (node_load15)
+                  / on (host)
+                count by (host) (count by (host, cpu) (node_cpu_seconds_total{mode="idle"}))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [2]}

@@ -1,0 +1,6 @@
+---
+- name: restart matrix-webhook
+  ansible.builtin.systemd:
+    name: matrix-webhook
+    state: restarted
+    daemon_reload: true

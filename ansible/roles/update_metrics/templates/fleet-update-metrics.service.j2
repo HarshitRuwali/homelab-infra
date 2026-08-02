@@ -1,0 +1,22 @@
+[Unit]
+Description=Write fleet update metrics for the node_exporter textfile collector
+Documentation=https://github.com/HarshitRuwali/monitorting-stack
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ update_metrics_script }}
+
+# apt-get --just-print on an SD-card Pi is not free. Keep it off the
+# critical path for IO and CPU.
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=180
+
+# Runs as root because it needs apt-get, needrestart, and stat on
+# /run/reboot-required. Constrain what that root can touch.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ update_metrics_dir }}

@@ -1,12 +1,14 @@
-// SCOPE: Docker collector ONLY (docker-compose.yml, docker-compose.collector.yml).
+// Managed by ansible/roles/alloy_collector. Do not edit by hand.
+// Rendered for {{ inventory_hostname }} (role={{ monitor_role }}).
 //
-// This file sets rootfs_path/procfs_path/sysfs_path because the containerised
-// collector runs with /:/rootfs and /proc:/host/proc bind mounts. A NATIVE
-// systemd Alloy must not set them.
-//
-// Native installs are managed by Ansible, which is authoritative:
-//   ansible/roles/alloy_collector/templates/config.alloy.j2
-// Changes made here do NOT reach any host in the fleet. See docs/fleet-ansible.md.
+// This template is the single source of truth for every NATIVE Alloy install
+// in the fleet. Two other copies of this config exist and are deliberately
+// scoped narrower:
+//   - alloy/config.alloy            -> Docker collector only (sets rootfs_path
+//                                      etc. because it runs with bind mounts)
+//   - scripts/lxc-install.sh heredoc -> bootstrap only, guarded by
+//                                      /etc/alloy/.ansible-managed
+// A native install must NOT set rootfs_path/procfs_path/sysfs_path.
 
 logging {
   level  = "info"
@@ -22,55 +24,59 @@ prometheus.remote_write "central" {
   endpoint {
     name = "central-prometheus"
     url  = sys.env("PROMETHEUS_REMOTE_WRITE_URL")
+{% if collector_basic_auth_required | bool %}
 
     basic_auth {
       username = sys.env("COLLECTOR_BASIC_AUTH_USER")
       password = sys.env("COLLECTOR_BASIC_AUTH_PASSWORD")
     }
+{% endif %}
+
+    // Onboarding the whole fleet at once means backfilling a lot of history
+    // through a shared ingest path. Retry rather than drop on backpressure.
+    queue_config {
+      capacity            = 10000
+      max_shards          = 10
+      batch_send_deadline = "5s"
+      retry_on_http_429   = true
+    }
   }
 }
 
 prometheus.exporter.unix "host" {
-  rootfs_path = "/rootfs"
-  procfs_path = "/host/proc"
-  sysfs_path  = "/sys"
-
   enable_collectors = ["systemd", "processes"]
 
+  // Reads /var/lib/node_exporter/textfile_collector/*.prom, which is how the
+  // update_metrics role surfaces apt/reboot state. node_exporter also emits
+  // node_textfile_mtime_seconds for free, so a broken exporter script is
+  // detectable centrally.
+  textfile {
+    directory = "{{ alloy_textfile_dir }}"
+  }
+
   filesystem {
-    mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)"
+    mount_points_exclude = "{{ alloy_fs_mount_points_exclude }}"
+    fs_types_exclude     = "{{ alloy_fs_types_exclude }}"
   }
 
   systemd {
     enable_restarts = true
     start_time      = true
     task_metrics    = true
+    unit_exclude    = "{{ alloy_systemd_unit_exclude }}"
   }
 }
 
 prometheus.scrape "host" {
   job_name        = "host-unix"
   targets         = prometheus.exporter.unix.host.targets
-  scrape_interval = "15s"
-  forward_to      = [prometheus.remote_write.central.receiver]
-}
-
-prometheus.exporter.cadvisor "containers" {
-  docker_host      = "unix:///var/run/docker.sock"
-  docker_only      = true
-  storage_duration = "5m"
-}
-
-prometheus.scrape "containers" {
-  job_name        = "container-cadvisor"
-  targets         = prometheus.exporter.cadvisor.containers.targets
-  scrape_interval = "15s"
+  scrape_interval = "{{ alloy_scrape_interval }}"
   forward_to      = [prometheus.remote_write.central.receiver]
 }
 
 prometheus.scrape "alloy" {
-  job_name = "alloy"
-  targets = [{"__address__" = "127.0.0.1:12345"}]
+  job_name   = "alloy"
+  targets    = [{"__address__" = "{{ alloy_listen_addr }}"}]
   forward_to = [prometheus.remote_write.central.receiver]
 }
 
@@ -83,11 +89,13 @@ loki.write "central" {
   endpoint {
     name = "central-loki"
     url  = sys.env("LOKI_WRITE_URL")
+{% if collector_basic_auth_required | bool %}
 
     basic_auth {
       username = sys.env("COLLECTOR_BASIC_AUTH_USER")
       password = sys.env("COLLECTOR_BASIC_AUTH_PASSWORD")
     }
+{% endif %}
   }
 }
 
@@ -106,10 +114,26 @@ loki.relabel "journal" {
 }
 
 loki.source.journal "system" {
-  max_age       = "12h"
+  max_age       = "{{ alloy_journal_max_age }}"
   labels        = {job = "systemd-journal", source = "journal"}
   relabel_rules = loki.relabel.journal.rules
   forward_to    = [loki.write.central.receiver]
+}
+{% if alloy_docker_effective %}
+
+// --- Docker telemetry (host has /var/run/docker.sock) --------------------
+
+prometheus.exporter.cadvisor "containers" {
+  docker_host      = "unix:///var/run/docker.sock"
+  docker_only      = true
+  storage_duration = "5m"
+}
+
+prometheus.scrape "containers" {
+  job_name        = "container-cadvisor"
+  targets         = prometheus.exporter.cadvisor.containers.targets
+  scrape_interval = "{{ alloy_scrape_interval }}"
+  forward_to      = [prometheus.remote_write.central.receiver]
 }
 
 discovery.docker "containers" {
@@ -147,3 +171,4 @@ loki.source.docker "containers" {
   targets    = discovery.relabel.docker_logs.output
   forward_to = [loki.write.central.receiver]
 }
+{% endif %}

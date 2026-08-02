@@ -63,6 +63,32 @@ https://monitor.example.com/loki/api/v1/push         -> Basic Auth collector log
 
 The direct-LXC installer writes an nginx reverse proxy for those paths. For Docker Compose, the service ports bind to `127.0.0.1` by default so you can put your own TLS reverse proxy in front.
 
+## Fleet Rollout (Ansible)
+
+Ansible is the primary way to manage collectors and patching across the fleet.
+It owns the Alloy config on every host, deploys the apt/reboot metrics
+exporter, and configures auto-applied security updates (never auto-rebooting).
+
+```bash
+brew install ansible                            # macOS
+# or on Debian/Ubuntu:
+#   python3 -m venv ~/.venvs/ansible && ~/.venvs/ansible/bin/pip install ansible
+
+cd ansible
+ansible-playbook playbooks/preflight.yml        # read-only
+ansible-playbook playbooks/collectors.yml --limit ubuntu-dev
+```
+
+Runs from macOS or from a Linux box on the Proxmox LAN (`ubuntu-dev`). Add
+`-e lan_use_jump_host=false` when running from the LAN itself.
+
+See [Fleet Rollout with Ansible](docs/fleet-ansible.md) for the full ordered
+procedure, verification queries, and alert testing.
+
+The manual per-host instructions below still work and are useful for
+bootstrapping a brand-new central LXC, but for an existing fleet prefer the
+Ansible path: it is the single source of truth for collector config.
+
 ## Add VM or LXC Collectors
 
 For Docker-based VMs, copy this repository, or at least `docker-compose.collector.yml`, `alloy/config.alloy`, and `scripts/monitoring.sh`, to each VM. Then run:
@@ -126,6 +152,7 @@ docker-compose.collector.yml   Collector-only stack for each VM
 
 ## Docs
 
+- [Fleet Rollout with Ansible](docs/fleet-ansible.md)
 - [Architecture](docs/architecture.md)
 - [VM and LXC Collector Rollout](docs/vm-collector.md)
 - [Operations](docs/operations.md)

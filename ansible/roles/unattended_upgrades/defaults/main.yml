@@ -1,0 +1,22 @@
+---
+uu_apply_security_only: true
+
+# HARD REQUIREMENT from the fleet policy. Nothing overrides this, and the
+# role asserts it at the end of every run. Kernel updates therefore accumulate
+# until a human reboots, which is why fleet-reboot-required-too-long exists.
+uu_automatic_reboot: false
+
+uu_remove_unused_kernels: true
+
+uu_package_blacklist:
+  # tailscale: an upgrade restarts tailscaled. On tailscale-router that drops
+  # the exit node and subnet routes, which can sever Ansible's own connection
+  # mid-play. Never automate it.
+  - "tailscale"
+  # docker: restarting the daemon bounces every container on the host.
+  - "docker-ce"
+  - "docker-ce-cli"
+  - "containerd.io"
+
+uu_upgrade_oncalendar: "*-*-* 03:00"
+uu_upgrade_randomized_delay: 3600

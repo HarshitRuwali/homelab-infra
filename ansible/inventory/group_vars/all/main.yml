@@ -1,0 +1,18 @@
+---
+# Identity ---------------------------------------------------------------
+# The `host` external label on every metric and log line. Defaults to the
+# inventory name so the label you see in Grafana is the name you ssh to.
+# Overridden in host_vars/monitor-lxc.yml, which already has history.
+monitor_hostname: "{{ inventory_hostname }}"
+
+# Ingest -----------------------------------------------------------------
+# One endpoint for the entire fleet. `monitoring_domain` is site-specific and
+# is defined in inventory/hosts.local.yml (gitignored), so this repo stays
+# free of real hostnames.
+prometheus_remote_write_url: "https://{{ monitoring_domain }}/prometheus/api/v1/write"
+loki_write_url: "https://{{ monitoring_domain }}/loki/api/v1/push"
+collector_basic_auth_user: collector
+collector_basic_auth_password: "{{ vault_collector_basic_auth_password }}"
+
+# Collector defaults -----------------------------------------------------
+alloy_textfile_dir: /var/lib/node_exporter/textfile_collector

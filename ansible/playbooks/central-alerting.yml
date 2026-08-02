@@ -1,0 +1,16 @@
+---
+# Deploy the Matrix relay and Grafana unified alerting on the central LXC.
+#
+# Order matters: the relay must be listening before Grafana provisions a
+# contact point that points at it, otherwise the first Test send fails and
+# looks like a config error.
+#
+# Do NOT enable auto-updates (Phase 7) until the host-down test from
+# docs/fleet-ansible.md has actually fired and resolved.
+
+- name: Configure central alerting
+  hosts: central
+  become: true
+  roles:
+    - matrix_webhook
+    - grafana_alerting

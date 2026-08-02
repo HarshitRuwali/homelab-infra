@@ -24,8 +24,9 @@
       "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
       "id": 1,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(up{job=\"host-unix\",host=~\"$host\"})", "refId": "A"}],
-      "title": "Collectors Up",
+      "description": "Hosts that pushed metrics in the last 10 minutes. This stack is push-based, so a dead host stops sending rather than reporting up=0. See the Fleet Freshness table for per-host detail.",
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(max by (host) (max_over_time(up{job=\"host-unix\",host=~\"$host\"}[10m])) >= 1)", "refId": "A"}],
+      "title": "Collectors Reporting (10m)",
       "type": "stat"
     },
     {
@@ -34,8 +35,9 @@
       "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
       "id": 2,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(count by (host) (node_uname_info{host=~\"$host\"}))", "refId": "A"}],
-      "title": "VMs / Hosts Seen",
+      "description": "Distinct hosts that reported at any point in the last 6h, so a recently-dead host still appears.",
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(count by (host) (max_over_time(node_uname_info{host=~\"$host\"}[6h])))", "refId": "A"}],
+      "title": "Hosts Seen (6h)",
       "type": "stat"
     },
     {
@@ -60,8 +62,42 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Per-host age of the most recent sample. Deliberately NOT filtered by $host: this is the authoritative \"is everyone here\" view and a saved single-host selection must not be able to hide an outage.",
+      "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "color-background"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 300}, {"color": "red", "value": 900}]}, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
+      "id": 9,
+      "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Age"}]},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "time() - max by (host) (max_over_time(timestamp(up{job=\"host-unix\"})[6h:1m]))", "format": "table", "instant": true, "range": false, "refId": "A"}],
+      "title": "Fleet Freshness (seconds since last data)",
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true}, "renameByName": {"Value": "Age", "host": "Host"}}}],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "From the update_metrics textfile exporter. Empty until ansible playbooks/update-metrics.yml has run.",
+      "fieldConfig": {"defaults": {"min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 20}, {"color": "red", "value": 50}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 7, "x": 12, "y": 5},
+      "id": 10,
+      "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by (host) (apt_upgrades_pending{host=~\"$host\"})", "instant": true, "legendFormat": "{{host}}", "range": false, "refId": "A"}],
+      "title": "Pending Package Updates",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Nothing in this fleet reboots itself, by policy. This is the count you must action manually.",
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 5, "x": 19, "y": 5},
+      "id": 11,
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum(node_reboot_required{host=~\"$host\"})", "instant": true, "range": false, "refId": "A"}],
+      "title": "Reboot Required",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"max": 100, "min": 0, "unit": "percent"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
       "id": 5,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "topk(10, 100 * (1 - avg by (host) (rate(node_cpu_seconds_total{mode=\"idle\",host=~\"$host\"}[5m]))))", "legendFormat": "{{host}}", "refId": "A"}],
@@ -71,7 +107,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"max": 100, "min": 0, "unit": "percent"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
       "id": 6,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "topk(10, 100 * (1 - (node_memory_MemAvailable_bytes{host=~\"$host\"} / node_memory_MemTotal_bytes{host=~\"$host\"})))", "legendFormat": "{{host}}", "refId": "A"}],
@@ -81,7 +117,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"max": 100, "min": 0, "unit": "percent"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
       "id": 7,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "topk(10, 100 * (1 - (node_filesystem_avail_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\",host=~\"$host\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!~\"tmpfs|overlay\",host=~\"$host\"})))", "legendFormat": "{{host}}", "refId": "A"}],
@@ -90,7 +126,7 @@
     },
     {
       "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
       "id": 8,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
       "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "{host=~\"$host\"} |~ \"(?i)(error|failed|fatal|panic|warn)\"", "refId": "A"}],
