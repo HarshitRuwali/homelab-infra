@@ -1,10 +1,18 @@
 apiVersion: 1
 
+# A window crossing midnight MUST be split into two same-day intervals.
+# Grafana rejects `start_time: '23:00', end_time: '07:00'` outright with
+# "start time cannot be equal or greater than end time", and that single
+# error aborts provisioning for EVERY alerting file, not just this one.
 muteTimes:
   - orgId: 1
     name: overnight
     time_intervals:
       - times:
           - start_time: '23:00'
+            end_time: '24:00'
+        location: Asia/Kolkata
+      - times:
+          - start_time: '00:00'
             end_time: '07:00'
         location: Asia/Kolkata

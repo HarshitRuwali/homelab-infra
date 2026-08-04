@@ -70,10 +70,19 @@
   ansible.builtin.meta: flush_handlers
 
 # --- Proof of life -------------------------------------------------------
+# `systemd: state=started` returns once the oneshot job is ENQUEUED, not when
+# it finishes. The script runs apt-get --just-print, which takes ~30s on a Pi
+# with a large pending list, so a bare stat here races and reports a false
+# failure. Retry until it lands.
 - name: Confirm the metrics file was written
   ansible.builtin.stat:
     path: "{{ update_metrics_dir }}/{{ update_metrics_file }}"
   register: update_metrics_out
+  retries: 18
+  delay: 5
+  until:
+    - update_metrics_out.stat.exists
+    - update_metrics_out.stat.size | default(0) > 0
 
 - name: Fail if the exporter produced nothing
   ansible.builtin.assert:

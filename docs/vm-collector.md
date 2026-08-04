@@ -76,7 +76,7 @@ On the central server:
 ```bash
 curl 'http://localhost:9090/api/v1/query' --data-urlencode 'query=node_uname_info'
 curl http://localhost:3100/ready
-curl -u collector:<collector-password> https://monitor.example.com/loki/ready
+curl -u collector:<collector-password> https://monitor.example.com/loki/api/v1/labels
 ```
 
 In Grafana, open any dashboard and select the VM from the `host` variable.

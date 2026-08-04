@@ -11,6 +11,16 @@ collector_basic_auth_required: false
 
 alloy_enable_docker: false
 
+# The central LXC usually sits on the same private LAN as the other Proxmox
+# guests, so a controller outside that network needs the same ProxyJump the
+# lan_guests group uses. Set `lan_use_jump_host: false` when running from a
+# controller already on the LAN, exactly as for lan_guests.
+ansible_ssh_common_args: >-
+  {% if lan_use_jump_host | default(true) | bool %}
+  -o ProxyJump={{ hostvars[lan_jump_host].ansible_user }}@{{ hostvars[lan_jump_host].ansible_host }}
+  {% endif %}
+  -o StrictHostKeyChecking=accept-new
+
 # --- Patching ------------------------------------------------------------
 # This host DOES auto-apply security updates, but never to the monitoring
 # stack itself. Those five packages are upgraded deliberately by
@@ -22,18 +32,13 @@ alloy_enable_docker: false
 #     re-rendering that config
 #
 # So: OS and security patches here, stack upgrades stay a supervised action.
-uu_package_blacklist:
-  - "tailscale"
-  - "grafana"
-  - "grafana-.*"
-  - "prometheus"
-  - "prometheus-.*"
-  - "loki"
-  - "alloy"
-  - "nginx"
-  - "nginx-.*"
-  - "docker-ce"
-  - "containerd.io"
+# Nothing held back here by policy either. Consequence to be aware of: a
+# grafana/loki/prometheus/nginx upgrade restarts those services, so the
+# monitoring itself has a brief gap and collectors may see a short 502 on the
+# ingest path. Their configs are still owned by scripts/lxc-update.sh, so
+# after a package upgrade changes a config format, re-run:
+#   scripts/lxc-update.sh central --config-only
+uu_package_blacklist: []
 
 # Losing the kernel this box booted from is not worth the disk saving.
 uu_remove_unused_kernels: false

@@ -61,7 +61,7 @@
 - name: Read back the provisioned alert rules
   ansible.builtin.uri:
     url: "{{ grafana_api_url }}/api/v1/provisioning/alert-rules"
-    user: admin
+    user: "{{ grafana_admin_user }}"
     password: "{{ vault_grafana_admin_password }}"
     force_basic_auth: true
     status_code: [200]

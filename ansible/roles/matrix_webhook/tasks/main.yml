@@ -28,15 +28,26 @@
     shell: /usr/sbin/nologin
     create_home: true
 
+# Built as root rather than via become_user: minimal LXC images often ship
+# without sudo, and Ansible's default become_method needs it. The venv only
+# has to be READABLE by the service user, so root-owned 0755 is correct and
+# avoids depending on sudo being installed at all.
 - name: Install matrix-webhook into a dedicated venv
   ansible.builtin.pip:
     name: matrix-webhook
     state: present
     virtualenv: "{{ matrix_webhook_venv }}"
     virtualenv_command: python3 -m venv
-  become_user: "{{ matrix_webhook_user }}"
-  become: true
   notify: restart matrix-webhook
+
+- name: Make the venv readable by the service user
+  ansible.builtin.file:
+    path: "{{ matrix_webhook_home }}"
+    state: directory
+    owner: root
+    group: "{{ matrix_webhook_user }}"
+    mode: "0750"
+    recurse: false
 
 - name: Ensure the environment directory exists
   ansible.builtin.file:

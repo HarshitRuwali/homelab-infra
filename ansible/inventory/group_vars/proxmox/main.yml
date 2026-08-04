@@ -11,7 +11,7 @@
 #   2. Journal volume. A hypervisor journal is enormous; backfilling 12h of
 #      it on first Alloy start is the fastest way to hit Loki ingest limits.
 
-alloy_systemd_unit_exclude: '.+\.(automount|device|mount|scope|slice|socket|swap|path)|(lxc|qemu|pve-container|user|session|run-r|systemd-fsck|systemd-cryptsetup|blockdev)@.+'
+alloy_systemd_unit_exclude: '.+\\.(automount|device|mount|scope|slice|socket|swap|path)|(lxc|qemu|pve-container|user|session|run-r|systemd-fsck|systemd-cryptsetup|blockdev)@.+'
 
 # /etc/pve is a FUSE mount that always reports 100% full; lxcfs binds mirror
 # guest filesystems. Both would fire the disk alert permanently.
@@ -23,14 +23,10 @@ alloy_enable_docker: false
 # --- Patching ---
 # Never let unattended-upgrades autoremove a Proxmox kernel, and never let it
 # restart pveproxy/pvedaemon under running guests.
+# Nothing held back here by policy. Note this means pve-* upgrades will
+# restart pveproxy/pvedaemon, and a tailscale upgrade restarts tailscaled,
+# briefly dropping this host's exit node and subnet routes.
+#
+# Kernel autoremoval stays off: losing the kernel this box booted from is not
+# worth the disk saving on a hypervisor-adjacent host.
 uu_remove_unused_kernels: false
-uu_package_blacklist:
-  - "tailscale"
-  - "proxmox-kernel-.*"
-  - "pve-kernel-.*"
-  - "pve-manager"
-  - "pve-cluster"
-  - "libpve-.*"
-  - "zfs.*"
-  - "docker-ce"
-  - "containerd.io"

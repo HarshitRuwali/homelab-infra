@@ -7,7 +7,7 @@ apiVersion: 1
 #
 # This stack is push-based. prometheus/prometheus.yml has no scrape_configs
 # for hosts; everything arrives through --web.enable-remote-write-receiver.
-# So `up{job="host-unix"}` is a series the collector PUSHES about itself.
+# So `up{job=~"integrations/unix|host-unix"}` is a series the collector PUSHES about itself.
 # When a host dies it stops pushing and the series simply vanishes after the
 # 5m lookback. It never becomes 0. A naive `up == 0` alert therefore never
 # fires: it goes NoData, and a NoData instance carries no `host` label, so
@@ -52,7 +52,7 @@ groups:
               instant: true
               range: false
               expr: |
-                max by (host) (max_over_time(up{job="host-unix"}[10m]))
+                max by (host) (max_over_time(up{job=~"integrations/unix|host-unix"}[10m]))
 {% for h in (groups['monitored'] | sort) %}
                   or label_replace(vector(0), "host", "{{ hostvars[h].monitor_hostname | default(h) }}", "", "")
 {% endfor %}
@@ -92,7 +92,7 @@ groups:
               # timestamp() inside a subquery evaluated at 1m steps recovers
               # the wall-clock time of the most recent sample, and keeps the
               # series alive for up to 6h after the host stops reporting.
-              expr: time() - max by (host) (max_over_time(timestamp(up{job="host-unix"})[6h:1m]))
+              expr: time() - max by (host) (max_over_time(timestamp(up{job=~"integrations/unix|host-unix"})[6h:1m]))
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}

@@ -25,7 +25,7 @@
       "id": 1,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "description": "Hosts that pushed metrics in the last 10 minutes. This stack is push-based, so a dead host stops sending rather than reporting up=0. See the Fleet Freshness table for per-host detail.",
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(max by (host) (max_over_time(up{job=\"host-unix\",host=~\"$host\"}[10m])) >= 1)", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(max by (host) (max_over_time(up{job=~\"integrations/unix|host-unix\",host=~\"$host\"}[10m])) >= 1)", "refId": "A"}],
       "title": "Collectors Reporting (10m)",
       "type": "stat"
     },
@@ -67,7 +67,7 @@
       "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
       "id": 9,
       "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Age"}]},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "time() - max by (host) (max_over_time(timestamp(up{job=\"host-unix\"})[6h:1m]))", "format": "table", "instant": true, "range": false, "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "time() - max by (host) (max_over_time(timestamp(up{job=~\"integrations/unix|host-unix\"})[6h:1m]))", "format": "table", "instant": true, "range": false, "refId": "A"}],
       "title": "Fleet Freshness (seconds since last data)",
       "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true}, "renameByName": {"Value": "Age", "host": "Host"}}}],
       "type": "table"

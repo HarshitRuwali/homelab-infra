@@ -35,7 +35,7 @@ Useful environment variables:
   GRAFANA_ADMIN_USER       default: admin
   GRAFANA_ADMIN_PASSWORD   required for central mode
   GRAFANA_ROOT_URL         default: http://localhost:3000
-  PROMETHEUS_RETENTION     default: 30d
+  PROMETHEUS_RETENTION     default: 7d
   MONITOR_HOSTNAME         default: current hostname
   MONITOR_ROLE             default: central-lxc in central mode, lxc in collector mode
   PROMETHEUS_REMOTE_WRITE_URL collector mode explicit metrics ingest URL
@@ -174,7 +174,7 @@ install_packages() {
 }
 
 write_prometheus_config() {
-  local retention="${PROMETHEUS_RETENTION:-30d}"
+  local retention="${PROMETHEUS_RETENTION:-7d}"
   local listen_addr="${MONITORING_LISTEN_ADDRESS:-127.0.0.1}"
 
   log "Writing Prometheus config."
@@ -251,7 +251,7 @@ schema_config:
         period: 24h
 
 limits_config:
-  retention_period: ${LOKI_RETENTION_PERIOD:-720h}
+  retention_period: ${LOKI_RETENTION_PERIOD:-168h}
   allow_structured_metadata: true
   volume_enabled: true
   # Defaults are 4MB/s ingest and 3MB/s per stream. Onboarding a whole fleet

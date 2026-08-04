@@ -5,12 +5,21 @@
 // /etc/apt/apt.conf.d/50unattended-upgrades rather than fighting it.
 
 Unattended-Upgrade::Origins-Pattern {
+{% if uu_apply_security_only %}
         "origin=Debian,codename=${distro_codename},label=Debian-Security";
         "origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
         "origin=Ubuntu,archive=${distro_codename}-security,label=Ubuntu";
-{% if not uu_apply_security_only %}
-        "origin=Debian,codename=${distro_codename}-updates";
-        "origin=Ubuntu,archive=${distro_codename}-updates,label=Ubuntu";
+{% else %}
+        // EVERY origin, including third-party repos (Raspberry Pi Foundation,
+        // Docker, Grafana, NodeSource, ...).
+        //
+        // Listing Debian/Ubuntu origins explicitly is NOT equivalent: packages
+        // from any other origin are silently never considered, so they sit in
+        // apt_upgrades_pending forever while the run reports success. That is
+        // how ~50 Raspberry Pi Foundation packages went unpatched here.
+        //
+        // Set uu_apply_security_only: true to go back to security-only.
+        "o=*";
 {% endif %}
 };
 

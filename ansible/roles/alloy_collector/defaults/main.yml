@@ -15,9 +15,14 @@ alloy_journal_max_age: 12h
 # conditional in scripts/lxc-install.sh.
 alloy_enable_docker: auto
 
+# NOTE ON BACKSLASHES: these strings land inside double quotes in the
+# generated .alloy file, and Alloy uses Go string escaping there. A lone `\.`
+# is an "unknown escape sequence" and `alloy fmt` rejects the whole config.
+# Write `\\.` so the file contains `\\.`, which Alloy unescapes to the `\.`
+# the regex engine wants. Keep these single-quoted in YAML.
 alloy_fs_mount_points_exclude: '^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)'
-alloy_fs_types_exclude: '^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|fuse\.lxcfs|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$'
-alloy_systemd_unit_exclude: '.+\.(automount|device|mount|scope|slice)'
+alloy_fs_types_exclude: '^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|fuse\\.lxcfs|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$'
+alloy_systemd_unit_exclude: '.+\\.(automount|device|mount|scope|slice)'
 
 # The central node pushes over loopback and lets nginx own auth.
 collector_basic_auth_required: true

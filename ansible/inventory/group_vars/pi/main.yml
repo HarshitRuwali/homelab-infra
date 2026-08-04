@@ -6,13 +6,19 @@
 # packages. Applying those without the reboot that this fleet policy forbids is
 # the classic way to end up with a running kernel whose modules are no longer
 # on disk. Leave them to a supervised manual upgrade + reboot.
+# The ONLY packages held back anywhere in the fleet.
+#
+# raspberrypi-kernel and raspberrypi-bootloader are UNVERSIONED: upgrading
+# them overwrites /boot/firmware and /lib/modules/$(uname -r) in place rather
+# than installing alongside. Under this fleet's never-auto-reboot policy that
+# leaves the running kernel with no modules on disk, so anything not already
+# loaded (USB storage, a filesystem, a netfilter module) fails until reboot.
+#
+# Remove these only if you are also prepared to reboot the Pi immediately.
 uu_package_blacklist:
-  - "tailscale"
   - "raspberrypi-kernel"
   - "raspberrypi-bootloader"
   - "linux-image-rpi-.*"
-  - "docker-ce"
-  - "containerd.io"
 
 # These are SD-card hosts with 25-29 pending packages each. Keep the metrics
 # exporter off the critical path for IO.

@@ -70,7 +70,7 @@ curl http://127.0.0.1:9090/-/ready
 curl http://127.0.0.1:3100/ready
 curl http://127.0.0.1:12345/-/ready
 curl -u collector:<collector-password> https://monitor.example.com/prometheus/-/ready
-curl -u collector:<collector-password> https://monitor.example.com/loki/ready
+curl -u collector:<collector-password> https://monitor.example.com/loki/api/v1/labels
 ```
 
 The Docker Compose stack binds Grafana, Prometheus, Loki, and the Alloy debug UI to `127.0.0.1` by default. Put a TLS reverse proxy in front for public-domain access.
@@ -79,7 +79,7 @@ The Docker Compose stack binds Grafana, Prometheus, Loki, and the Alloy debug UI
 
 ```bash
 curl 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=node_uname_info'
-curl 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=up{job="host-unix"}'
+curl 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=up{job=~"integrations/unix|host-unix"}'
 ```
 
 In Grafana Explore, use Loki queries like:

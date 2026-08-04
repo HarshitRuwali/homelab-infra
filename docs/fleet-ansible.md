@@ -211,8 +211,19 @@ host that stopped answering.
 
 ## Verification
 
-Every host reporting, from the central side (no SSH needed). Note the doubled
-`loki`: nginx strips the prefix on `/prometheus/` but preserves it on `/loki/`.
+Every host reporting, from the central side (no SSH needed).
+
+The two ingest paths are asymmetric, which is easy to get wrong. `/prometheus/`
+uses `proxy_pass http://addr:9090/` (with a URI), so nginx **strips** the
+prefix. `/loki/` uses `proxy_pass http://addr:3100` (no URI), so nginx
+**preserves** the full path. Loki's own API already lives under `/loki/api/v1/`,
+so the external path maps straight through:
+
+| External | Reaches | |
+|---|---|---|
+| `/prometheus/api/v1/query` | `:9090/api/v1/query` | prefix stripped |
+| `/loki/api/v1/push` | `:3100/loki/api/v1/push` | prefix preserved |
+| `/loki/ready` | `:3100/loki/ready` | **404** — Loki's is `/ready`, unreachable through this proxy |
 
 ```bash
 PW=$(ansible-vault view inventory/group_vars/all/vault.yml | awk '/collector_basic_auth_password/{print $2}' | tr -d '"')
@@ -222,10 +233,10 @@ curl -sG -u "collector:$PW" https://monitor.example.com/prometheus/api/v1/query 
 
 # Data age per host. This is the push-model health check: every value < 30.
 curl -sG -u "collector:$PW" https://monitor.example.com/prometheus/api/v1/query \
-  --data-urlencode 'query=time() - max by (host) (max_over_time(timestamp(up{job="host-unix"})[6h:1m]))'
+  --data-urlencode 'query=time() - max by (host) (max_over_time(timestamp(up{job=~"integrations/unix|host-unix"})[6h:1m]))'
 
 curl -s -u "collector:$PW" \
-  'https://monitor.example.com/loki/loki/api/v1/label/host/values' | jq -r '.data[]'
+  'https://monitor.example.com/loki/api/v1/label/host/values' | jq -r '.data[]'
 ```
 
 Patching actually applying. The config assertion is enforced by the role on

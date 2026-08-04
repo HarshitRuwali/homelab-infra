@@ -27,6 +27,11 @@ all:
     # Loki push URLs in group_vars/all/main.yml.
     monitoring_domain: monitor.example.com
 
+    # Host used as a ProxyJump to reach `lan_guests`. Must be set here, not in
+    # group_vars/lan_guests: group_vars beats inventory vars, so a default
+    # there would silently override this.
+    lan_jump_host: workstation-01
+
   children:
 
     monitored:

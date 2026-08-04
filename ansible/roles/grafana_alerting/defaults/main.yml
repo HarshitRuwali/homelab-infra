@@ -4,6 +4,11 @@ grafana_alerting_dir: "{{ grafana_provisioning_dir }}/alerting"
 grafana_env_file: /etc/default/grafana-monitoring
 grafana_api_url: http://127.0.0.1:3000
 
+# Must match GF_SECURITY_ADMIN_USER in /etc/default/grafana-monitoring.
+# Do NOT assume "admin": lxc-install.sh writes whatever GRAFANA_ADMIN_USER is
+# set to in .env, which is often a real username.
+grafana_admin_user: admin
+
 # The `host` label of the central node itself. Must match MONITOR_HOSTNAME in
 # /etc/default/alloy on the central LXC, which is read during Phase 0.
 central_host_label: "{{ hostvars[groups['central'][0]].monitor_hostname | default('main-server') }}"
