@@ -21,7 +21,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: Filesystem is over 85% full.
+          summary: Filesystem is over 95% full.
           runbook: "ncdu / or: du -xh --max-depth=2 / | sort -h | tail -20"
         noDataState: OK
         execErrState: Error
@@ -50,7 +50,10 @@ groups:
               type: threshold
               expression: B
               conditions:
-                - evaluator: {type: gt, params: [85]}
+                # Raised from 85 by request. A homelab routinely runs boxes in
+                # the high 80s (tailscale-router sits at 93%) and a warning
+                # that is always on is a warning nobody reads.
+                - evaluator: {type: gt, params: [95]}
 
       # ---------------------------------------------------------------
       - uid: fleet-disk-critical
@@ -60,7 +63,7 @@ groups:
         labels:
           severity: critical
         annotations:
-          summary: Filesystem is over 95% full. Writes are about to start failing.
+          summary: Filesystem is over 98% full. Writes are about to start failing.
           runbook: "Free space now. On the central LXC check /var/lib/loki and /var/lib/prometheus first."
         noDataState: OK
         execErrState: Error
@@ -89,13 +92,16 @@ groups:
               type: threshold
               expression: B
               conditions:
-                - evaluator: {type: gt, params: [95]}
+                # Moved 95 -> 98 so it stays one clear step above the warning.
+                # Leaving both at 95 would make every critical page arrive
+                # twice, which is the noise this pass is removing.
+                - evaluator: {type: gt, params: [98]}
 
       # ---------------------------------------------------------------
       - uid: fleet-disk-will-fill
         title: Root Disk Will Fill Within 24h
         condition: C
-        for: 30m
+        for: 1h
         labels:
           severity: warning
         annotations:
@@ -113,11 +119,18 @@ groups:
               range: false
               # The `and` clause is a noise guard: without it a machine sitting
               # at 5% used with normal churn can trend "to zero" and page you.
+              #
+              # Tightened 0.30 -> 0.10 alongside the 95% threshold change. At
+              # 30% free this fired on any box with a busy log directory even
+              # though it had a week of headroom; predict_linear over 6h is far
+              # too twitchy to be trusted that far out. Under 10% free the
+              # projection is worth acting on, and `for: 1h` means a single
+              # large download cannot trip it.
               expr: |
                 predict_linear(node_filesystem_avail_bytes{mountpoint="/"}[6h], 24*3600)
                   and on (host) (
                     node_filesystem_avail_bytes{mountpoint="/"}
-                    / node_filesystem_size_bytes{mountpoint="/"} < 0.30
+                    / node_filesystem_size_bytes{mountpoint="/"} < 0.10
                   )
           - refId: B
             datasourceUid: __expr__

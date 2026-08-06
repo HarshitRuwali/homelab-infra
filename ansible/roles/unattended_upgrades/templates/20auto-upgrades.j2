@@ -12,5 +12,16 @@ APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Download-Upgradeable-Packages "0";
 APT::Periodic::Unattended-Upgrade "0";
 {% endif %}
+// AutocleanInterval alone is NOT enough, and the difference matters on the
+// small-rootfs guests. `autoclean` only deletes .debs that can no longer be
+// downloaded from any configured repo; every package still current stays in
+// /var/cache/apt/archives forever. Under this fleet's `o=*` policy that is a
+// nightly download of everything, so the cache grows without bound:
+// tailscale-router reached 199 MB of archives on a 2.0 GB root and was 94%
+// full, projected to hit zero within a day.
+//
+// CleanInterval runs a real `apt-get clean`. The only cost is re-downloading
+// a package if you reinstall it, which is not a cost worth 200 MB.
 APT::Periodic::AutocleanInterval "7";
+APT::Periodic::CleanInterval "{{ uu_clean_interval_days }}";
 APT::Periodic::Verbose "1";

@@ -1,0 +1,18 @@
+[Unit]
+Description=Daily Docker Compose image update
+
+[Timer]
+OnCalendar={{ docker_update_oncalendar }}
+
+# Spreads the fleet's registry pulls. Docker Hub rate-limits anonymous pulls
+# per source IP and every host here shares one egress address, so firing six
+# hosts at 04:00 exactly is how you get a 429 instead of an update.
+RandomizedDelaySec={{ docker_update_randomized_delay }}
+
+# A host that was powered off through its window still updates once it is
+# back, rather than silently skipping a day. Matters for the Pis.
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

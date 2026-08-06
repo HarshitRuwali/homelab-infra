@@ -42,7 +42,8 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "description": "Time since the most recently booted host came up. Useful for spotting an unplanned reboot: if this drops to minutes and you did not restart anything, something crashed.\n\nDeliberately has no red threshold. A low value is information, not a fault, and the default 'red above 80' threshold made this permanently red because the value is in seconds.",
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}, "unit": "s"}, "overrides": []},
       "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
       "id": 3,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
@@ -52,7 +53,8 @@
     },
     {
       "datasource": {"type": "loki", "uid": "loki"},
-      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "description": "Total log lines ingested from the whole fleet in the last 5 minutes, journal plus Docker. Watch the trend, not the number: a sudden spike is usually one service in a crash loop, and a drop to zero means ingest is broken.",
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}, "unit": "short"}, "overrides": []},
       "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
       "id": 4,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
@@ -64,7 +66,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "Per-host age of the most recent sample. Deliberately NOT filtered by $host: this is the authoritative \"is everyone here\" view and a saved single-host selection must not be able to hide an outage.",
       "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "color-background"}}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 300}, {"color": "red", "value": 900}]}, "unit": "s"}, "overrides": []},
-      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 5},
+      "gridPos": {"h": 9, "w": 9, "x": 0, "y": 5},
       "id": 9,
       "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Age"}]},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "time() - max by (host) (max_over_time(timestamp(up{job=~\"integrations/unix|host-unix\"})[6h:1m]))", "format": "table", "instant": true, "range": false, "refId": "A"}],
@@ -76,7 +78,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "From the update_metrics textfile exporter. Empty until ansible playbooks/update-metrics.yml has run.",
       "fieldConfig": {"defaults": {"min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 20}, {"color": "red", "value": 50}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 9, "w": 7, "x": 12, "y": 5},
+      "gridPos": {"h": 9, "w": 6, "x": 9, "y": 5},
       "id": 10,
       "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by (host) (apt_upgrades_pending{host=~\"$host\"})", "instant": true, "legendFormat": "{{host}}", "range": false, "refId": "A"}],
@@ -85,14 +87,43 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "Nothing in this fleet reboots itself, by policy. This is the count you must action manually.",
+      "description": "Nothing in this fleet reboots itself, by policy. This is the count you must action manually. The table to the right names them.",
       "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}, "unit": "short"}, "overrides": []},
-      "gridPos": {"h": 9, "w": 5, "x": 19, "y": 5},
+      "gridPos": {"h": 9, "w": 3, "x": 15, "y": 5},
       "id": 11,
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum(node_reboot_required{host=~\"$host\"})", "instant": true, "range": false, "refId": "A"}],
       "title": "Reboot Required",
       "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "WHICH machines are waiting on a reboot, and for how long. The count on the left tells you something is pending; this tells you what to go and restart.\n\nfleet_reboot_required_since_timestamp_seconds is emitted by the update_metrics textfile exporter ONLY while a reboot is outstanding, so a row disappears by itself once the host comes back up. The `or` clause is a fallback for a host that reports node_reboot_required but has not yet written the timestamp (a first exporter run), which would otherwise show a count with an empty table.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"align": "auto", "cellOptions": {"type": "color-text"}},
+          "thresholds": {"mode": "absolute", "steps": [{"color": "yellow", "value": null}, {"color": "orange", "value": 259200}, {"color": "red", "value": 604800}]},
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {"h": 9, "w": 6, "x": 18, "y": 5},
+      "id": 12,
+      "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Waiting"}]},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "prometheus"},
+          "editorMode": "code",
+          "expr": "(time() - fleet_reboot_required_since_timestamp_seconds{host=~\"$host\"}) or (node_reboot_required{host=~\"$host\"} == 1) - 1",
+          "format": "table",
+          "instant": true,
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Hosts Needing Reboot",
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true, "role": true}, "renameByName": {"Value": "Waiting", "host": "Host"}}}],
+      "type": "table"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},

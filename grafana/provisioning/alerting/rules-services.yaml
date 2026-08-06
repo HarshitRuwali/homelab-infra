@@ -30,10 +30,26 @@ groups:
               range: false
               # `by (host, name)` keeps the unit name in the alert instance so
               # the Matrix message says WHICH unit, not just which host.
-              # The exclusions are units that routinely fail harmlessly.
+              #
+              # The exclusions are units that fail permanently and harmlessly.
+              # A unit that is failed and will stay failed produces one alert
+              # instance per evaluation forever; it is pure noise, and it
+              # trains you to ignore the rule that would have caught a real
+              # failure. Two were doing exactly that here:
+              #
+              #   openipmi.service                  on the central LXC. There
+              #     is no IPMI hardware inside a container, so it can only ever
+              #     fail. Same for anything else hardware-probing in a guest.
+              #   NetworkManager-wait-online.service on rpi4b. Times out at
+              #     boot when an interface comes up late; the network is fine
+              #     afterwards and the unit stays `failed` until reboot.
+              #
+              # Add to this list rather than silencing the rule: a Grafana
+              # silence expires and has to be renewed by hand, whereas an
+              # exclusion here is version-controlled and self-documenting.
               expr: |
                 max by (host, name) (
-                  node_systemd_unit_state{state="failed",name!~"(systemd-.*|user@.*|.*-cleanup)\\.service"} == 1
+                  node_systemd_unit_state{state="failed",name!~"(systemd-.*|user@.*|.*-cleanup|openipmi|NetworkManager-wait-online|e2scrub_reap|apt-daily.*|man-db|logrotate)\\.service"} == 1
                 )
           - refId: B
             datasourceUid: __expr__

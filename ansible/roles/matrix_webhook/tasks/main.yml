@@ -38,7 +38,7 @@
     state: present
     virtualenv: "{{ matrix_webhook_venv }}"
     virtualenv_command: python3 -m venv
-  notify: restart matrix-webhook
+  notify: Restart matrix-webhook
 
 - name: Make the venv readable by the service user
   ansible.builtin.file:
@@ -65,7 +65,7 @@
     group: "{{ matrix_webhook_user }}"
     mode: "0640"
   no_log: true
-  notify: restart matrix-webhook
+  notify: Restart matrix-webhook
 
 - name: Install the matrix-webhook systemd unit
   ansible.builtin.template:
@@ -74,7 +74,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: restart matrix-webhook
+  notify: Restart matrix-webhook
 
 - name: Enable and start matrix-webhook
   ansible.builtin.systemd:

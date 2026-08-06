@@ -36,9 +36,17 @@
         path: /run/reboot-required
       register: pf_reboot
 
+    # noqa command-instead-of-module: the apt module reports whether a named
+    # package is installed. It cannot simulate a dist-upgrade and count what
+    # WOULD be installed, which is the whole question here.
     - name: Count pending package upgrades
       ansible.builtin.shell:
-        cmd: apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c '^Inst ' || true
+        # pipefail matters: without it the exit status is grep's, so an
+        # apt-get failure is invisible and this silently reports 0 pending.
+        cmd: |
+          set -o pipefail
+          apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c '^Inst ' || true
+        executable: /bin/bash
       register: pf_pending
       changed_when: false
 

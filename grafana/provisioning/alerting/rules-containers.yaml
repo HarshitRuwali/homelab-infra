@@ -1,0 +1,360 @@
+apiVersion: 1
+
+# Container-level alerts, from the cAdvisor exporter in the Alloy collector.
+#
+# PREREQUISITE: these are all silent unless per-container metrics are actually
+# arriving. Group membership in `docker` gets Alloy the docker socket (enough
+# for container LOGS), but cAdvisor additionally needs root to reach
+# /run/containerd/containerd.sock. Without the drop-in installed by
+# roles/alloy_collector, cAdvisor publishes only the root cgroup (id="/") and
+# every rule here evaluates to NoData -> OK, i.e. permanently green and
+# permanently useless. Verify with:
+#
+#   count by (host) (count by (host, name) (container_last_seen{name!=""}))
+#
+# Every rule filters on `name!=""`. The root cgroup and the per-container
+# cgroup slices both carry an `id` but no `name`; only real Docker containers
+# get a name, so this is what separates a container from the machine it runs
+# on.
+
+groups:
+  - orgId: 1
+    name: containers
+    folder: Fleet
+    interval: 1m
+    rules:
+
+      # ---------------------------------------------------------------
+      # A container that keeps restarting is the single highest-signal
+      # container alert: it covers a bad image, a failing healthcheck with
+      # `restart: unless-stopped`, a missing volume, and an OOM loop, and it
+      # does so before any of them become a total outage.
+      #
+      # container_start_time_seconds is a constant per container run, so
+      # changes() counts restarts directly. >2 in 30m tolerates one ordinary
+      # restart (a deploy, an unattended-upgrades docker bounce) without
+      # tolerating a loop.
+      - uid: fleet-container-restart-loop
+        title: Container Restart Loop
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: A container has restarted more than twice in 30 minutes.
+          runbook: "docker ps -a --filter name=<name>; docker logs --tail 200 <name>"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, name) (
+                  changes(container_start_time_seconds{name!=""}[30m])
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [2]}
+
+      # ---------------------------------------------------------------
+      # Distinct from fleet-oom-kills in rules-resources.yaml, which reads the
+      # host-wide node_vmstat_oom_kill counter. That tells you the machine ran
+      # out of memory; this tells you WHICH container the kernel reaped, which
+      # is usually one hitting its own cgroup limit while the host is fine.
+      - uid: fleet-container-oom
+        title: Container OOM Killed
+        condition: C
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: A container was killed by the OOM killer in the last 15 minutes.
+          runbook: "docker inspect <name> --format '{{.HostConfig.Memory}}'; raise the limit or fix the leak"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                sum by (host, name) (
+                  increase(container_oom_events_total{name!=""}[15m])
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # Fires before the OOM kill rather than after it.
+      #
+      # The `> 0` guard on the limit is load-bearing. A container with no
+      # memory limit reports container_spec_memory_limit_bytes as 0 (or as the
+      # host's total, depending on cgroup version), and dividing by it gives
+      # +Inf, which is above any threshold. Without the guard this alert would
+      # fire for every unlimited container in the fleet, which is most of them.
+      - uid: fleet-container-memory-near-limit
+        title: Container Near Its Memory Limit
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A container is using over 90% of its configured memory limit.
+          runbook: "docker stats --no-stream <name>"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                100 * max by (host, name) (
+                  container_memory_working_set_bytes{name!=""}
+                    / on (host, name)
+                  (container_spec_memory_limit_bytes{name!=""} > 0)
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [90]}
+
+      # ---------------------------------------------------------------
+      # CAREFUL: container_health_state does NOT mean what its name suggests.
+      #
+      # cAdvisor reports 0 both for "the healthcheck is failing" AND for "this
+      # image declares no HEALTHCHECK at all". Verified on this fleet:
+      #
+      #   matrix-cloudflared  container_health_state=0  docker: NO-HEALTHCHECK
+      #   qdrant              container_health_state=0  docker: unhealthy
+      #
+      # So the obvious rule, `container_health_state == 0`, alerts forever on
+      # every container that simply never opted in. Most images do not declare
+      # a healthcheck, so that is most of the fleet, permanently.
+      #
+      # The fix is to require evidence the container has ever been healthy:
+      # `max_over_time(...[6h]) == 1` is only true for a container that really
+      # does have a working healthcheck, so a no-healthcheck container (pinned
+      # at 0 forever) can never satisfy it. What remains is exactly the case
+      # worth waking up for: something that WAS passing and now is not.
+      #
+      # Accepted tradeoff: a container unhealthy for more than 6h drops out of
+      # the window and stops alerting. That is deliberate. By then it is a
+      # known-broken thing to go and fix, not news, and the restart-loop and
+      # disappeared rules above still cover it if it actually falls over.
+      #
+      # `for: 10m` because Docker only marks a container unhealthy after
+      # several consecutive probe failures, and a service that is merely slow
+      # to start (Synapse, Immich machine learning) recovers well inside that.
+      - uid: fleet-container-unhealthy
+        title: Container Healthcheck Failing
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: A container that was passing its Docker healthcheck is now failing it.
+          runbook: "docker inspect --format '{{json .State.Health}}' <name> | jq"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 21600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                min by (host, name) (
+                  container_health_state{name!=""} == 0
+                )
+                  and on (host, name)
+                max by (host, name) (
+                  max_over_time(container_health_state{name!=""}[6h]) == 1
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                # A is 0 only for a container that both is failing now and was
+                # passing recently. Anything else produces no series at all,
+                # which noDataState: OK turns into Normal.
+                - evaluator: {type: lt, params: [1]}
+
+      # ---------------------------------------------------------------
+      # The automated container update itself failed, or left something in a
+      # restart loop. Emitted by roles/docker_updates via the textfile
+      # collector, the same path the apt metrics use.
+      #
+      # This is the counterpart to fleet-unattended-upgrades-errors: an
+      # unattended process that changes what is running has to be able to tell
+      # you when it went wrong, or "it updates itself" quietly becomes "it
+      # broke itself three weeks ago".
+      - uid: fleet-docker-update-failed
+        title: Container Update Failed
+        condition: C
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: The nightly Docker Compose update failed or left containers restarting.
+          runbook: "journalctl -u fleet-docker-update.service -n 100; docker compose -p <project> logs --tail 100"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 86400, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host) (fleet_docker_update_failed)
+                  or
+                max by (host) (clamp_max(fleet_docker_containers_restarting, 1))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # The update stopped running at all. A timer that silently stops is the
+      # failure mode you never notice, because nothing alerts and everything
+      # looks fine right up until an image is a year of CVEs behind.
+      #
+      # 50h, not 25h: the timer is daily with up to 30 minutes of jitter, and
+      # a host that was powered off for an evening should not page anyone.
+      - uid: fleet-docker-update-stale
+        title: Container Updates Not Running
+        condition: C
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: No successful Docker Compose update for over 50 hours. The timer may be masked or failing early.
+          runbook: "systemctl list-timers fleet-docker-update.timer; systemctl status fleet-docker-update.service"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 21600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: time() - max by (host) (fleet_docker_update_last_run_timestamp_seconds)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [180000]}
+
+      # ---------------------------------------------------------------
+      # A container that was running and is now gone. Same push-model problem
+      # as fleet-host-down: the series vanishes rather than going to zero. The
+      # 1h max_over_time window keeps the series (and its `name` label) alive
+      # after the container disappears, so the alert can name it; after an
+      # hour the window empties and the alert self-resolves instead of nagging
+      # about something you deliberately removed.
+      #
+      # `role!="workstation"` excludes ubuntu-dev on purpose. A dev box starts
+      # and destroys throwaway containers constantly and every one of them
+      # would fire this. On a server, a container disappearing is news.
+      - uid: fleet-container-disappeared
+        title: Container Disappeared
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: A container stopped reporting and was not deliberately excluded. It may have been stopped, removed, or crashed without restarting.
+          runbook: "docker ps -a --filter name=<name>; docker compose up -d"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                time() - max by (host, name) (
+                  max_over_time(container_last_seen{name!="",role!="workstation"}[1h])
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [600]}

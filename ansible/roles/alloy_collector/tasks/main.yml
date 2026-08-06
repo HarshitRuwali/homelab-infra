@@ -44,6 +44,9 @@
   loop:
     - /etc/alloy
     - "{{ alloy_textfile_dir }}"
+    # Holds the cAdvisor root drop-in below. Created unconditionally so the
+    # "remove it again" task has somewhere to look on non-Docker hosts.
+    - /etc/systemd/system/alloy.service.d
 
 # --- Permissions ---------------------------------------------------------
 # Alloy runs unprivileged. It needs systemd-journal to read the journal, adm
@@ -60,7 +63,82 @@
         ['systemd-journal', 'adm']
         + (['docker'] if alloy_docker_effective else [])
       }}
-  notify: restart alloy
+  notify: Restart alloy
+
+# --- cAdvisor privileges -------------------------------------------------
+# Group membership alone is NOT enough to collect per-container metrics.
+#
+# `docker` group gets Alloy /var/run/docker.sock, which is why container LOGS
+# (loki.source.docker) worked from day one. But cAdvisor also opens
+# /run/containerd/containerd.sock to resolve the overlayfs storage driver, and
+# that socket is root:root 0660 with no group we can join. The failure is
+# per-container and non-fatal, so the exporter kept running and kept
+# publishing exactly one useless series, the root cgroup id="/":
+#
+#   level=error msg="Failed to create existing container:
+#   /system.slice/docker-<id>.scope: unable to create containerd client for
+#   overlayfs storage driver: containerd: cannot unix dial containerd api
+#   service: dial unix /run/containerd/containerd.sock: permission denied"
+#
+# Net effect: `container_cpu_usage_seconds_total{name!=""}` was empty fleet
+# wide, so every container panel rendered "No data" while looking configured.
+#
+# Two ways out. Chowning the containerd socket means editing
+# /etc/containerd/config.toml and restarting containerd, which restarts every
+# container on the host. Running the collector as root does not touch the
+# container runtime at all. Upstream cAdvisor documents root as its
+# requirement, so this is the supported shape rather than a workaround.
+#
+# Scoped deliberately: only hosts that actually run Docker get the drop-in,
+# and it is removed again if Docker goes away, so a host reverts to the
+# unprivileged default on its own.
+- name: Run Alloy as root on Docker hosts so cAdvisor can reach containerd
+  ansible.builtin.copy:
+    content: |
+      # Managed by ansible/roles/alloy_collector.
+      #
+      # cAdvisor needs root to read /run/containerd/containerd.sock,
+      # /var/lib/docker and the per-container cgroup trees. Without this the
+      # exporter only ever reports the root cgroup.
+      #
+      # To revert: delete this file, `systemctl daemon-reload`, restart alloy,
+      # and expect per-container metrics to stop.
+      [Service]
+      User=root
+      Group=root
+    dest: /etc/systemd/system/alloy.service.d/10-cadvisor-root.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: alloy_docker_effective | bool
+  register: alloy_cadvisor_dropin
+  notify: Restart alloy
+
+- name: Remove the cAdvisor root drop-in on non-Docker hosts
+  ansible.builtin.file:
+    path: /etc/systemd/system/alloy.service.d/10-cadvisor-root.conf
+    state: absent
+  when: not (alloy_docker_effective | bool)
+  notify: Restart alloy
+
+# Alloy's WAL and storage path are created by the packaged unit as the alloy
+# user. Once the unit runs as root, root-owned WAL segments appear alongside
+# them. Root can still write those, so nothing breaks now; the hazard is only
+# on the way back, if the drop-in is ever removed and the unprivileged user
+# inherits files it cannot open.
+#
+# Deliberately conditioned on the drop-in having just changed rather than
+# running every time. `recurse: true` re-chowns whatever root wrote since the
+# last run, so an unconditional version reports `changed` on every single play
+# forever, and an Ansible run that is never green is one nobody reads.
+- name: Reclaim the Alloy storage path for the alloy user
+  ansible.builtin.file:
+    path: /var/lib/alloy
+    state: directory
+    owner: alloy
+    group: alloy
+    recurse: true
+  when: alloy_cadvisor_dropin is defined and alloy_cadvisor_dropin.changed
 
 # --- Config --------------------------------------------------------------
 # `validate` runs `alloy fmt` against the candidate file BEFORE it is moved
@@ -76,7 +154,7 @@
     mode: "0644"
     validate: /usr/bin/alloy fmt %s
     backup: true
-  notify: restart alloy
+  notify: Restart alloy
 
 - name: Write the Alloy environment file
   ansible.builtin.template:
@@ -86,7 +164,7 @@
     group: root
     mode: "0600"
   no_log: true
-  notify: restart alloy
+  notify: Restart alloy
 
 # --- Ownership marker ----------------------------------------------------
 # scripts/lxc-install.sh checks for this file and skips write_alloy_config()
@@ -102,6 +180,38 @@
     owner: root
     group: root
     mode: "0644"
+
+# --- Journal retention ---------------------------------------------------
+# Only applied where a group explicitly sets a cap; elsewhere journald keeps
+# its own default and this is a no-op. See defaults/main.yml for why capping
+# is safe once Alloy is shipping.
+- name: Cap the on-disk journal where a limit is set
+  when: journald_system_max_use | length > 0
+  block:
+    - name: Ensure the journald drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the journald size cap
+      ansible.builtin.copy:
+        content: |
+          # Managed by ansible/roles/alloy_collector.
+          # Safe because Alloy ships this journal to Loki; see the role
+          # defaults for the reasoning. Raise or remove journald_system_max_use
+          # in group_vars to change it.
+          [Journal]
+          SystemMaxUse={{ journald_system_max_use }}
+        dest: /etc/systemd/journald.conf.d/10-fleet-size-cap.conf
+        owner: root
+        group: root
+        mode: "0644"
+      # Restarting journald is safe and does not lose anything already
+      # written, but it does need to happen for the cap to take effect.
+      notify: Restart journald
 
 - name: Enable and start Alloy
   ansible.builtin.systemd:

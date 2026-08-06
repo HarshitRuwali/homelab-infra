@@ -30,3 +30,10 @@ uu_package_blacklist: []
 
 uu_upgrade_oncalendar: "*-*-* 03:00"
 uu_upgrade_randomized_delay: 3600
+
+# Days between full `apt-get clean` runs. Under `o=*` the cache accumulates
+# every package downloaded every night, and autoclean does not remove them
+# because they are all still current. 7 keeps a week of .debs, which is enough
+# to reinstall something without a round trip and small enough that a 2 GB
+# rootfs guest does not fill up. Small-disk hosts override this lower.
+uu_clean_interval_days: 7

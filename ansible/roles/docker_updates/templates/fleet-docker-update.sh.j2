@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+# Managed by ansible/roles/docker_updates. Do not edit by hand.
+# Rendered for {{ inventory_hostname }}.
+#
+# Pulls new images for every Docker Compose project on this host and recreates
+# only the containers whose image actually changed, then reclaims the layers
+# that fell out of use.
+#
+# WHY COMPOSE AND NOT WATCHTOWER
+# Watchtower recreates a container from the *running* container's config. That
+# config drifts from the compose file the moment anyone edits the compose file
+# without redeploying, and the drift is silent and unrecoverable: the compose
+# file stops being the source of truth. `docker compose up -d` re-reads the
+# file every time, so the file stays authoritative and this script stays a
+# scheduler rather than a second, competing deployment mechanism.
+#
+# WHY THIS IS SAFE FOR THE DATABASES
+# It is safe because of tag discipline in the compose files, NOT because of
+# anything clever here. `postgres:16-alpine` resolves only to 16.x, so a pull
+# gets patch fixes and can never jump to 17 and refuse to start on a v16 data
+# directory. Fully pinned tags (qdrant/qdrant:v1.9.2) are no-ops.
+#
+# The corollary is the thing to remember: if you ever retag a stateful service
+# to `:latest` or to a bare major like `postgres`, this script will happily
+# perform a destructive major upgrade at 04:00. Pin stateful services, or add
+# them to DOCKER_UPDATE_SKIP_PROJECTS below.
+
+set -uo pipefail
+
+OUT_DIR="{{ update_metrics_dir }}"
+OUT_FILE="$OUT_DIR/{{ docker_update_metrics_file }}"
+TMP_FILE="$(mktemp "$OUT_DIR/.docker-update.XXXXXX")"
+
+SKIP_PROJECTS="{{ docker_update_skip_projects | join(' ') }}"
+PRUNE="{{ docker_update_prune | ternary('yes', 'no') }}"
+HEALTH_WAIT={{ docker_update_health_wait_seconds }}
+
+trap 'rm -f "$TMP_FILE"' EXIT
+
+started=$(date +%s)
+failed=0
+projects_seen=0
+projects_changed=0
+containers_recreated=0
+
+log() { echo "fleet-docker-update: $*"; }
+
+# ---------------------------------------------------------------------------
+# Discover Compose projects from the RUNNING containers rather than by
+# scanning the filesystem for compose files. Scanning finds abandoned copies,
+# half-finished experiments and backups; the labels describe only what is
+# actually deployed right now.
+#
+# config_files is carried through because a project may not use the default
+# docker-compose.yml name, and `docker compose` in the wrong directory with
+# the wrong file silently creates a SECOND stack rather than updating the
+# existing one.
+# ---------------------------------------------------------------------------
+discover() {
+  local cid
+  for cid in $(docker ps -q 2>/dev/null); do
+    docker inspect "$cid" --format \
+      '{{ '{{' }}index .Config.Labels "com.docker.compose.project"{{ '}}' }}|{{ '{{' }}index .Config.Labels "com.docker.compose.project.working_dir"{{ '}}' }}|{{ '{{' }}index .Config.Labels "com.docker.compose.project.config_files"{{ '}}' }}' \
+      2>/dev/null
+  done | grep -v '^|' | sort -u
+}
+
+is_skipped() {
+  local p="$1" s
+  for s in $SKIP_PROJECTS; do
+    [ "$p" = "$s" ] && return 0
+  done
+  return 1
+}
+
+# Image IDs currently backing this project's containers. Comparing this before
+# and after is how we know something really changed: `docker compose pull`
+# reports "Pulled" even when every layer was already local, so its output is
+# not a reliable signal.
+project_image_ids() {
+  local proj="$1" cid
+  for cid in $(docker ps -q --filter "label=com.docker.compose.project=$proj" 2>/dev/null); do
+    docker inspect "$cid" --format '{{ '{{' }}.Image{{ '}}' }}' 2>/dev/null
+  done | sort
+}
+
+# ---------------------------------------------------------------------------
+while IFS='|' read -r proj workdir configs; do
+  [ -n "$proj" ] || continue
+  projects_seen=$((projects_seen + 1))
+
+  if is_skipped "$proj"; then
+    log "skipping $proj (in skip list)"
+    continue
+  fi
+
+  if [ ! -d "$workdir" ]; then
+    log "ERROR $proj: working_dir $workdir does not exist, cannot update"
+    failed=1
+    continue
+  fi
+
+  # Build the -f arguments. config_files is a comma-separated absolute path
+  # list in every Compose v2 version we run.
+  compose_args=(--project-name "$proj" --project-directory "$workdir")
+  if [ -n "$configs" ]; then
+    IFS=',' read -ra cfgs <<< "$configs"
+    for c in "${cfgs[@]}"; do
+      [ -f "$c" ] && compose_args+=(-f "$c")
+    done
+  fi
+
+  before="$(project_image_ids "$proj")"
+
+  # --ignore-pull-failures is required, not defensive. Locally built images
+  # (ubuntu-dev's `fastapi`, built from a Dockerfile with no registry) have
+  # nothing to pull, and without this flag one unpullable service aborts the
+  # pull for every other service in the same project.
+  log "pulling $proj"
+  if ! docker compose "${compose_args[@]}" pull --ignore-pull-failures 2>&1 | sed "s/^/  [$proj] /"; then
+    log "ERROR $proj: pull failed"
+    failed=1
+    continue
+  fi
+
+  # Recreates ONLY containers whose image changed. Deliberately no
+  # --remove-orphans: that deletes containers this project did not create,
+  # which on a shared host means deleting something a human started by hand.
+  log "applying $proj"
+  if ! docker compose "${compose_args[@]}" up -d 2>&1 | sed "s/^/  [$proj] /"; then
+    log "ERROR $proj: up -d failed"
+    failed=1
+    continue
+  fi
+
+  after="$(project_image_ids "$proj")"
+  if [ "$before" != "$after" ]; then
+    projects_changed=$((projects_changed + 1))
+    changed_here=$(comm -13 <(echo "$before") <(echo "$after") | wc -l)
+    containers_recreated=$((containers_recreated + changed_here))
+    log "$proj: $changed_here container(s) now on a new image"
+  else
+    log "$proj: already up to date"
+  fi
+done < <(discover)
+
+# ---------------------------------------------------------------------------
+# Verify the host actually came back up. A pull that succeeds and an `up -d`
+# that returns 0 can still leave a container crash-looping on a new image, and
+# that is precisely the case worth alerting on.
+# ---------------------------------------------------------------------------
+if [ "$projects_changed" -gt 0 ] && [ "$HEALTH_WAIT" -gt 0 ]; then
+  log "waiting ${HEALTH_WAIT}s for containers to settle"
+  sleep "$HEALTH_WAIT"
+fi
+
+running=$(docker ps -q 2>/dev/null | wc -l)
+unhealthy=$(docker ps --filter health=unhealthy -q 2>/dev/null | wc -l)
+restarting=$(docker ps --filter status=restarting -q 2>/dev/null | wc -l)
+
+if [ "$restarting" -gt 0 ]; then
+  log "ERROR $restarting container(s) restarting after update"
+  failed=1
+fi
+
+# ---------------------------------------------------------------------------
+# Reclaim space. `prune -f` removes DANGLING images only: layers no longer
+# referenced by any tag, which after a pull means the images we just replaced.
+#
+# Never `prune -a`. That deletes any image with no RUNNING container, which
+# includes the image of anything deliberately stopped, and turns a routine
+# cleanup into a multi-gigabyte re-download the next time you start it.
+# ---------------------------------------------------------------------------
+reclaimed=0
+if [ "$PRUNE" = "yes" ]; then
+  reclaimed_raw=$(docker image prune -f 2>/dev/null | grep -oE 'Total reclaimed space: .*' || true)
+  log "${reclaimed_raw:-Total reclaimed space: 0B}"
+  # Report bytes so the metric is aggregatable; parse the human string back.
+  reclaimed=$(echo "${reclaimed_raw#Total reclaimed space: }" | awk '
+    /GB$/ {printf "%d", $0 * 1000000000; exit}
+    /MB$/ {printf "%d", $0 * 1000000; exit}
+    /kB$/ {printf "%d", $0 * 1000; exit}
+    /B$/  {printf "%d", $0; exit}
+    {print 0}')
+fi
+[ -n "$reclaimed" ] || reclaimed=0
+
+finished=$(date +%s)
+
+# ---------------------------------------------------------------------------
+# Write metrics to a temp file and rename. The textfile collector will happily
+# read a half-written file and export garbage otherwise; rename is atomic.
+# ---------------------------------------------------------------------------
+{
+  echo "# HELP fleet_docker_update_last_run_timestamp_seconds When the container update last completed."
+  echo "# TYPE fleet_docker_update_last_run_timestamp_seconds gauge"
+  echo "fleet_docker_update_last_run_timestamp_seconds $finished"
+
+  echo "# HELP fleet_docker_update_duration_seconds How long the last container update took."
+  echo "# TYPE fleet_docker_update_duration_seconds gauge"
+  echo "fleet_docker_update_duration_seconds $((finished - started))"
+
+  echo "# HELP fleet_docker_update_failed 1 if the last container update hit an error."
+  echo "# TYPE fleet_docker_update_failed gauge"
+  echo "fleet_docker_update_failed $failed"
+
+  echo "# HELP fleet_docker_compose_projects Compose projects running on this host."
+  echo "# TYPE fleet_docker_compose_projects gauge"
+  echo "fleet_docker_compose_projects $projects_seen"
+
+  echo "# HELP fleet_docker_projects_updated Compose projects whose images changed in the last run."
+  echo "# TYPE fleet_docker_projects_updated gauge"
+  echo "fleet_docker_projects_updated $projects_changed"
+
+  echo "# HELP fleet_docker_containers_recreated Containers moved onto a new image in the last run."
+  echo "# TYPE fleet_docker_containers_recreated gauge"
+  echo "fleet_docker_containers_recreated $containers_recreated"
+
+  echo "# HELP fleet_docker_image_bytes_reclaimed Bytes freed by pruning dangling images."
+  echo "# TYPE fleet_docker_image_bytes_reclaimed gauge"
+  echo "fleet_docker_image_bytes_reclaimed $reclaimed"
+
+  echo "# HELP fleet_docker_containers_running Containers running after the update."
+  echo "# TYPE fleet_docker_containers_running gauge"
+  echo "fleet_docker_containers_running $running"
+
+  echo "# HELP fleet_docker_containers_unhealthy Containers reporting an unhealthy Docker healthcheck."
+  echo "# TYPE fleet_docker_containers_unhealthy gauge"
+  echo "fleet_docker_containers_unhealthy $unhealthy"
+
+  echo "# HELP fleet_docker_containers_restarting Containers stuck restarting after the update."
+  echo "# TYPE fleet_docker_containers_restarting gauge"
+  echo "fleet_docker_containers_restarting $restarting"
+} > "$TMP_FILE"
+
+chmod 0644 "$TMP_FILE"
+mv -f "$TMP_FILE" "$OUT_FILE"
+trap - EXIT
+
+log "done in $((finished - started))s: $projects_seen project(s), $projects_changed updated, $containers_recreated container(s) recreated, failed=$failed"
+exit 0

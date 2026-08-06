@@ -26,3 +26,15 @@ alloy_systemd_unit_exclude: '.+\\.(automount|device|mount|scope|slice)'
 
 # The central node pushes over loopback and lets nginx own auth.
 collector_basic_auth_required: true
+
+# Cap on the on-disk journal, written to /etc/systemd/journald.conf.d.
+#
+# This belongs to the collector role rather than to a generic "base" role
+# because shipping the journal is what makes capping it safe: Alloy forwards
+# every line to Loki within seconds, so the local journal only has to cover
+# the gap between a write and its shipment, plus enough history to make
+# `journalctl` useful over SSH. Central retention is what you actually query.
+#
+# Empty string leaves journald's own default (10% of the filesystem) alone.
+# Set it per group for hosts where 10% is too much: see group_vars/proxmox.
+journald_system_max_use: ""

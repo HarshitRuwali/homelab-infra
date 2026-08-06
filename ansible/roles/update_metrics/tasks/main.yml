@@ -37,7 +37,7 @@
     owner: root
     group: root
     mode: "0755"
-  notify: run fleet-update-metrics
+  notify: Run fleet-update-metrics
 
 - name: Install the update-metrics systemd service
   ansible.builtin.template:
@@ -47,8 +47,8 @@
     group: root
     mode: "0644"
   notify:
-    - reload systemd
-    - run fleet-update-metrics
+    - Reload systemd
+    - Run fleet-update-metrics
 
 - name: Install the update-metrics systemd timer
   ansible.builtin.template:
@@ -57,7 +57,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: reload systemd
+  notify: Reload systemd
 
 - name: Enable and start the update-metrics timer
   ansible.builtin.systemd:
@@ -65,6 +65,16 @@
     enabled: true
     state: started
     daemon_reload: true
+
+# `enabled` only, never `state`. The unit's [Install] section wires it to
+# multi-user.target so a reboot refreshes the metrics immediately instead of
+# waiting out RandomizedDelaySec; see the service template for why. Setting
+# state here as well would run the apt simulation on every play, which on a Pi
+# is ~30s of SD-card IO for nothing.
+- name: Enable the update-metrics service so a reboot refreshes it at once
+  ansible.builtin.systemd:
+    name: fleet-update-metrics.service
+    enabled: true
 
 - name: Flush handlers so metrics exist before we verify them
   ansible.builtin.meta: flush_handlers

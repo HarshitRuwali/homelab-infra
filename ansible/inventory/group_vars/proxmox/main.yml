@@ -30,3 +30,17 @@ alloy_enable_docker: false
 # Kernel autoremoval stays off: losing the kernel this box booted from is not
 # worth the disk saving on a hypervisor-adjacent host.
 uu_remove_unused_kernels: false
+
+# --- Small rootfs ---
+# tailscale-router has a 2.0 GB root disk. It hit 94% used (124 MB free) with
+# 199 MB of apt archives and 192 MB of journal, and predict_linear had it
+# reaching zero inside 24 hours. Under `o=*` the apt cache refills every
+# night, so the weekly default is too slack here: clean daily.
+uu_clean_interval_days: 1
+
+# Same reasoning for the journal. Alloy ships everything to Loki within
+# seconds, so the on-disk journal is only a local buffer for the window
+# between a write and its shipment, plus whatever you want for reading
+# `journalctl` over SSH. 64 MB is plenty for both; the default was unbounded,
+# which on this host meant 10% of the entire disk.
+journald_system_max_use: 64M

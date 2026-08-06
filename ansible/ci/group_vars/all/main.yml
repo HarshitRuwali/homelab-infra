@@ -1,0 +1,7 @@
+vault_collector_basic_auth_password: ci-placeholder
+vault_grafana_admin_password: ci-placeholder
+vault_matrix_homeserver_url: https://matrix.example.com
+vault_matrix_bot_mxid: "@ci:example.com"
+vault_matrix_bot_password: ci-placeholder
+vault_matrix_webhook_api_key: ci-placeholder
+vault_matrix_alert_room_id: "!ci:example.com"

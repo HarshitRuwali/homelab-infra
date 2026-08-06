@@ -1,5 +1,5 @@
 ---
-- name: restart matrix-webhook
+- name: Restart matrix-webhook
   ansible.builtin.systemd:
     name: matrix-webhook
     state: restarted

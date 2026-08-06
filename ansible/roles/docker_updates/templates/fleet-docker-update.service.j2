@@ -1,0 +1,35 @@
+[Unit]
+Description=Pull and apply Docker Compose image updates for the fleet
+Documentation=https://github.com/HarshitRuwali/monitorting-stack
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart={{ docker_update_script }}
+
+# Pulling several GB of image layers should not starve whatever the host is
+# actually for. Immich's server image alone is multiple gigabytes.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+
+# Generous: a slow pull on a Pi plus the post-update health wait. The timer
+# only fires once a day, so a long ceiling costs nothing and a short one turns
+# a slow network into a spurious failure.
+TimeoutStartSec=3600
+
+# Runs as root because it needs the Docker socket. No sandboxing directives
+# here on purpose: ProtectSystem/PrivateTmp break `docker compose`, which
+# needs to read arbitrary compose files, .env files and bind-mount sources
+# from wherever the user keeps them (/home/harshit, /home/sp00f, /root).
+# The security boundary for this script is the Docker socket, which is
+# already root-equivalent; sandboxing the client would be theatre.
+
+# Deliberately NO [Install] section. Unlike fleet-update-metrics, which is
+# cheap and wants to run at boot so the dashboard is honest immediately, this
+# one pulls gigabytes and restarts services. Triggering it on every boot would
+# mean a host that just came back from maintenance immediately re-downloads
+# and bounces its whole stack. The timer owns the schedule; run it by hand
+# with `systemctl start fleet-docker-update.service` when you want it now.

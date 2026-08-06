@@ -15,7 +15,7 @@
     group: grafana
     mode: "0640"
   loop: "{{ grafana_alerting_static_files }}"
-  notify: restart grafana-server
+  notify: Restart grafana-server
 
 - name: Render the inventory-derived availability rules
   ansible.builtin.template:
@@ -24,7 +24,7 @@
     owner: root
     group: grafana
     mode: "0640"
-  notify: restart grafana-server
+  notify: Restart grafana-server
 
 # The contact point references these with $__env{}. Grafana resolves them at
 # provisioning time from its own environment, so they must be in the unit's
@@ -39,10 +39,12 @@
     mode: "0600"
     create: true
   loop:
-    - { key: MATRIX_WEBHOOK_API_KEY, value: "{{ vault_matrix_webhook_api_key }}" }
-    - { key: MATRIX_ALERT_ROOM_ID, value: "{{ vault_matrix_alert_room_id }}" }
+    - key: MATRIX_WEBHOOK_API_KEY
+      value: "{{ vault_matrix_webhook_api_key }}"
+    - key: MATRIX_ALERT_ROOM_ID
+      value: "{{ vault_matrix_alert_room_id }}"
   no_log: true
-  notify: restart grafana-server
+  notify: Restart grafana-server
 
 # Grafana reads provisioning ONLY at startup. Copying files without a restart
 # is a silent no-op, so flush before verifying.
@@ -68,11 +70,18 @@
   register: ga_rules
   no_log: true
 
+# One probe per provisioning file that ships rules. Grafana aborts alerting
+# provisioning for ALL files when any one of them fails to parse, and it does
+# so without failing startup, so a typo in a single file silently leaves the
+# whole fleet unalerted. Checking one uid per file turns that into a red play.
 - name: Assert the expected rules are live
   ansible.builtin.assert:
     that:
-      - "'fleet-host-down' in (ga_rules.json | map(attribute='uid') | list)"
-      - "'fleet-dpkg-wedged' in (ga_rules.json | map(attribute='uid') | list)"
+      - "'fleet-host-down' in (ga_rules.json | map(attribute='uid') | list)"          # rules-availability (templated)
+      - "'fleet-disk-high' in (ga_rules.json | map(attribute='uid') | list)"          # rules-resources
+      - "'fleet-dpkg-wedged' in (ga_rules.json | map(attribute='uid') | list)"        # rules-updates
+      - "'fleet-systemd-unit-failed' in (ga_rules.json | map(attribute='uid') | list)"  # rules-services
+      - "'fleet-container-restart-loop' in (ga_rules.json | map(attribute='uid') | list)"  # rules-containers
     fail_msg: >-
       Alerting provisioning did not load. Check:
       journalctl -u grafana-server -n 100 | grep -i provision

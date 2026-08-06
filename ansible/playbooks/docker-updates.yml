@@ -1,0 +1,34 @@
+---
+# Keep Docker images and containers current on every auto-patched host.
+#
+# Targets `autoupdate`, the same group that controls apt patching, so there is
+# exactly ONE place in the inventory that decides whether a machine updates
+# itself. Hosts in that group without a Docker socket are skipped by the role
+# as not applicable.
+#
+# Normal run: installs the script, unit and timer, and leaves the first real
+# update to the 04:00 window.
+#
+#   ansible-playbook playbooks/docker-updates.yml
+#
+# To pull and recreate immediately (this restarts services):
+#
+#   ansible-playbook playbooks/docker-updates.yml -e docker_update_run_now=true
+#
+# Stage it the first time. `--limit ubuntu-dev` has one locally built
+# container and nothing depends on it, which makes it the right canary;
+# `--limit matrix` is the one to do last, because updating it restarts the
+# Synapse homeserver that the alert relay posts into.
+
+- name: Configure Docker container and image updates
+  hosts: autoupdate
+  become: true
+  vars:
+    # Serialised on purpose. These pulls are large and every host shares one
+    # egress IP, so running the fleet in parallel is how you meet Docker Hub's
+    # anonymous rate limit. It also means a bad image takes out one host at a
+    # time and you can stop.
+    ansible_ssh_pipelining: true
+  serial: 1
+  roles:
+    - docker_updates

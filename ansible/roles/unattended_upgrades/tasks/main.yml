@@ -46,7 +46,7 @@
     group: root
     mode: "0644"
   when: uu_enable_installs | default(true)
-  notify: reload systemd
+  notify: Reload systemd
 
 - name: Flush handlers before touching timers
   ansible.builtin.meta: flush_handlers

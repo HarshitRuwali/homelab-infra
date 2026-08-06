@@ -1,0 +1,44 @@
+---
+docker_update_script: /usr/local/bin/fleet-docker-update.sh
+docker_update_metrics_file: fleet-docker.prom
+
+# Same directory the apt exporter writes to, so both sets of numbers reach
+# Prometheus through the one node_exporter textfile collector with the same
+# `host` label. Defined here rather than borrowed from the update_metrics role
+# because roles do not see each other's defaults: running this playbook on its
+# own would otherwise fail with "update_metrics_dir is undefined". Both point
+# at alloy_textfile_dir in group_vars/all, which is the single source of truth.
+update_metrics_dir: "{{ alloy_textfile_dir }}"
+
+# 04:00, deliberately AFTER the 03:00 unattended-upgrades window.
+#
+# They must not overlap. A docker-ce or containerd.io upgrade from apt
+# restarts the daemon and bounces every container on the host; if this script
+# is mid-`up -d` at that moment it sees containers vanish underneath it and
+# reports a spurious failure. An hour is more than the observed apt run time
+# on the slowest host here.
+docker_update_oncalendar: "*-*-* 04:00"
+
+# Same reasoning as the apt timer: stagger the fleet so several hosts do not
+# pull from ghcr.io and Docker Hub simultaneously and hit rate limits. Docker
+# Hub's anonymous pull limit is per IP, and every host here egresses through
+# the same address.
+docker_update_randomized_delay: 1800
+
+# Compose projects never to touch, by project name. Empty by default.
+#
+# Use this for a stack whose upgrade needs a human: a database you have
+# deliberately tagged loosely, something mid-migration, or anything where the
+# upgrade notes say "back up first". Everything else is safer handled by
+# pinning the tag in the compose file, which is a statement about the service
+# rather than about this scheduler.
+docker_update_skip_projects: []
+
+# Prune dangling images after updating. This is what stops /var/lib/docker
+# growing by the size of one image set per release.
+docker_update_prune: true
+
+# Seconds to wait after recreating containers before checking whether they
+# stayed up. Long enough for a database to finish its startup checks and for a
+# crash loop to become visible; short enough not to stall the timer.
+docker_update_health_wait_seconds: 60
