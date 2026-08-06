@@ -65,9 +65,10 @@ The direct-LXC installer writes an nginx reverse proxy for those paths. For Dock
 
 ## Fleet Rollout (Ansible)
 
-Ansible is the primary way to manage collectors and patching across the fleet.
-It owns the Alloy config on every host, deploys the apt/reboot metrics
-exporter, and configures auto-applied security updates (never auto-rebooting).
+Ansible is the primary way to manage the fleet. It owns the Alloy config on
+every host, deploys the apt/reboot metrics exporter, configures auto-applied
+package updates (never auto-rebooting), schedules Docker image updates, and
+provisions alerting.
 
 ```bash
 brew install ansible                            # macOS
@@ -76,14 +77,19 @@ brew install ansible                            # macOS
 
 cd ansible
 ansible-playbook playbooks/preflight.yml        # read-only
-ansible-playbook playbooks/collectors.yml --limit ubuntu-dev
+ansible-playbook playbooks/site.yml             # everything, idempotent
 ```
 
-Runs from macOS or from a Linux box on the Proxmox LAN (`ubuntu-dev`). Add
+Runs from macOS or from a Linux box on the Proxmox LAN. Add
 `-e lan_use_jump_host=false` when running from the LAN itself.
 
-See [Fleet Rollout with Ansible](docs/fleet-ansible.md) for the full ordered
-procedure, verification queries, and alert testing.
+`site.yml` configures the machinery; it does not itself install packages or
+pull images. Those apply on a schedule: **03:00** for packages, **04:00** for
+containers, both with jitter, and nothing ever reboots a machine.
+
+See [Fleet management](docs/fleet/index.md) for the full procedure,
+[What runs when](docs/fleet/schedules.md) for the schedules, and
+[Controller setup](docs/fleet/setup.md) for first-time setup.
 
 The manual per-host instructions below still work and are useful for
 bootstrapping a brand-new central LXC, but for an existing fleet prefer the
@@ -131,14 +137,18 @@ scripts/monitoring.sh collector status
 Grafana automatically loads dashboards from `grafana/dashboards`:
 
 - `System Overview`: CPU, memory, disk, network, uptime, and host count.
-- `Services and Logs`: systemd unit state, Docker metrics, journal logs, and Docker logs.
-- `VM Fleet Overview`: fleet health, top resource consumers, and warnings/errors.
+- `Services and Logs`: systemd unit state, a per-container inventory, journal logs, and container logs.
+- `VM Fleet Overview`: fleet freshness, pending updates, which hosts need a reboot, top resource consumers, and warnings/errors.
+
+See [Dashboards](docs/monitoring/dashboards.md) for what each panel is for.
 
 ## Repo Layout
 
 ```text
 alloy/                         Collector pipeline config
-docs/                          Architecture, rollout, security, and operations notes
+ansible/                       Fleet automation: inventory, roles, playbooks
+ansible/playbooks/site.yml     Everything, in dependency order
+docs/                          MkDocs source (mkdocs.yml at the repo root)
 grafana/dashboards/            Provisioned Grafana dashboards
 grafana/provisioning/          Grafana datasource and dashboard provisioning
 loki/                          Loki local filesystem storage config
@@ -152,8 +162,33 @@ docker-compose.collector.yml   Collector-only stack for each VM
 
 ## Docs
 
-- [Fleet Rollout with Ansible](docs/fleet-ansible.md)
-- [Architecture](docs/architecture.md)
-- [VM and LXC Collector Rollout](docs/vm-collector.md)
-- [Operations](docs/operations.md)
-- [Security Notes](docs/security.md)
+The full documentation is a MkDocs site, built and checked locally. The only
+prerequisite is [uv](https://docs.astral.sh/uv/); it resolves everything else
+from `pyproject.toml`.
+
+```bash
+uv run --group docs mkdocs serve   # live preview on http://127.0.0.1:8000
+uv run --group docs mkdocs build   # render the static site into site/
+```
+
+Published to GitHub Pages by `.github/workflows/docs.yml` on push to `master`.
+That workflow is docs-only: it never runs a playbook, never touches the fleet,
+and uses no repository secrets. Requires Pages set to **GitHub Actions** once
+in repository settings.
+
+| Section | Start at |
+|---|---|
+| Architecture and the push model | [docs/architecture/](docs/architecture/index.md) |
+| Fleet management, patching, container updates | [docs/fleet/](docs/fleet/index.md) |
+| Collectors, dashboards, alerting | [docs/monitoring/](docs/monitoring/index.md) |
+| Lifecycle, retention, runbooks | [docs/operations/](docs/operations/index.md) |
+| Playbooks, metrics, variables | [docs/reference/](docs/reference/playbooks.md) |
+| Security notes | [docs/security.md](docs/security.md) |
+
+Frequently wanted pages:
+
+- [What runs when](docs/fleet/schedules.md): every timer and how to force it
+- [Troubleshooting](docs/fleet/troubleshooting.md): failure modes seen in production
+- [Runbooks](docs/operations/runbooks.md): recovery steps per alert
+- [Metrics catalogue](docs/reference/metrics.md): everything this repo adds
+- [Building the docs](docs/reference/tooling.md): local preview and publishing

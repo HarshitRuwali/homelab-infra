@@ -1,4 +1,6 @@
-# Operations
+# Lifecycle
+
+Starting, stopping and inspecting the central stack.
 
 ## Lifecycle Script
 
@@ -90,13 +92,5 @@ In Grafana Explore, use Loki queries like:
 {host="main-server"} |~ "(?i)(error|failed|fatal|panic)"
 ```
 
-## Retention
 
-- Prometheus: set `PROMETHEUS_RETENTION` in `.env`, for example `30d` or `90d`.
-- Loki: edit `limits_config.retention_period` in `loki/loki-config.yml`.
-
-Restart the stack after retention config changes:
-
-```bash
-scripts/monitoring.sh central restart
-```
+Retention is covered separately in [Retention](retention.md).

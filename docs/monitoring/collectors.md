@@ -1,5 +1,10 @@
 # VM and LXC Collector Rollout
 
+!!! tip "Prefer Ansible"
+    For an existing fleet use `ansible-playbook playbooks/site.yml --limit <host>`.
+    It is the single source of truth for collector config. The manual paths
+    below are for bootstrapping a host Ansible cannot yet reach.
+
 Use `docker-compose.collector.yml` on Docker-based VMs. Use `scripts/lxc-install.sh collector` when you want Alloy installed directly inside a Debian/Ubuntu LXC.
 
 ## Requirements
@@ -75,7 +80,7 @@ On the central server:
 
 ```bash
 curl 'http://localhost:9090/api/v1/query' --data-urlencode 'query=node_uname_info'
-curl http://localhost:3100/ready
+curl http://127.0.0.1:3100/ready
 curl -u collector:<collector-password> https://monitor.example.com/loki/api/v1/labels
 ```
 
