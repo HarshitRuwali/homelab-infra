@@ -55,6 +55,23 @@ jobs:
         with:
           enable-cache: true
 
+      # `enablement: true` turns Pages on via the API if it is not already
+      # configured, so a fresh clone of this repo publishes without anyone
+      # visiting Settings first.
+      #
+      # This exists because the first run DID fail here: the Verify job passed
+      # every check, then `deploy-pages` failed with a message that does not
+      # say what is wrong. `GET /repos/<owner>/<repo>/pages` returned 404,
+      # meaning Pages had simply never been enabled.
+      #
+      # If this step fails with "Resource not accessible by integration", the
+      # token is not allowed to enable Pages. Enable it once by hand instead:
+      #   Settings -> Pages -> Source: GitHub Actions
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
       # --strict promotes broken internal links and pages missing from the
       # nav into build failures rather than warnings nobody reads.
       #

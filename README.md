@@ -1,170 +1,183 @@
-# Persistent VM Monitoring Stack
+# Homelab Monitoring Stack
 
-Self-hosted monitoring for a Proxmox host, Linux VMs, and Docker-based applications. The stack uses Grafana for dashboards, Prometheus for metrics, Loki for logs, and Grafana Alloy as the collector agent.
+Self-hosted monitoring and patch automation for a Proxmox and Tailscale
+homelab. Grafana for dashboards, Prometheus for metrics, Loki for logs, Grafana
+Alloy as the collector on every host, and Ansible to keep the whole fleet
+configured, patched and alerting.
 
-## Stack
+**Full documentation:** [`docs/`](docs/index.md), or build the site locally with
+`uv run --group docs mkdocs serve`.
 
-- `grafana`: dashboards and Explore UI on port `3000`.
-- `prometheus`: persistent metrics storage on port `9090`.
-- `loki`: persistent log storage on port `3100`.
-- `collector`: Grafana Alloy agent for host metrics, systemd state, Docker metrics, journal logs, and Docker logs.
+## What it does
 
-Prometheus, Loki, Grafana, and Alloy state are stored in external Docker volumes. External volumes survive container restarts and are not removed by `docker compose down -v`.
+| | |
+|---|---|
+| **Collects** | Alloy on every host ships host metrics, systemd journal logs, container metrics and container logs to one place |
+| **Patches** | `unattended-upgrades` applies every origin nightly and **never reboots**; container images update from their Compose files on a separate schedule |
+| **Alerts** | Grafana unified alerting posts to Matrix through a local relay; rules are provisioned from files, not clicked into the UI |
+| **Proves it** | Every automated action writes a metric, so "it updates itself" cannot quietly become "it broke itself three weeks ago" |
 
-## Quick Start
+## Components
 
-1. Create a local environment file:
+**Central stack**, one host:
 
-```bash
-cp .env.example .env
-```
+| Service | Bind | Purpose |
+|---|---|---|
+| Grafana | `127.0.0.1:3000` | dashboards and unified alerting |
+| Prometheus | `127.0.0.1:9090` | metrics, remote-write receiver |
+| Loki | `127.0.0.1:3100` | logs |
+| Alloy | `127.0.0.1:12345` | the central node's own telemetry |
+| nginx | `:80` | reverse proxy, Basic Auth on ingest paths |
+| matrix-webhook | `127.0.0.1:4785` | Grafana to Matrix relay |
 
-2. Edit `.env` and set at least:
+**Every other host** runs Alloy only, pushing to the central node over HTTPS.
 
-```bash
-GRAFANA_ADMIN_PASSWORD=<strong-password>
-COLLECTOR_BASIC_AUTH_PASSWORD=<strong-collector-password>
-MONITOR_HOSTNAME=<central-server-name>
-```
+Two deployment shapes are supported: **direct LXC** (native systemd, via
+`scripts/lxc-install.sh central`) and **Docker Compose** (`docker-compose.yml`).
+State lives in external Docker volumes or `/var/lib/*` respectively, and
+survives `docker compose down -v`.
 
-For a public domain, also set:
+## Quick start
 
-```bash
-GRAFANA_ROOT_URL=https://monitor.example.com
-GRAFANA_COOKIE_SECURE=true
-PUBLIC_DOMAIN=monitor.example.com
-```
+### Fleet management, the primary path
 
-3. Start the central stack:
-
-```bash
-scripts/monitoring.sh central up
-```
-
-The script creates the external Docker volumes, validates the Compose config, and starts the services.
-
-4. Open Grafana:
-
-```text
-http://127.0.0.1:3000
-```
-
-For a public domain, put a TLS reverse proxy in front of Grafana and expose only the proxy. The default Grafana user is `admin` unless you change `GRAFANA_ADMIN_USER`.
-
-## Public Domain Setup
-
-Do not expose raw Grafana, Prometheus, Loki, or Alloy ports directly to the internet. The secure public shape is:
-
-```text
-https://monitor.example.com/                    -> Grafana login UI
-https://monitor.example.com/prometheus/api/v1/write -> Basic Auth collector metrics ingest
-https://monitor.example.com/loki/api/v1/push         -> Basic Auth collector log ingest
-```
-
-The direct-LXC installer writes an nginx reverse proxy for those paths. For Docker Compose, the service ports bind to `127.0.0.1` by default so you can put your own TLS reverse proxy in front.
-
-## Fleet Rollout (Ansible)
-
-Ansible is the primary way to manage the fleet. It owns the Alloy config on
-every host, deploys the apt/reboot metrics exporter, configures auto-applied
-package updates (never auto-rebooting), schedules Docker image updates, and
+Ansible owns the Alloy config on every host, deploys the apt and reboot metrics
+exporter, configures package patching, schedules container image updates, and
 provisions alerting.
 
 ```bash
 brew install ansible                            # macOS
-# or on Debian/Ubuntu:
-#   python3 -m venv ~/.venvs/ansible && ~/.venvs/ansible/bin/pip install ansible
+# Debian/Ubuntu: python3 -m venv ~/.venvs/ansible
+#                ~/.venvs/ansible/bin/pip install ansible
 
 cd ansible
-ansible-playbook playbooks/preflight.yml        # read-only
+cp inventory/hosts.example.yml inventory/hosts.local.yml   # then edit it
+ansible-playbook playbooks/preflight.yml        # read-only checks
 ansible-playbook playbooks/site.yml             # everything, idempotent
 ```
 
 Runs from macOS or from a Linux box on the Proxmox LAN. Add
 `-e lan_use_jump_host=false` when running from the LAN itself.
 
-`site.yml` configures the machinery; it does not itself install packages or
-pull images. Those apply on a schedule: **03:00** for packages, **04:00** for
-containers, both with jitter, and nothing ever reboots a machine.
+> [!IMPORTANT]
+> `site.yml` **configures** the machinery; it does not itself install packages
+> or pull images. Those apply on a schedule: **03:00** for packages, **04:00**
+> for containers, both with jitter. Nothing ever reboots a machine.
 
-See [Fleet management](docs/fleet/index.md) for the full procedure,
-[What runs when](docs/fleet/schedules.md) for the schedules, and
-[Controller setup](docs/fleet/setup.md) for first-time setup.
+New to Ansible? [Getting started](docs/getting-started/index.md) assumes no
+prior knowledge and uses examples from this repo.
 
-The manual per-host instructions below still work and are useful for
-bootstrapping a brand-new central LXC, but for an existing fleet prefer the
-Ansible path: it is the single source of truth for collector config.
+### Central stack, first install
 
-## Add VM or LXC Collectors
-
-For Docker-based VMs, copy this repository, or at least `docker-compose.collector.yml`, `alloy/config.alloy`, and `scripts/monitoring.sh`, to each VM. Then run:
+<details>
+<summary><b>Direct LXC</b> (native systemd, what this fleet runs)</summary>
 
 ```bash
-export PROMETHEUS_REMOTE_WRITE_URL=https://monitor.example.com/prometheus/api/v1/write
-export LOKI_WRITE_URL=https://monitor.example.com/loki/api/v1/push
-export COLLECTOR_BASIC_AUTH_USER=collector
+export PUBLIC_DOMAIN=monitor.example.com
+export GRAFANA_ADMIN_PASSWORD=<strong-password>
 export COLLECTOR_BASIC_AUTH_PASSWORD=<strong-collector-password>
-export MONITOR_HOSTNAME=<vm-name>
-export MONITOR_ROLE=vm
-scripts/monitoring.sh collector up
+scripts/lxc-install.sh central
 ```
 
-For Debian/Ubuntu LXC collectors without Docker Compose, copy the repository and run the direct installer in collector mode:
+Installs Grafana, Prometheus, Loki and Alloy as systemd services and writes an
+nginx reverse proxy with htpasswd Basic Auth on the ingest paths. Update with
+`scripts/lxc-update.sh central`.
+
+</details>
+
+<details>
+<summary><b>Docker Compose</b></summary>
 
 ```bash
-export PROMETHEUS_REMOTE_WRITE_URL=https://monitor.example.com/prometheus/api/v1/write
-export LOKI_WRITE_URL=https://monitor.example.com/loki/api/v1/push
-export COLLECTOR_BASIC_AUTH_USER=collector
-export COLLECTOR_BASIC_AUTH_PASSWORD=<strong-collector-password>
-export MONITOR_HOSTNAME=<lxc-name>
-export MONITOR_ROLE=lxc
-scripts/lxc-install.sh collector
+cp .env.example .env      # set GRAFANA_ADMIN_PASSWORD, COLLECTOR_BASIC_AUTH_PASSWORD,
+                          # MONITOR_HOSTNAME, and PUBLIC_DOMAIN for a public deployment
+scripts/monitoring.sh central up
 ```
 
-After one or two minutes, the VM or LXC should appear in the dashboard host selector. Use `scripts/lxc-update.sh collector` to update a direct LXC collector.
+Creates the external volumes, validates the config and starts the services.
+Ports bind to `127.0.0.1`, so put your own TLS reverse proxy in front.
 
-## Useful Commands
+</details>
 
-```bash
-scripts/monitoring.sh central status
-scripts/monitoring.sh central logs
-scripts/monitoring.sh central down
-scripts/monitoring.sh collector status
-```
+### Adding a collector by hand
 
-## Dashboards
+Prefer `ansible-playbook playbooks/site.yml --limit <host>`; it is the single
+source of truth for collector config. The manual paths are for bootstrapping a
+host Ansible cannot yet reach, and are documented in
+[Collectors](docs/monitoring/collectors.md).
 
-Grafana automatically loads dashboards from `grafana/dashboards`:
+## Public exposure
 
-- `System Overview`: CPU, memory, disk, network, uptime, and host count.
-- `Services and Logs`: systemd unit state, a per-container inventory, journal logs, and container logs.
-- `VM Fleet Overview`: fleet freshness, pending updates, which hosts need a reboot, top resource consumers, and warnings/errors.
-
-See [Dashboards](docs/monitoring/dashboards.md) for what each panel is for.
-
-## Repo Layout
+Never expose raw Grafana, Prometheus, Loki or Alloy ports to the internet.
 
 ```text
-alloy/                         Collector pipeline config
-ansible/                       Fleet automation: inventory, roles, playbooks
-ansible/playbooks/site.yml     Everything, in dependency order
-docs/                          MkDocs source (mkdocs.yml at the repo root)
-grafana/dashboards/            Provisioned Grafana dashboards
-grafana/provisioning/          Grafana datasource and dashboard provisioning
-loki/                          Loki local filesystem storage config
-prometheus/                    Prometheus scrape/storage config
-scripts/monitoring.sh          Docker setup and lifecycle automation
-scripts/lxc-install.sh         Direct LXC central/collector installer with nginx auth proxy
-scripts/lxc-update.sh          Direct LXC central/collector update and config sync helper
-docker-compose.yml             Central monitoring stack
-docker-compose.collector.yml   Collector-only stack for each VM
+https://monitor.example.com/                         -> Grafana UI
+https://monitor.example.com/prometheus/api/v1/write  -> Basic Auth metrics ingest
+https://monitor.example.com/loki/api/v1/push         -> Basic Auth log ingest
 ```
 
-## Docs
+> [!WARNING]
+> The two ingest paths behave differently: `/prometheus/` **strips** its prefix
+> while `/loki/` **preserves** it. So a Loki query URL is
+> `/loki/api/v1/label/host/values`, and `/loki/ready` is a 404. See
+> [Verification](docs/fleet/verification.md).
 
-The full documentation is a MkDocs site, built and checked locally. The only
-prerequisite is [uv](https://docs.astral.sh/uv/); it resolves everything else
-from `pyproject.toml`.
+See [Security notes](docs/security.md).
+
+## What is provisioned
+
+**3 dashboards**, loaded from `grafana/dashboards/`:
+
+- **VM Fleet Overview**: fleet freshness, pending updates, which hosts need a
+  reboot, top resource consumers, warnings and errors
+- **Services and Logs**: systemd unit state, per-container inventory, journal
+  and container logs
+- **System Overview**: CPU, memory, disk, network, uptime, host count
+
+**Alert rules** in `grafana/provisioning/alerting/`: 21 committed across
+availability, resources, updates, containers and services, plus a
+`rules-availability.yaml` **generated from the inventory** so adding a host
+cannot leave a silent gap in down-detection.
+
+> [!NOTE]
+> This stack is push-based, so `up` is a series each collector pushes about
+> itself. When a host dies the series **vanishes** rather than going to 0, and
+> a naive `up == 0` alert never fires. [The push model](docs/architecture/push-model.md)
+> explains the or-chain that fixes it.
+
+## Repo layout
+
+```text
+ansible/                       Fleet automation
+  playbooks/site.yml             everything, in dependency order
+  inventory/hosts.example.yml    template; hosts.local.yml is gitignored
+  roles/                         alloy_collector, update_metrics,
+                                 unattended_upgrades, docker_updates,
+                                 grafana_alerting, matrix_webhook
+alloy/config.alloy             Docker-collector config (native installs use Ansible)
+grafana/dashboards/            Provisioned dashboards
+grafana/provisioning/          Datasources, dashboards, alerting
+loki/, prometheus/             Server configs
+scripts/lxc-install.sh         Direct LXC installer with nginx auth proxy
+scripts/lxc-update.sh          Direct LXC update and config sync
+scripts/monitoring.sh          Docker Compose lifecycle
+docker-compose.yml             Central stack
+docker-compose.collector.yml   Collector-only stack
+docs/                          MkDocs source (mkdocs.yml at the repo root)
+pyproject.toml, uv.lock        Docs toolchain, managed by uv
+```
+
+> [!CAUTION]
+> `ansible/inventory/hosts.local.yml` is gitignored and must stay that way.
+> This repository is public, and an inventory is a complete map of the estate:
+> ingest endpoint, internal addressing, valid usernames, and which box to hit
+> to blind the monitoring. `group_vars/all/vault.yml` is committed but
+> ansible-vault encrypted; its password lives outside the repo.
+
+## Documentation
+
+31 pages, built with MkDocs Material. The only prerequisite is
+[uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv run --group docs mkdocs serve   # live preview on http://127.0.0.1:8000
@@ -173,22 +186,39 @@ uv run --group docs mkdocs build   # render the static site into site/
 
 Published to GitHub Pages by `.github/workflows/docs.yml` on push to `master`.
 That workflow is docs-only: it never runs a playbook, never touches the fleet,
-and uses no repository secrets. Requires Pages set to **GitHub Actions** once
-in repository settings.
+and uses no repository secrets.
 
 | Section | Start at |
 |---|---|
-| Architecture and the push model | [docs/architecture/](docs/architecture/index.md) |
-| Fleet management, patching, container updates | [docs/fleet/](docs/fleet/index.md) |
-| Collectors, dashboards, alerting | [docs/monitoring/](docs/monitoring/index.md) |
-| Lifecycle, retention, runbooks | [docs/operations/](docs/operations/index.md) |
-| Playbooks, metrics, variables | [docs/reference/](docs/reference/playbooks.md) |
-| Security notes | [docs/security.md](docs/security.md) |
+| Never used Ansible | [Getting started](docs/getting-started/index.md) |
+| Architecture and the push model | [Architecture](docs/architecture/index.md) |
+| Fleet management, patching, container updates | [Fleet](docs/fleet/index.md) |
+| Collectors, dashboards, alerting | [Monitoring](docs/monitoring/index.md) |
+| Lifecycle, retention, runbooks | [Operations](docs/operations/index.md) |
+| Playbooks, metrics, variables | [Reference](docs/reference/playbooks.md) |
+| Security notes | [Security](docs/security.md) |
 
-Frequently wanted pages:
+Frequently wanted:
 
 - [What runs when](docs/fleet/schedules.md): every timer and how to force it
 - [Troubleshooting](docs/fleet/troubleshooting.md): failure modes seen in production
 - [Runbooks](docs/operations/runbooks.md): recovery steps per alert
 - [Metrics catalogue](docs/reference/metrics.md): everything this repo adds
-- [Building the docs](docs/reference/tooling.md): local preview and publishing
+- [Glossary](docs/getting-started/glossary.md): Ansible, monitoring and systemd terms
+
+## Design commitments
+
+- **Machines never reboot themselves**, under any policy. Kernel updates
+  therefore accumulate until a human acts, which is why
+  `fleet-reboot-required-too-long` nags at seven days.
+- **Nothing is held back from patching** except the Raspberry Pi kernel and
+  bootloader, which are unversioned and would leave a running kernel with no
+  modules on disk.
+- **Patching is decided by inventory group membership only**, never a
+  conditional inside a role. A conditional inside a role is one typo away from
+  auto-upgrading a hypervisor.
+- **Alerting is provisioned from files.** Rules edited in the UI are not the
+  source of truth, and rules deleted in the UI do not come back on their own.
+- **Config is owned by Ansible**, not the install scripts.
+  `scripts/lxc-install.sh` is a bootstrap path, guarded by a marker file so it
+  can never revert what Ansible manages.

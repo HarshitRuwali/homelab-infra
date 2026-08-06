@@ -122,12 +122,25 @@ without an empty commit.
 Concurrency is `cancel-in-progress: false` on purpose: a half-finished Pages
 deploy leaves the published site broken, so an in-flight deploy completes.
 
-### One-time setup
+### Enabling Pages
 
-Repository → **Settings** → **Pages** → Source: **GitHub Actions**.
+The workflow enables Pages itself, via `actions/configure-pages@v5` with
+`enablement: true`. A fresh clone of this repo publishes without anyone
+visiting Settings first.
 
-Until that is set, `verify` passes and `deploy` fails. The site then appears
-at `https://<user>.github.io/<repo>/`.
+!!! bug "Why that step exists"
+    The very first run failed exactly here. Every check in `verify` passed,
+    then `deploy-pages` failed with a message that does not say what is wrong.
+    `GET /repos/<owner>/<repo>/pages` returned **404**: Pages had simply never
+    been enabled, and the deploy action cannot enable it.
+
+If the configure step fails with **"Resource not accessible by integration"**,
+the workflow token is not permitted to enable Pages on that account. Do it
+once by hand instead:
+
+**Settings** → **Pages** → Source: **GitHub Actions**
+
+The site then appears at `https://<user>.github.io/<repo>/`.
 
 !!! warning "`site_url` must match where it is served"
     `mkdocs.yml` sets `site_url` to the Pages project path. GitHub serves a
