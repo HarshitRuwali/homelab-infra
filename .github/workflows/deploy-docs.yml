@@ -5,12 +5,10 @@ name: Deploy docs
 # Docs only: it never runs a playbook, never connects to a host, and uses no
 # repository secret. Nothing here can reach the fleet.
 #
-# PREREQUISITE, one time, cannot be automated:
-#   Settings -> Pages -> Source: GitHub Actions
-# Creating a Pages site is an admin-level API call and GITHUB_TOKEN cannot
-# make it, regardless of the `pages: write` permission below. Without it,
-# `build` passes and `deploy` fails with "Resource not accessible by
-# integration".
+# The Pages site is created by `configure-pages` with `enablement: true`, using
+# the `pages: write` permission below. No manual Settings -> Pages step is
+# needed. This only works while the repo is public (or on a plan that includes
+# Pages for private repos); otherwise enable Pages by hand and drop the flag.
 
 on:
   pull_request:
@@ -61,8 +59,15 @@ jobs:
       - name: Build docs
         run: mkdocs build --strict
 
+      # Creates the Pages site on first run if it does not exist yet. Skipped on
+      # pull requests: MkDocs takes its base URL from `site_url` in mkdocs.yml
+      # rather than from this action's outputs, nothing is uploaded on a PR, and
+      # a fork PR has no `pages: write` to enable anything with.
       - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Upload GitHub Pages artifact
         if: github.event_name != 'pull_request'
