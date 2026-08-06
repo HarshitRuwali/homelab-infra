@@ -75,16 +75,15 @@ Safe to re-run. A clean fleet reports `changed=0` on every host.
 ## Reading these docs offline
 
 ```bash
-uv run --group docs mkdocs serve   # live preview on http://127.0.0.1:8000
-uv run --group docs mkdocs build   # render the static site into ./site
+python3 -m venv .venv
+.venv/bin/pip install -r docs/requirements.txt
+.venv/bin/mkdocs serve    # live preview on http://127.0.0.1:8000
+.venv/bin/mkdocs build    # render the static site into ./site
 ```
 
-The only prerequisite is [uv](https://docs.astral.sh/uv/), which resolves
-MkDocs from `pyproject.toml` and pins it in `uv.lock`. No venv to activate and
-no global install.
-
-`.github/workflows/docs.yml` publishes to GitHub Pages on push to `master`. It
-is the only workflow here, it is docs-only, and it holds no secrets. See
+`.github/workflows/deploy-docs.yml` publishes to GitHub Pages on push to
+`master`, and builds without publishing on pull requests. It is the only
+workflow here, it is docs-only, and it holds no secrets. See
 [Building the docs](reference/tooling.md).
 
 ## Design commitments

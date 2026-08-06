@@ -5,8 +5,8 @@ homelab. Grafana for dashboards, Prometheus for metrics, Loki for logs, Grafana
 Alloy as the collector on every host, and Ansible to keep the whole fleet
 configured, patched and alerting.
 
-**Full documentation:** [`docs/`](docs/index.md), or build the site locally with
-`uv run --group docs mkdocs serve`.
+**Full documentation:** [`docs/`](docs/index.md), or build the site locally
+(see [Building the docs](docs/reference/tooling.md)).
 
 ## What it does
 
@@ -164,7 +164,7 @@ scripts/monitoring.sh          Docker Compose lifecycle
 docker-compose.yml             Central stack
 docker-compose.collector.yml   Collector-only stack
 docs/                          MkDocs source (mkdocs.yml at the repo root)
-pyproject.toml, uv.lock        Docs toolchain, managed by uv
+docs/requirements.txt          Pinned MkDocs toolchain
 ```
 
 > [!CAUTION]
@@ -176,17 +176,25 @@ pyproject.toml, uv.lock        Docs toolchain, managed by uv
 
 ## Documentation
 
-31 pages, built with MkDocs Material. The only prerequisite is
-[uv](https://docs.astral.sh/uv/).
+31 pages, built with MkDocs Material.
 
 ```bash
-uv run --group docs mkdocs serve   # live preview on http://127.0.0.1:8000
-uv run --group docs mkdocs build   # render the static site into site/
+python3 -m venv .venv
+.venv/bin/pip install -r docs/requirements.txt
+.venv/bin/mkdocs serve             # live preview on http://127.0.0.1:8000
+.venv/bin/mkdocs build             # render the static site into site/
 ```
 
-Published to GitHub Pages by `.github/workflows/docs.yml` on push to `master`.
-That workflow is docs-only: it never runs a playbook, never touches the fleet,
-and uses no repository secrets.
+Published to GitHub Pages by `.github/workflows/deploy-docs.yml` on push to `master`;
+pull requests run the same checks without publishing. The workflow is
+docs-only: it never runs a playbook, never touches the fleet, and uses no
+repository secrets.
+
+> [!IMPORTANT]
+> Pages must be enabled once by hand: **Settings → Pages → Source: GitHub
+> Actions**. It cannot be automated, because creating a Pages site is an
+> admin-level API call that `GITHUB_TOKEN` is not permitted to make. Until
+> then `build` passes and `deploy` fails.
 
 | Section | Start at |
 |---|---|

@@ -1,0 +1,16 @@
+# Documentation site dependencies.
+#
+# Not needed to run the monitoring stack. Only to build or serve the docs:
+#
+#   python3 -m venv .venv
+#   .venv/bin/pip install -r docs/requirements.txt
+#   .venv/bin/mkdocs serve
+#
+# Pinned so a laptop and the CI runner render identically.
+#
+# MkDocs is held at 1.x deliberately: MkDocs 2.0 removes the plugin system and
+# rewrites theming with no migration path, which breaks mkdocs-material
+# outright. Do not loosen this without rebuilding and checking the nav.
+mkdocs==1.6.1
+mkdocs-material==9.5.49
+pymdown-extensions==10.14
