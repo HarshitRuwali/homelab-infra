@@ -29,7 +29,6 @@ theme:
   features:
     - navigation.instant
     - navigation.tracking
-    - navigation.sections
     - navigation.top
     - navigation.indexes
     - toc.follow
@@ -89,6 +88,10 @@ markdown_extensions:
 
 plugins:
   - search
+
+# Themes Mermaid diagrams to the indigo palette in both colour schemes.
+extra_css:
+  - stylesheets/extra.css
 
 extra:
   social:

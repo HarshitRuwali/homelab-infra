@@ -11,6 +11,16 @@
 # MkDocs is held at 1.x deliberately: MkDocs 2.0 removes the plugin system and
 # rewrites theming with no migration path, which breaks mkdocs-material
 # outright. Do not loosen this without rebuilding and checking the nav.
+# pymdown-extensions must stay at 11.x. On 10.14 the superfences fence parser
+# silently failed on any fence without an attribute list, so ```yaml became an
+# inline <code> span and the whole block rendered as an unformatted paragraph.
+# Only fences carrying title="..." survived, which is why the breakage looked
+# random. mkdocs-material 9.5.x caps pymdown-extensions below 11, so the theme
+# has to move with it; 9.7.7 is the first pairing that renders every fence.
+#
+# markdown is pinned explicitly. It is a transitive dependency, so leaving it
+# free let CI resolve a different version than a laptop and render differently.
 mkdocs==1.6.1
-mkdocs-material==9.5.49
-pymdown-extensions==10.14
+mkdocs-material==9.7.7
+pymdown-extensions==11.0.1
+markdown==3.10.3
