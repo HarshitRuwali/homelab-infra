@@ -21,11 +21,11 @@ uu_remove_unused_kernels: true
 #   pve-*                     -> restarts pveproxy/pvedaemon
 #   grafana/loki/prometheus   -> brief gap in the monitoring itself
 #
-# The ONLY exception is the `pi` group, which still holds the Raspberry Pi
+# The ONLY exception is the `pi_debian` group, which still holds the Pi
 # kernel and bootloader. Those packages are unversioned and overwrite
 # /boot/firmware and /lib/modules/$(uname -r) in place, so applying them
 # under a never-reboot policy leaves the running kernel with no modules on
-# disk. See group_vars/pi/main.yml.
+# disk. See group_vars/pi_debian/main.yml.
 uu_package_blacklist: []
 
 uu_upgrade_oncalendar: "*-*-* 03:00"

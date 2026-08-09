@@ -8,9 +8,52 @@
 # (ingest endpoint, internal addressing, valid usernames, and which box to hit
 # to blind your monitoring).
 #
-# Group semantics:
+# =========================================================================
+# HOW `monitored` IS BIFURCATED
+# =========================================================================
+# Two levels: PLATFORM, then DISTRO FAMILY.
+#
+#   lxc            -> Proxmox LXC containers (share the hypervisor kernel)
+#     lxc_debian
+#   vm             -> Proxmox KVM virtual machines (own kernel)
+#     vm_debian
+#   pi             -> bare-metal ARM SBCs
+#     pi_debian
+#
+# Every monitored host goes in exactly one leaf. Today every leaf is
+# `_debian`, which is the point of the split rather than an argument against
+# it: when a `vm_fedora` or `lxc_alpine` arrives it slots in beside its
+# sibling without disturbing anything, and `--limit vm` keeps meaning "every
+# VM" regardless of what is installed on them.
+#
+# WHICH LEVEL DOES A VARIABLE BELONG TO?
+#   platform (lxc/vm/pi)  -> true because of the hardware or the
+#                            virtualisation. SD-card IO on the Pis. Shared
+#                            kernel on LXC.
+#   distro   (*_debian)   -> true because of the package manager. Anything
+#                            naming an apt package belongs here, because that
+#                            is exactly what a `_fedora` sibling would not
+#                            share.
+# Deeper groups win, so a `_debian` value overrides its platform parent.
+#
+# "debian" MEANS THE DEBIAN FAMILY. Ubuntu belongs in `*_debian`: the axis
+# that matters to every role in this repo is apt-vs-dnf, and Ubuntu is on the
+# apt side of it. Reserve a new leaf for distros that would actually break
+# these roles.
+#
+# DETERMINE PLATFORM FROM THE HOST, DO NOT ASSUME FROM ITS NAME:
+#   ansible <host> -m setup -a 'filter=ansible_virtualization*'
+# An LXC reports virtualization_type=lxc and, confusingly, whatever kernel
+# the hypervisor runs (often `-pve`). Bare metal reports role=host.
+#
+# =========================================================================
+# OVERLAY GROUPS
+# =========================================================================
+# These cut across the platform tree; a host is in as many as apply.
 #   monitored      -> gets the Alloy collector and the update-metrics exporter
-#   autoupdate     -> ALSO gets unattended-upgrades (auto-apply, never auto-reboot)
+#   lan_guests     -> HOW it is reached (ProxyJump, not direct)
+#   central        -> WHAT IT RUNS (the monitoring stack itself)
+#   autoupdate     -> ALSO gets unattended-upgrades (auto-apply, never reboot)
 #   no_autoupdate  -> monitored but NEVER auto-patched
 #
 # Membership in `autoupdate` is the ONLY thing that enables patching. The
@@ -37,55 +80,76 @@ all:
     monitored:
       children:
 
-        # --- Hosts reachable directly (e.g. over a VPN/overlay network) -----
-        tailnet_fleet:
-          hosts:
-            server-01:
-              ansible_host: 10.0.0.11
-              monitor_role: server
-            workstation-01:
-              ansible_host: 10.0.0.12
-              ansible_user: someoneelse
-              monitor_role: workstation
+        # --- Proxmox LXC containers ----------------------------------------
+        # Shared kernel: these cannot reboot into a kernel of their own, so
+        # kernel packages inside them are inert and /run/reboot-required means
+        # something different here than on a VM.
+        lxc:
+          children:
+            lxc_debian:
+              hosts:
+                router-01:
+                  ansible_host: 10.0.0.31
+                  ansible_user: root
+                  monitor_role: router
 
-        # --- ARM SBCs. Kernel/bootloader packages are blacklisted; see
-        #     group_vars/pi/main.yml for why that matters without reboots.
+                # Reached through lan_jump_host; see the overlay below.
+                app-01:
+                  pve_vmid: 103
+                  ansible_host: 10.0.1.11
+                  ansible_user: root
+                  monitor_role: service
+
+                # The central monitoring stack itself.
+                monitor-lxc:
+                  pve_vmid: 112
+                  ansible_host: 10.0.1.99
+                  ansible_user: root
+                  monitor_role: central
+                  # monitor_hostname is pinned in host_vars/monitor-lxc.yml to
+                  # the value already in /etc/default/alloy on that box.
+                  # Renaming it forks its history in Prometheus and Loki.
+
+        # --- Proxmox KVM virtual machines ----------------------------------
+        # Own kernel, so kernel upgrades and reboot-required are real here.
+        vm:
+          children:
+            vm_debian:
+              hosts:
+                server-01:
+                  ansible_host: 10.0.0.11
+                  monitor_role: server
+                workstation-01:
+                  ansible_host: 10.0.0.12
+                  ansible_user: someoneelse
+                  monitor_role: workstation
+
+        # --- Bare-metal ARM SBCs -------------------------------------------
+        # group_vars/pi holds the SD-card IO tuning; group_vars/pi_debian
+        # holds the kernel/bootloader package blacklist and explains why that
+        # matters under a never-reboot policy.
         pi:
-          hosts:
-            pi-01:
-              ansible_host: 10.0.0.21
-              monitor_role: pi
+          children:
+            pi_debian:
+              hosts:
+                pi-01:
+                  ansible_host: 10.0.0.21
+                  monitor_role: pi
 
-        # --- Hosts running a Proxmox (pve) kernel --------------------------
-        proxmox:
-          hosts:
-            router-01:
-              ansible_host: 10.0.0.31
-              ansible_user: root
-              monitor_role: router
-
-        # --- Guests with no direct route from the controller ---------------
+        # --- OVERLAYS: these cross the platform tree above ------------------
+        # Guests with no direct route from the controller, of any platform.
         # Reached via ProxyJump through `lan_jump_host`. See
         # group_vars/lan_guests/main.yml, and set lan_use_jump_host=false when
         # running from a controller already on that network.
         lan_guests:
           hosts:
-            app-01:
-              pve_vmid: 103
-              ansible_host: 10.0.1.11
-              monitor_role: service
+            app-01: {}
 
-        # --- The central monitoring stack itself ---------------------------
+        # The central stack. Pushes to itself over loopback rather than out
+        # through the WAN and back; see group_vars/central.
         central:
           hosts:
-            monitor-lxc:
-              pve_vmid: 112
-              ansible_host: 10.0.1.99
-              ansible_user: root
-              monitor_role: central
-              # monitor_hostname is pinned in host_vars/monitor-lxc.yml to the
-              # value already in /etc/default/alloy on that box. Renaming it
-              # forks its history in Prometheus and Loki.
+            monitor-lxc: {}
 
     # ---------------------------------------------------------------------
     # Patching policy

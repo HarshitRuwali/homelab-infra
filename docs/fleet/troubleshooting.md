@@ -90,7 +90,8 @@ Failure modes this fleet has actually hit, and what each one looks like.
     Proxmox enumerates hundreds of transient per-guest systemd units
     (`lxc@103`, `qemu@110`, scopes, slices). Left alone the systemd collector
     alone emits ~2000 series per host. `alloy_systemd_unit_exclude` in
-    `group_vars/proxmox` drops them.
+    `host_vars/tailscale-router.yml` drops them. It lives in host_vars rather
+    than a group because that host is the only one exposed to them.
 
 ## Patching
 

@@ -124,6 +124,7 @@ The same variable can be set in several places. Later entries win:
 role defaults          roles/alloy_collector/defaults/main.yml
   ↓
 inventory group vars   inventory/group_vars/pi/main.yml
+  ↓                      inventory/group_vars/pi_debian/main.yml   (deeper wins)
   ↓
 inventory host vars    inventory/host_vars/rpi5.yml
   ↓
@@ -149,7 +150,7 @@ uu_automatic_reboot: false
 uu_clean_interval_days: 7
 ```
 
-Any group or host can override them. `group_vars/proxmox/main.yml` sets
+Any group or host can override them. `host_vars/tailscale-router.yml` sets
 `uu_clean_interval_days: 1` because that host has a 2 GB disk.
 
 ## Tasks and modules

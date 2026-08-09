@@ -36,5 +36,6 @@ collector_basic_auth_required: true
 # `journalctl` useful over SSH. Central retention is what you actually query.
 #
 # Empty string leaves journald's own default (10% of the filesystem) alone.
-# Set it per group for hosts where 10% is too much: see group_vars/proxmox.
+# Set it per host or per group where 10% is too much: see
+# host_vars/tailscale-router.yml, which caps it on a 2.0 GB rootfs.
 journald_system_max_use: ""

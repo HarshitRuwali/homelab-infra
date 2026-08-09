@@ -9,6 +9,7 @@ A reference list. For what a playbook or a role *is*, see
 |---|---|---|---|
 | `site.yml` | all | services, if a role changed | everyday; runs everything in order |
 | `preflight.yml` | `monitored` | **nothing** | before a first rollout, or to debug access |
+| `onboard.yml` | one host, `--limit` required | `alloy` | adding a new host; installs the collector and proves data landed centrally |
 | `collectors.yml` | `monitored` | `alloy`, `systemd-journald` | Alloy config, container metrics, journal caps |
 | `update-metrics.yml` | `monitored` | nothing meaningful | the apt/reboot exporter |
 | `central-alerting.yml` | `central` | **`grafana-server`** | alert rules, Matrix relay |

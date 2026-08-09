@@ -34,15 +34,22 @@ ansible-inventory --graph
 ```text
 @all:
   |--@monitored:
-  |  |--@tailnet_fleet:
-  |  |  |--ubuntu-dev
-  |  |  |--ubuntu-ai
-  |  |  |--cloud-services
+  |  |--@lxc:
+  |  |  |--@lxc_debian:
+  |  |  |  |--tailscale-router
+  |  |  |  |--plex
+  |  |  |  |--memory
+  |  |  |  |--monitor-lxc
+  |  |--@vm:
+  |  |  |--@vm_debian:
+  |  |  |  |--ubuntu-dev
+  |  |  |  |--ubuntu-ai
+  |  |  |  |--cloud-services
+  |  |  |  |--matrix
   |  |--@pi:
-  |  |  |--rpi5
-  |  |  |--rpi4b
-  |  |--@proxmox:
-  |  |  |--tailscale-router
+  |  |  |--@pi_debian:
+  |  |  |  |--rpi5
+  |  |  |  |--rpi4b
   |  |--@lan_guests:
   |  |  |--plex
   |  |  |--memory
@@ -54,8 +61,16 @@ ansible-inventory --graph
   ...
 ```
 
-Read this as: `rpi5` is in `pi`, which is in `monitored`, which is in `all`.
-It also appears under `autoupdate`, which is what makes it self-patch.
+Read this as: `rpi5` is in `pi_debian`, which is in `pi`, which is in
+`monitored`, which is in `all`. It also appears under `autoupdate`, which is
+what makes it self-patch.
+
+The nesting is **platform, then distro family**, and every monitored host is
+in exactly one leaf. `lan_guests` and `central` are **overlays** that cut
+across that tree, which is why `plex` and `monitor-lxc` each appear twice: a
+host can be in as many groups as apply to it, and "is a container" and "needs
+a jump host to reach" are independent facts. See
+[Fleet management](../fleet/index.md#what-this-manages).
 
 To see everything Ansible knows about one host, including inherited variables:
 

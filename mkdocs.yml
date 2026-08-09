@@ -116,6 +116,7 @@ nav:
   - Fleet management:
       - fleet/index.md
       - Controller setup: fleet/setup.md
+      - Onboarding a new host: fleet/onboarding.md
       - What runs when: fleet/schedules.md
       - Rollout order: fleet/rollout.md
       - Package patching: fleet/patching.md

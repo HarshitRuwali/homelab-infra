@@ -1,8 +1,20 @@
 ---
-# Proxmox-safe overrides for hosts running a PVE kernel.
+# tailscale-router (Proxmox guest 106), the tailnet exit node and subnet
+# router.
 #
-# Currently only tailscale-router (Proxmox guest 106). The t7920 hypervisor
-# itself is deliberately out of scope; see inventory/hosts.yml.
+# WHY THIS IS host_vars AND NOT group_vars. It used to be group_vars/proxmox,
+# a group of exactly one host, described as "hosts running a PVE kernel".
+# That description was true but misleading: this host reports a `-pve` kernel
+# because an LXC shares the hypervisor's kernel, not because it runs Proxmox.
+# It has no /etc/pve. So `proxmox` was never a property that generalised, and
+# once `monitored` was split into lxc/vm/pi it became actively confusing to
+# have a third thing called `proxmox` alongside them.
+#
+# Everything below is justified by THIS host's specifics -- a 2.0 GB rootfs
+# and its exit-node role -- so it belongs to the host. Do NOT promote any of
+# it to group_vars/lxc or group_vars/lxc_debian without checking it against
+# the other containers: the journal and disk caps in particular would be a
+# real behaviour change for plex, memory and monitor-lxc.
 #
 # Two distinct hazards are handled here:
 #   1. Cardinality. PVE enumerates hundreds of transient per-guest systemd

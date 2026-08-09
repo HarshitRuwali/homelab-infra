@@ -21,17 +21,57 @@ Safe to re-run. A clean fleet reports `changed=0` everywhere.
 
 ## What this manages
 
+`monitored` is bifurcated by **platform**, then by **distro family**. Every
+monitored host sits in exactly one leaf.
+
 | Group | Hosts | Collector | Auto-patched | Container updates |
 |---|---|---|---|---|
-| `tailnet_fleet` | ubuntu-dev, ubuntu-ai, cloud-services | yes | yes | yes |
-| `pi` | rpi5, rpi4b | yes | yes | rpi5 only |
-| `proxmox` | tailscale-router | yes | yes | no Docker |
-| `lan_guests` | plex, memory, matrix | yes | yes | memory, matrix |
-| `central` | monitor-lxc | yes | yes, see below | no Docker |
+| `lxc` → `lxc_debian` | tailscale-router, plex, memory, monitor-lxc | yes | yes, `central` see below | memory only |
+| `vm` → `vm_debian` | ubuntu-dev, ubuntu-ai, cloud-services, matrix | yes | yes | yes |
+| `pi` → `pi_debian` | rpi5, rpi4b | yes | yes | rpi5 only |
 
-`lan_guests` are Proxmox guests that are **not** Tailscale members. They are
-reached with `ProxyJump` through `lan_jump_host` and still push telemetry to
-the same public ingest endpoint as everything else.
+Today every leaf is `_debian`. That is the point of the split rather than an
+argument against it: a future `vm_fedora` slots in beside its sibling without
+disturbing anything, and `--limit vm` keeps meaning "every VM". Variables
+divide along the same seam, and deeper groups win:
+
+- **platform** (`lxc` / `vm` / `pi`): true because of the hardware or the
+  virtualisation. SD-card IO on the Pis. Shared kernel on the containers.
+- **distro** (`*_debian`): true because of the package manager. Anything
+  naming an apt package belongs here, because that is exactly what a
+  `_fedora` sibling would not share.
+
+!!! warning "`_debian` means the Debian *family*"
+    Four members of `vm_debian` actually run Ubuntu 26.04. They are grouped
+    with Debian because the axis every role in this repo cares about is
+    apt-vs-dnf, and Ubuntu is on the apt side of it. Reserve a new leaf for
+    distros that would genuinely break these roles.
+
+!!! danger "Read the platform off the host, never off its name"
+    Two hosts are not what they look like. `tailscale-router` is an **LXC**,
+    not a VM: it reports a `-pve` kernel only because a container shares the
+    hypervisor's kernel, and it has no `/etc/pve`. `matrix` is a **VM**, not
+    a container, despite sitting on the LAN beside the LXC guests, which is
+    why it is the one guest with a real `sudo` setup. Check before you move
+    one: `ansible <host> -m setup -a 'filter=ansible_virtualization*'`.
+
+### Overlay groups
+
+These cut across the platform tree because they answer different questions. A
+host is in as many as apply.
+
+| Group | Hosts | Answers |
+|---|---|---|
+| `lan_guests` | plex, memory, matrix | **how** it is reached: `ProxyJump` via `lan_jump_host` |
+| `central` | monitor-lxc | **what it runs**: the monitoring stack itself |
+| `autoupdate` | all ten | **whether** it is auto-patched |
+
+Do not fold an overlay into the platform tree. `lxc_debian` holds both
+`tailscale-router` (reached directly over the tailnet) and `monitor-lxc`
+(reached through the jump host), so "is a container" and "needs a jump host"
+are genuinely independent facts. `lan_guests` are Proxmox guests that are
+**not** Tailscale members; they still push telemetry to the same public ingest
+endpoint as everything else.
 
 ## The one rule that decides patching
 
@@ -72,9 +112,10 @@ Documented so the omission is a decision, not a gap.
     noisy. While it was still in `monitored` it also sat in the host-down
     or-chain, so it fired `Host Down` every minute forever.
 
-    To bring it back: install a key, re-add it under `lan_guests` **and**
-    `autoupdate`, and give it a mountpoint exclusion in `rules-resources.yaml`
-    **before** you do, or you will re-create the disk noise.
+    To bring it back: install a key, re-add it under `lxc_debian`,
+    `lan_guests` **and** `autoupdate`, and give it a mountpoint exclusion in
+    `rules-resources.yaml` **before** you do, or you will re-create the disk
+    noise.
 
 ??? note "t7920, the Proxmox host itself"
     All of its guests are monitored, but the hypervisor is not. Accept the
@@ -102,13 +143,28 @@ ansible/inventory/
   group_vars/
     all/main.yml         shared paths and endpoints
     all/vault.yml        ansible-vault, committed encrypted
-    pi/main.yml          RPi kernel/bootloader blacklist
-    proxmox/main.yml     PVE-safe overrides, small-rootfs caps
+    pi/main.yml          SD-card IO tuning (platform)
+    pi_debian/main.yml   RPi kernel/bootloader blacklist (distro)
     central/main.yml     loopback ingest, stack blacklist
     lan_guests/main.yml  ProxyJump defaults
   host_vars/
-    monitor-lxc.yml      pins MONITOR_HOSTNAME
+    monitor-lxc.yml         pins MONITOR_HOSTNAME
+    tailscale-router.yml    PVE-safe overrides, small-rootfs caps
 ```
+
+`lxc`, `lxc_debian`, `vm` and `vm_debian` have no var files yet. They exist to
+be extended: the platform/distro seam is where the next override goes, rather
+than into a host_vars file that quietly grows a second copy of the same
+setting.
+
+!!! note "Why `tailscale-router` is `host_vars`, not a group"
+    Those overrides used to be `group_vars/proxmox`, a group of exactly one
+    host described as "hosts running a PVE kernel". That was true but
+    misleading, and once `monitored` split into `lxc`/`vm`/`pi` a third thing
+    called `proxmox` sitting beside them was actively confusing. Every value
+    in it is justified by that host's 2.0 GB rootfs and exit-node role, so it
+    belongs to the host. Promoting any of it to `lxc` would be a real change
+    for plex, memory and monitor-lxc.
 
 !!! warning "The repo is public"
     All real domains, IPs and usernames live only in `hosts.local.yml`, which

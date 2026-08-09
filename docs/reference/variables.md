@@ -42,7 +42,7 @@ For how variable precedence works at all, see
 |---|---|---|
 | `uu_apply_security_only` | `false` | `false` means `o=*`, every origin |
 | `uu_automatic_reboot` | `false` | **hard requirement**, asserted every run |
-| `uu_package_blacklist` | `[]` | only the `pi` group overrides this |
+| `uu_package_blacklist` | `[]` | only the `pi_debian` group overrides this |
 | `uu_remove_unused_kernels` | `true` | `false` on `proxmox` and `central` |
 | `uu_clean_interval_days` | `7` | `1` on small-rootfs hosts |
 | `uu_upgrade_oncalendar` | `*-*-* 03:00` | |

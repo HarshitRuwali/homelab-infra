@@ -80,7 +80,7 @@ plumbing and no per-host log files to collect:
 ## The only blacklist in the fleet
 
 ```yaml
-# group_vars/pi/main.yml
+# group_vars/pi_debian/main.yml
 uu_package_blacklist:
   - "raspberrypi-kernel"
   - "raspberrypi-bootloader"
@@ -123,8 +123,8 @@ cost worth 200 MB.
 
 ## Small-disk hosts
 
-`group_vars/proxmox/main.yml` tightens two things for the 2.0 GB
-`tailscale-router` root:
+`host_vars/tailscale-router.yml` tightens two things for that host's 2.0 GB
+root filesystem:
 
 ```yaml
 uu_clean_interval_days: 1

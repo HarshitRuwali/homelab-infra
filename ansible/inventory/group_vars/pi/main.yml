@@ -1,24 +1,11 @@
 ---
-# Raspberry Pi overrides for rpi5 and rpi4b.
+# PLATFORM-level overrides for the Raspberry Pis: true because of the
+# hardware, whatever distro is on it.
 #
-# The kernel/bootloader blacklist is the important part. On Raspberry Pi OS the
-# kernel, its modules, and the /boot/firmware payload are updated by separate
-# packages. Applying those without the reboot that this fleet policy forbids is
-# the classic way to end up with a running kernel whose modules are no longer
-# on disk. Leave them to a supervised manual upgrade + reboot.
-# The ONLY packages held back anywhere in the fleet.
-#
-# raspberrypi-kernel and raspberrypi-bootloader are UNVERSIONED: upgrading
-# them overwrites /boot/firmware and /lib/modules/$(uname -r) in place rather
-# than installing alongside. Under this fleet's never-auto-reboot policy that
-# leaves the running kernel with no modules on disk, so anything not already
-# loaded (USB storage, a filesystem, a netfilter module) fails until reboot.
-#
-# Remove these only if you are also prepared to reboot the Pi immediately.
-uu_package_blacklist:
-  - "raspberrypi-kernel"
-  - "raspberrypi-bootloader"
-  - "linux-image-rpi-.*"
+# The distro-level counterpart is group_vars/pi_debian, which holds the
+# Raspberry Pi OS kernel and bootloader package holds. Anything naming an apt
+# package belongs there, not here, because that is precisely what a future
+# non-Debian Pi would not share. See the header of inventory/hosts.local.yml.
 
 # These are SD-card hosts with 25-29 pending packages each. Keep the metrics
 # exporter off the critical path for IO.
