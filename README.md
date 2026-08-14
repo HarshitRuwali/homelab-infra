@@ -1,106 +1,66 @@
 # Open Memory Stack
 
-Open Memory Stack is a self-hosted memory, retrieval, and LLM middleware stack for AI applications. It gives your app a durable memory backend, semantic search, and a simple FastAPI boundary for storing, searching, and updating context.
+Self-hosted semantic memory for AI applications and coding agents. PostgreSQL
+for structured metadata, Qdrant for vector search, and a FastAPI service as the
+only boundary anything else talks to.
 
-## Why I Built This
+**📖 Documentation: <https://harshitruwali.github.io/open-memory-stack/>**
 
-Most AI apps are useful only for the length of a single chat or request. I wanted a small, self-hosted memory layer that can persist context, search it semantically, and make it available to local or remote LLMs through a simple API.
+## Why
 
-The goal is to keep memory infrastructure understandable and portable: PostgreSQL for structured metadata, Qdrant for vector search, Redis for fast state, and FastAPI as the service boundary. It should be easy to run on a homelab, a single server, or any Docker-friendly environment.
+Most AI apps are useful only for the length of a single chat. This is a small,
+self-hosted memory layer that persists context, searches it semantically, and
+serves it to local or remote models over a plain HTTP API — with enough
+multi-agent scoping that several coding agents can share one store without
+overwriting each other.
 
-## What Runs
-
-- PostgreSQL: structured memory metadata
-- Qdrant: vector storage and semantic search
-- Redis: cache and retry/state layer
-- FastAPI: memory CRUD, semantic search, LLM proxying, and embedding proxying
-
-## Prerequisites
-
-- Docker and Docker Compose
-- A running LLM service on port `8080`
-- A running embedding service on port `8081`
-- `uv` if you want to develop the FastAPI app locally
-
-## Quick Start: One Machine
-
-Use the root Compose file when you want PostgreSQL, Qdrant, Redis, and the FastAPI middleware on the same machine.
+## Quick start
 
 ```bash
-cp .env.example .env
-# Fill in POSTGRES_PASSWORD.
-# If your LLM or embedding services run elsewhere, update AI_VM_HOST.
-mkdir -p memory-lxc/data/qdrant memory-lxc/data/postgres memory-lxc/data/redis fastapi-lxc/logs
+cp .env.example .env          # then fill in POSTGRES_PASSWORD
+mkdir -p memory-lxc/data/{qdrant,postgres,redis} fastapi-lxc/logs
 docker compose up -d --build
-docker compose logs -f
 ```
 
-By default, the API listens on:
+The API listens on `http://localhost:8088`, with Swagger UI at `/docs`.
+
+You also need an embedding model reachable at `AI_VM_HOST:EMBED_PORT` exposing
+llama.cpp's native `POST /embedding` — the stack embeds nothing itself. Without
+one, `/health` is green but every write returns 502.
+
+Full walkthrough: [Getting started](https://harshitruwali.github.io/open-memory-stack/getting-started/).
+
+## What's here
+
+| Path | Contents |
+|---|---|
+| `docker-compose.yml` | all-in-one stack: Postgres, Qdrant, Redis, API |
+| `fastapi-lxc/` | the FastAPI app, Dockerfile, Alembic migrations, uv project |
+| `memory-lxc/` | datastore-only Compose stack, for split deployments |
+| `mcp-server/` | MCP server exposing the API as agent tools |
+| `scripts/` | daily ingestion pipeline and a CLI client |
+| `docs/` | the MkDocs site published to GitHub Pages |
+
+## Endpoints
 
 ```text
-http://localhost:8088
+GET    /health          POST /memory/store    POST /memory/update
+POST   /embed           POST /memory/search   DELETE /memory/delete
+POST   /llm/infer
 ```
 
-Change `FASTAPI_PORT` in `.env` if you want another host port. The FastAPI container still listens on port `8080` internally.
+Details in the [API reference](https://harshitruwali.github.io/open-memory-stack/api/).
 
-## Configuration
+## Multi-agent scoping
 
-The root `.env.example` contains every configurable value used by the all-in-one Compose file and FastAPI settings:
+Every chunk is owned by an `(agent_id, project)` scope folded into its ID, so
+two agents storing the same `file_path` do not clobber each other. Requests that
+omit a scope get the sentinel `("legacy", "default")` and keep the original
+pre-scope chunk IDs, so nothing had to be re-embedded when scoping was added.
 
-- PostgreSQL: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_HOST`, `POSTGRES_PORT`, `POSTGRES_HOST_PORT`
-- Qdrant: `QDRANT_HOST`, `QDRANT_PORT`, `QDRANT_HTTP_PORT`, `QDRANT_GRPC_PORT`, `QDRANT_COLLECTION`, `VECTOR_DIM`
-- Redis: `REDIS_HOST`, `REDIS_PORT`, `REDIS_HOST_PORT`
-- LLM services: `AI_VM_HOST`, `LLM_PORT`, `EMBED_PORT`
-- FastAPI: `APP_HOST`, `APP_PORT`, `FASTAPI_PORT`, `UVICORN_WORKERS`, `LOG_LEVEL`
+See [Memory scoping](https://harshitruwali.github.io/open-memory-stack/architecture/scoping/).
 
-Use `AI_VM_HOST=host.docker.internal` when your LLM and embedding services run on the same host as Docker. Set it to an IP address or DNS name when they run on another machine.
-
-## Data Persistence
-
-Memory service data is stored on the local filesystem under:
-
-```text
-memory-lxc/data/
-```
-
-The root Compose file bind-mounts these folders:
-
-- `memory-lxc/data/postgres`
-- `memory-lxc/data/qdrant`
-- `memory-lxc/data/redis`
-
-Because these are bind mounts, `docker compose down -v` removes containers but does not delete the local data files. To wipe memory state, stop the stack and delete the relevant folders under `memory-lxc/data/`.
-
-## Split-Machine Deployment
-
-You can also run the memory services and FastAPI service separately. This is useful when PostgreSQL, Qdrant, and Redis live on one host, while the API runs on another.
-
-Start memory services:
-
-```bash
-cd memory-lxc
-cp .env.example .env
-# Fill in POSTGRES_PASSWORD.
-mkdir -p data/qdrant data/postgres data/redis
-docker compose up -d
-docker compose logs -f
-```
-
-Then start FastAPI on the API host:
-
-```bash
-cd fastapi-lxc
-cp .env.example .env
-# Set POSTGRES_HOST, QDRANT_HOST, REDIS_HOST, and AI_VM_HOST.
-docker compose up -d --build
-docker compose logs -f
-```
-
-The split FastAPI Compose file exposes the API on port `8080`.
-
-## FastAPI Local Development
-
-`fastapi-lxc` uses `uv` for dependency and virtualenv management.
+## Development
 
 ```bash
 cd fastapi-lxc
@@ -109,37 +69,21 @@ uv run alembic upgrade head
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-`uv sync` creates and maintains `fastapi-lxc/.venv` automatically. Add dependencies with:
+Add dependencies with `uv add`; commit `pyproject.toml` and `uv.lock` together.
+
+## Docs
 
 ```bash
-uv add <package>
+uvx --with mkdocs-material mkdocs serve    # preview on :8000
 ```
 
-Commit both `pyproject.toml` and `uv.lock` when dependencies change.
-
-## Useful Endpoints
-
-- `GET /health`
-- `POST /memory/store`
-- `POST /memory/search`
-- `POST /memory/update`
-- `DELETE /memory/delete`
-- `POST /llm/infer`
-- `POST /embed`
-
-## Repository Layout
-
-```text
-.
-├── docker-compose.yml        # All-in-one local stack
-├── .env.example              # Root Compose environment template
-├── memory-lxc/               # PostgreSQL, Qdrant, Redis Compose stack
-└── fastapi-lxc/              # FastAPI app, Dockerfile, uv project files
-```
+`.github/workflows/deploy-docs.yml` builds with `--strict` on pull requests and
+publishes to GitHub Pages on push to `master`. Pages must be enabled once by
+hand: **Settings → Pages → Source: GitHub Actions**.
 
 ## Notes
 
-- Secrets live in local `.env` files and should not be committed.
-- Runtime data under `memory-lxc/data/` is ignored by git.
-- FastAPI dependencies are locked in `fastapi-lxc/uv.lock`.
-- FastAPI logs are written under `fastapi-lxc/logs` when the Compose stack is running.
+- Secrets live in local `.env` files and are not committed.
+- Runtime data under `memory-lxc/data/` is gitignored, and `docker compose down -v`
+  does **not** delete it — those are bind mounts.
+- Redis is provisioned by the Compose files but no code path uses it yet.

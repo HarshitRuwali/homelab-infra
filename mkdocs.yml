@@ -1,0 +1,147 @@
+site_name: Open Memory Stack
+site_description: >-
+  Self-hosted semantic memory for AI agents. PostgreSQL, Qdrant and Redis behind
+  a FastAPI service, with multi-agent scoping and an MCP server for coding agents.
+site_author: Harshit Ruwali
+
+# Required for a correct sitemap.xml and canonical <link> tags. GitHub Pages
+# serves a project repo under /<repo>/, so the trailing path matters: without
+# it every canonical URL points at the domain root and the sitemap is wrong.
+# Change this if you move the site behind your own domain.
+site_url: https://harshitruwali.github.io/open-memory-stack/
+
+repo_url: https://github.com/HarshitRuwali/open-memory-stack
+repo_name: HarshitRuwali/open-memory-stack
+edit_uri: edit/master/docs/
+
+# Serve locally without installing anything globally:
+#   uvx --with mkdocs-material mkdocs serve
+# Build a static site into ./site:
+#   uvx --with mkdocs-material mkdocs build
+#
+# Pinned deps live in docs/requirements.txt for CI.
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Follow system theme
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.keys
+
+plugins:
+  - search
+
+# Themes Mermaid diagrams to the teal palette in both colour schemes.
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HarshitRuwali/open-memory-stack
+
+nav:
+  - Home: index.md
+
+  - Getting started:
+      - getting-started/index.md
+      - One machine: getting-started/one-machine.md
+      - Split deployment: getting-started/split-deployment.md
+      - Configuration: getting-started/configuration.md
+      - Your first memory: getting-started/first-memory.md
+
+  - Architecture:
+      - architecture/index.md
+      - Request flow: architecture/request-flow.md
+      - Memory scoping: architecture/scoping.md
+      - Storage model: architecture/storage.md
+
+  - API:
+      - api/index.md
+      - Memory: api/memory.md
+      - Embedding and LLM: api/embed-llm.md
+      - Health: api/health.md
+
+  - Agents:
+      - agents/index.md
+      - Installing the MCP server: agents/install.md
+      - Client configuration: agents/clients.md
+      - Running several agents: agents/multi-agent.md
+
+  - Ingestion:
+      - ingestion/index.md
+      - What gets collected: ingestion/sources.md
+      - Scheduling: ingestion/scheduling.md
+      - Extending the pipeline: ingestion/extending.md
+
+  - Operations:
+      - operations/index.md
+      - Vector dimensions: operations/vector-dimensions.md
+      - Migrations: operations/migrations.md
+      - Backups: operations/backups.md
+      - Troubleshooting: operations/troubleshooting.md
+
+  - Reference:
+      - reference/environment.md
+      - Database schema: reference/schema.md
+      - Building the docs: reference/tooling.md
+
+  - Roadmap: roadmap.md

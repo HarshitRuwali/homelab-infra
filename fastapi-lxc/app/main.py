@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi import Request
 
 from app.config import get_settings
-from app.qdrant_store import ensure_collection
+from app.qdrant_store import ensure_collection, VectorDimensionMismatch
 from app.routers import router
 
 settings = get_settings()
@@ -52,9 +52,20 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: ensure Qdrant collection exists."""
-    logger.info("Ensuring Qdrant collection '%s' exists…", settings.qdrant_collection)
-    await ensure_collection()
+    """Startup: ensure the Qdrant collection exists, matches VECTOR_DIM, and is indexed."""
+    logger.info(
+        "Preparing Qdrant collection '%s' (expecting %d-dim vectors)…",
+        settings.qdrant_collection,
+        settings.vector_dim,
+    )
+    try:
+        await ensure_collection()
+    except VectorDimensionMismatch:
+        # Fail loudly and refuse to serve: a dimension mismatch means this
+        # process is pointed at someone else's collection (see the VECTOR_DIM
+        # note in .env.example).
+        logger.critical("Qdrant collection validation FAILED", exc_info=True)
+        raise
     logger.info("FastAPI ready")
     yield
     logger.info("FastAPI shutting down")

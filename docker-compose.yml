@@ -9,7 +9,7 @@ name: open-memory-stack
 
 services:
   qdrant:
-    image: qdrant/qdrant:v1.9.2
+    image: qdrant/qdrant:v1.12.1
     container_name: open-memory-qdrant
     restart: unless-stopped
     ports:
