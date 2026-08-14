@@ -1,7 +1,7 @@
 # One machine
 
 The root `docker-compose.yml` runs PostgreSQL, Qdrant, Redis and the FastAPI
-service together, with the datastores bind-mounted under `memory-lxc/data/`.
+service together, with the datastores bind-mounted under `memory-service/data/`.
 
 ## Bring it up
 
@@ -13,7 +13,7 @@ Fill in `POSTGRES_PASSWORD`. If your LLM and embedding services run somewhere
 other than the Docker host, change `AI_VM_HOST` too.
 
 ```bash
-mkdir -p memory-lxc/data/qdrant memory-lxc/data/postgres memory-lxc/data/redis fastapi-lxc/logs
+mkdir -p memory-service/data/qdrant memory-service/data/postgres memory-service/data/redis api-service/logs
 docker compose up -d --build
 docker compose logs -f
 ```
@@ -64,9 +64,9 @@ Everything stateful is a bind mount, not a named volume:
 
 | Path | Contents |
 |---|---|
-| `memory-lxc/data/postgres` | chunk metadata, file tracking, entities |
-| `memory-lxc/data/qdrant` | vectors, payload indexes, snapshots |
-| `memory-lxc/data/redis` | AOF and RDB state |
+| `memory-service/data/postgres` | chunk metadata, file tracking, entities |
+| `memory-service/data/qdrant` | vectors, payload indexes, snapshots |
+| `memory-service/data/redis` | AOF and RDB state |
 
 Because these are bind mounts, **`docker compose down -v` does not delete your
 memories**. That is the point: `-v` reaps anonymous volumes, and there are
@@ -74,7 +74,7 @@ none. To actually wipe state, stop the stack and delete the directories.
 
 ```bash
 docker compose down
-rm -rf memory-lxc/data/qdrant memory-lxc/data/postgres memory-lxc/data/redis
+rm -rf memory-service/data/qdrant memory-service/data/postgres memory-service/data/redis
 ```
 
 See [Backups](../operations/backups.md) before you do that on anything you care

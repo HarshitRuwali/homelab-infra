@@ -4,10 +4,10 @@
 
 | Data | Location | Method |
 |---|---|---|
-| Qdrant vectors | `memory-lxc/data/qdrant/` | Copy directory or Qdrant snapshot API |
-| PostgreSQL | `memory-lxc/data/postgres/` | `pg_dump` or copy directory |
-| FastAPI logs | `fastapi-lxc/logs/` | Copy directory |
-| `.env` files | repo root, `fastapi-lxc/`, `memory-lxc/` | Copy (contains secrets) |
+| Qdrant vectors | `memory-service/data/qdrant/` | Copy directory or Qdrant snapshot API |
+| PostgreSQL | `memory-service/data/postgres/` | `pg_dump` or copy directory |
+| FastAPI logs | `api-service/logs/` | Copy directory |
+| `.env` files | repo root, `api-service/`, `memory-service/` | Copy (contains secrets) |
 
 ## Qdrant
 
@@ -21,7 +21,7 @@ curl http://localhost:6333/collections/memory/snapshots
 
 The path is **`/snapshots`**, plural. The singular form returns 404.
 
-Snapshots are stored inside `memory-lxc/data/qdrant/snapshots/`.
+Snapshots are stored inside `memory-service/data/qdrant/snapshots/`.
 
 ## PostgreSQL
 
@@ -37,10 +37,10 @@ docker exec -i open-memory-postgres psql -U open_memory -d open_memory < backup.
 
 ```bash
 tar czf open-memory-backup-$(date +%Y%m%d).tar.gz \
-  memory-lxc/data/ \
+  memory-service/data/ \
   .env \
-  fastapi-lxc/.env \
-  fastapi-lxc/logs/
+  api-service/.env \
+  api-service/logs/
 ```
 
 ## Restore

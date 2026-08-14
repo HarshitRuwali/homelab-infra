@@ -23,8 +23,8 @@ build/
 
 # Runtime data
 logs/
-memory-lxc/data/
-fastapi-lxc/logs/
+memory-service/data/
+api-service/logs/
 
 # Tailscale certs (private keys)
 *.ts.net.crt

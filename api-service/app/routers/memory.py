@@ -169,7 +169,7 @@ async def search_memory(
 
     client = get_qdrant()
     # Uses the Query API (POST /collections/{c}/points/query), which requires
-    # Qdrant *server* >= 1.10 — it 404s on older servers. memory-lxc runs 1.12.1
+    # Qdrant *server* >= 1.10 — it 404s on older servers. memory-service runs 1.12.1
     # and the guard in ensure_collection() fails startup against anything that
     # cannot serve this collection, so reaching here implies a compatible server.
     # `query_points` returns a QueryResponse; the hits live on `.points`, unlike

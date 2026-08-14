@@ -18,7 +18,7 @@ overwriting each other.
 
 ```bash
 cp .env.example .env          # then fill in POSTGRES_PASSWORD
-mkdir -p memory-lxc/data/{qdrant,postgres,redis} fastapi-lxc/logs
+mkdir -p memory-service/data/{qdrant,postgres,redis} api-service/logs
 docker compose up -d --build
 ```
 
@@ -35,8 +35,8 @@ Full walkthrough: [Getting started](https://harshitruwali.github.io/open-memory-
 | Path | Contents |
 |---|---|
 | `docker-compose.yml` | all-in-one stack: Postgres, Qdrant, Redis, API |
-| `fastapi-lxc/` | the FastAPI app, Dockerfile, Alembic migrations, uv project |
-| `memory-lxc/` | datastore-only Compose stack, for split deployments |
+| `api-service/` | the FastAPI app, Dockerfile, Alembic migrations, uv project |
+| `memory-service/` | datastore-only Compose stack, for split deployments |
 | `mcp-server/` | MCP server exposing the API as agent tools |
 | `scripts/` | daily ingestion pipeline and a CLI client |
 | `docs/` | the MkDocs site published to GitHub Pages |
@@ -63,7 +63,7 @@ See [Memory scoping](https://harshitruwali.github.io/open-memory-stack/architect
 ## Development
 
 ```bash
-cd fastapi-lxc
+cd api-service
 uv sync
 uv run alembic upgrade head
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
@@ -84,6 +84,6 @@ hand: **Settings → Pages → Source: GitHub Actions**.
 ## Notes
 
 - Secrets live in local `.env` files and are not committed.
-- Runtime data under `memory-lxc/data/` is gitignored, and `docker compose down -v`
+- Runtime data under `memory-service/data/` is gitignored, and `docker compose down -v`
   does **not** delete it — those are bind mounts.
 - Redis is provisioned by the Compose files but no code path uses it yet.

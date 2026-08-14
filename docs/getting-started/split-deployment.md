@@ -1,8 +1,8 @@
 # Split deployment
 
 Two Compose files exist so the datastores and the API can live on different
-hosts: `memory-lxc/docker-compose.yml` runs PostgreSQL, Qdrant and Redis;
-`fastapi-lxc/docker-compose.yml` runs the API alone.
+hosts: `memory-service/docker-compose.yml` runs PostgreSQL, Qdrant and Redis;
+`api-service/docker-compose.yml` runs the API alone.
 
 This is the shape to use when the memory services sit on a storage host and the
 API sits next to your GPU box, or when several API instances share one
@@ -36,7 +36,7 @@ flowchart LR
 ## Start the memory services
 
 ```bash
-cd memory-lxc
+cd memory-service
 cp .env.example .env
 # Fill in POSTGRES_PASSWORD.
 mkdir -p data/qdrant data/postgres data/redis
@@ -57,7 +57,7 @@ authentication configured here.
 ## Start the API
 
 ```bash
-cd fastapi-lxc
+cd api-service
 cp .env.example .env
 ```
 
@@ -85,10 +85,10 @@ on a dedicated API host.
 | File | Configures | Datastores |
 |---|---|---|
 | `.env` | the all-in-one root Compose stack | its own local containers |
-| `fastapi-lxc/.env` | the API alone | pre-existing, on another host |
+| `api-service/.env` | the API alone | pre-existing, on another host |
 
 !!! danger "`VECTOR_DIM` is the trap"
-    Copying the root `.env` over `fastapi-lxc/.env` points a fresh-collection
+    Copying the root `.env` over `api-service/.env` points a fresh-collection
     configuration at a live collection. If the dimensions disagree the service
     now refuses to start, which is the good outcome — but if they happen to
     agree you have silently repointed the API at the wrong datastores. Treat

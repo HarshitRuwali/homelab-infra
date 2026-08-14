@@ -1,6 +1,6 @@
 # Open Memory MCP server
 
-Exposes the [Open Memory Stack](../fastapi-lxc) FastAPI service as native MCP
+Exposes the [Open Memory Stack](../api-service) FastAPI service as native MCP
 tools, so Claude Code / Codex / OpenCode can read and write long-term semantic
 memory directly.
 

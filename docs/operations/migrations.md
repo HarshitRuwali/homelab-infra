@@ -20,7 +20,7 @@ API accepts a request.
 ## Running migrations by hand
 
 ```bash
-cd fastapi-lxc
+cd api-service
 uv run alembic upgrade head
 ```
 
@@ -66,7 +66,7 @@ lowest `(agent_id, project)`.
 ## Creating a migration
 
 ```bash
-cd fastapi-lxc
+cd api-service
 uv run alembic revision --autogenerate -m "description of change"
 uv run alembic upgrade head
 ```
@@ -76,7 +76,7 @@ uv run alembic upgrade head
 When developing locally, run migrations after `uv sync`:
 
 ```bash
-cd fastapi-lxc
+cd api-service
 uv sync
 uv run alembic upgrade head
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload

@@ -70,7 +70,7 @@ LOG_LEVEL=info
 ```
 
 Logs go to stdout **and** to `logs/app.log`, rotated at midnight with seven
-days kept. The root Compose file bind-mounts `fastapi-lxc/logs` so they survive
+days kept. The root Compose file bind-mounts `api-service/logs` so they survive
 a container rebuild.
 
 Every request is logged twice — once on arrival, once on completion with a

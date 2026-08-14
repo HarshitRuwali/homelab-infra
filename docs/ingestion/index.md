@@ -28,7 +28,7 @@ To run the script directly, use an interpreter that has `httpx` — the app venv
 is the easy one. The system `python3` will fail with `ModuleNotFoundError`:
 
 ```bash
-./fastapi-lxc/.venv/bin/python scripts/ingest_daily_data.py
+./api-service/.venv/bin/python scripts/ingest_daily_data.py
 ```
 
 Output is a JSON summary on the last line:

@@ -2,7 +2,7 @@
 #
 # Usage:
 #   cp .env.example .env
-#   mkdir -p memory-lxc/data/qdrant memory-lxc/data/postgres memory-lxc/data/redis fastapi-lxc/logs
+#   mkdir -p memory-service/data/qdrant memory-service/data/postgres memory-service/data/redis api-service/logs
 #   docker compose up -d --build
 
 name: open-memory-stack
@@ -16,7 +16,7 @@ services:
       - "${QDRANT_HTTP_PORT:?QDRANT_HTTP_PORT must be set}:6333"
       - "${QDRANT_GRPC_PORT:?QDRANT_GRPC_PORT must be set}:6334"
     volumes:
-      - ./memory-lxc/data/qdrant:/qdrant/storage
+      - ./memory-service/data/qdrant:/qdrant/storage
     environment:
       QDRANT__SERVICE__HTTP_PORT: 6333
       QDRANT__SERVICE__GRPC_PORT: 6334
@@ -35,7 +35,7 @@ services:
     ports:
       - "${POSTGRES_HOST_PORT:?POSTGRES_HOST_PORT must be set}:5432"
     volumes:
-      - ./memory-lxc/data/postgres:/var/lib/postgresql/data
+      - ./memory-service/data/postgres:/var/lib/postgresql/data
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
@@ -62,7 +62,7 @@ services:
     ports:
       - "${REDIS_HOST_PORT:?REDIS_HOST_PORT must be set}:6379"
     volumes:
-      - ./memory-lxc/data/redis:/data
+      - ./memory-service/data/redis:/data
     command: >
       redis-server
         --appendonly yes
@@ -81,13 +81,13 @@ services:
 
   fastapi:
     build:
-      context: ./fastapi-lxc
+      context: ./api-service
     container_name: open-memory-api
     restart: unless-stopped
     ports:
       - "${FASTAPI_PORT:?FASTAPI_PORT must be set}:${APP_PORT:?APP_PORT must be set}"
     volumes:
-      - ./fastapi-lxc/logs:/app/logs
+      - ./api-service/logs:/app/logs
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}

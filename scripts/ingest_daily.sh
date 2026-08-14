@@ -13,13 +13,13 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${OPEN_MEMORY_PYTHON:-$REPO_ROOT/fastapi-lxc/.venv/bin/python}"
+PYTHON_BIN="${OPEN_MEMORY_PYTHON:-$REPO_ROOT/api-service/.venv/bin/python}"
 INGEST_SCRIPT="$REPO_ROOT/scripts/ingest_daily_data.py"
 LOG_DIR="$REPO_ROOT/logs"
 LOG_FILE="$LOG_DIR/ingest_$(date +%Y-%m-%d_%H-%M-%S).log"
 
 if [ ! -x "$PYTHON_BIN" ]; then
-    echo "No interpreter at $PYTHON_BIN — run 'uv sync' in fastapi-lxc/, or set OPEN_MEMORY_PYTHON" >&2
+    echo "No interpreter at $PYTHON_BIN — run 'uv sync' in api-service/, or set OPEN_MEMORY_PYTHON" >&2
     exit 1
 fi
 

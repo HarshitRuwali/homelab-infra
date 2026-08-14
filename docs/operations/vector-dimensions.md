@@ -40,7 +40,7 @@ If you changed your embedding model and the dimension no longer matches:
    Delete the Qdrant data and restart:
    ```bash
    docker compose down
-   rm -rf memory-lxc/data/qdrant/*
+   rm -rf memory-service/data/qdrant/*
    # Update VECTOR_DIM in .env
    docker compose up -d
    ```

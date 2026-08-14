@@ -9,7 +9,7 @@ wrapper, not the Python script, is the scheduling entry point.
 
 - resolves the repository root from its **own** path, so it works from any
   working directory and the checkout can live anywhere
-- picks the app venv interpreter (`fastapi-lxc/.venv/bin/python`), overridable
+- picks the app venv interpreter (`api-service/.venv/bin/python`), overridable
   with `OPEN_MEMORY_PYTHON`
 - caps the run at **300 seconds** with `timeout`
 - writes a timestamped log to `logs/ingest_<date>_<time>.log`

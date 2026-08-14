@@ -10,7 +10,7 @@ the two configurations are not interchangeable.
 
 !!! danger "Do not copy values between the two `.env` files"
     The root `.env` describes the all-in-one stack and its *own* local
-    containers. `fastapi-lxc/.env` describes an API pointed at datastores that
+    containers. `api-service/.env` describes an API pointed at datastores that
     already exist somewhere else. Copying `VECTOR_DIM` or a host name from one
     into the other is the fastest way to a
     [dimension mismatch](../operations/vector-dimensions.md).

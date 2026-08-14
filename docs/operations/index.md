@@ -7,7 +7,7 @@ Day-to-day tasks for running the Open Memory Stack.
 ```bash
 cp .env.example .env
 # Fill in POSTGRES_PASSWORD
-mkdir -p memory-lxc/data/{qdrant,postgres,redis} fastapi-lxc/logs
+mkdir -p memory-service/data/{qdrant,postgres,redis} api-service/logs
 docker compose up -d --build
 ```
 
@@ -21,14 +21,14 @@ This stops containers but preserves data.
 
 !!! note "`docker compose down -v` does not delete your memories"
     `-v` removes *anonymous and named* Docker volumes. Every stateful path in
-    this stack is a **bind mount** to `memory-lxc/data/`, which `-v` does not
+    this stack is a **bind mount** to `memory-service/data/`, which `-v` does not
     touch. There is nothing for it to reap.
 
     To actually wipe state, delete the directories:
 
     ```bash
     docker compose down
-    rm -rf memory-lxc/data/qdrant memory-lxc/data/postgres memory-lxc/data/redis
+    rm -rf memory-service/data/qdrant memory-service/data/postgres memory-service/data/redis
     ```
 
     Read [Backups](backups.md) first.

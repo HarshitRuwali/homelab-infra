@@ -57,7 +57,7 @@ only boundary anything else talks to.
 
 ```bash
 cp .env.example .env          # then fill in POSTGRES_PASSWORD
-mkdir -p memory-lxc/data/{qdrant,postgres,redis} fastapi-lxc/logs
+mkdir -p memory-service/data/{qdrant,postgres,redis} api-service/logs
 docker compose up -d --build
 ```
 
