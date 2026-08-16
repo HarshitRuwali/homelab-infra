@@ -1,0 +1,41 @@
+---
+# OFF BY DEFAULT, ENABLED BY INVENTORY MEMBERSHIP, NOT BY AUTODETECTION.
+#
+# This is deliberate and follows the same reasoning as `autoupdate` in the
+# inventory: the thing that turns a consequential behaviour on should be one
+# obvious line in group_vars, not a conditional buried in a role.
+#
+# Autodetection was considered and rejected. Detecting SMART capability
+# requires smartmontools to already be installed, so an autodetecting role
+# would have to install the package on all ten hosts to discover that nine of
+# them cannot use it, then either leave it there or remove it again and report
+# `changed` on every single run forever.
+#
+# It is also not guessable from the platform. On this estate:
+#   LXC guests  -> see the physical disks in /sys (so `lsblk` lists them) but
+#                  have NO /dev nodes, so smartctl cannot open them at all.
+#   KVM guests  -> have /dev/sda, but it is a QEMU virtual disk that reports
+#                  "SMART support is: Unavailable - device lacks SMART
+#                  capability".
+#   Raspberry Pis -> /dev/mmcblk0 is an SD card (type=SD). SD does not
+#                  implement SMART, and the eMMC health fields
+#                  (life_time, pre_eol_info) are absent on real SD media.
+# Only bare metal holding the actual disks can answer, which is why this is
+# set in group_vars for the physical-host group and nowhere else.
+smart_metrics_enabled: false
+
+smart_metrics_dir: "{{ alloy_textfile_dir }}"
+smart_metrics_file: fleet-smart.prom
+smart_metrics_script: /usr/local/bin/fleet-smart-metrics
+
+# Every 15 minutes, matching update_metrics. Deliberately NOT a 15s Alloy
+# scrape: each smartctl call wakes the device, and polling a rotational disk
+# that often prevents it from ever parking its heads or spinning down. Disk
+# health also simply does not change on a 15-second timescale.
+smart_metrics_oncalendar: "*:0/15"
+smart_metrics_randomized_delay: 300
+
+# `standby` skips a drive that is spun down rather than waking it just to read
+# a temperature. Set to "never" only if you would rather have uninterrupted
+# data than let the disks idle.
+smart_metrics_nocheck: standby

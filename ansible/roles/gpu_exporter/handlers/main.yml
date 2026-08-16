@@ -1,0 +1,11 @@
+---
+# `when: not ansible_check_mode` because a --check run never installs the
+# package, so on a GPU host that has not been onboarded yet this would try to
+# restart a unit that does not exist and fail the play. Check mode does not
+# restart anything regardless, so skipping is the honest report.
+- name: Restart nvidia_gpu_exporter
+  ansible.builtin.systemd:
+    name: nvidia_gpu_exporter
+    state: restarted
+    daemon_reload: true
+  when: not ansible_check_mode

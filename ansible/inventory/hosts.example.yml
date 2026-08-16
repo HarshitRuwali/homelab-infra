@@ -136,6 +136,25 @@ all:
                   ansible_host: 10.0.0.21
                   monitor_role: pi
 
+        # --- Bare-metal x86 hosts -------------------------------------------
+        # The only platform that can report SMART disk health. Virtualised
+        # guests cannot, and the reason differs by platform: an LXC sees the
+        # host's disks in /sys but has no /dev nodes; a KVM guest has a
+        # /dev/sda that reports "device lacks SMART capability"; an SD card
+        # does not implement SMART at all. group_vars/metal sets
+        # smart_metrics_enabled, which is what actually turns collection on.
+        #
+        # A hypervisor here should stay OUT of `autoupdate`: an unattended
+        # upgrade restarts pveproxy/pvedaemon underneath every running guest.
+        metal:
+          children:
+            metal_debian:
+              hosts:
+                hypervisor-01:
+                  ansible_host: 10.0.0.5
+                  ansible_user: root
+                  monitor_role: hypervisor
+
         # --- OVERLAYS: these cross the platform tree above ------------------
         # Guests with no direct route from the controller, of any platform.
         # Reached via ProxyJump through `lan_jump_host`. See

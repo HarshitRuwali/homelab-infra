@@ -136,6 +136,7 @@ nav:
       - Lifecycle: operations/lifecycle.md
       - Retention: operations/retention.md
       - Runbooks: operations/runbooks.md
+      - Deployment log: operations/deployment-log.md
 
   - Reference:
       - reference/playbooks.md

@@ -24,3 +24,6 @@ grafana_alerting_static_files:
   - rules-updates.yaml
   - rules-services.yaml
   - rules-containers.yaml
+  # SMART disk health. Only hosts in `metal` can produce these series, which
+  # is why every rule in it uses noDataState: OK; see the file's header.
+  - rules-storage.yaml

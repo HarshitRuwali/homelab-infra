@@ -81,9 +81,28 @@ START="$(date +%s.%N)"
 {% endif %}
 
   # --- unattended-upgrades health ----------------------------------------
-  echo '# HELP fleet_unattended_upgrades_enabled 1 when the apt-daily-upgrade timer is enabled.'
+  # BOTH CONDITIONS ARE REQUIRED, and the timer alone is not one of them.
+  #
+  # apt-daily-upgrade.timer ships ENABLED on stock Debian, so testing only the
+  # timer reports "auto-patching is on" for any Debian box that has never been
+  # configured to patch itself, including one where the unattended-upgrade
+  # binary is not even installed. That is the most dangerous direction for
+  # this metric to be wrong in: it makes an unpatched host look covered.
+  #
+  # It was invisible while every monitored host was in `autoupdate`, because
+  # there both halves were true. Onboarding the hypervisor (monitored, never
+  # auto-patched) exposed it, and it applies equally to the `no_autoupdate`
+  # group, whose 20auto-upgrades sets Unattended-Upgrade "0" while leaving the
+  # timer enabled.
+  #
+  # apt-config dump reads the EFFECTIVE value across all of apt.conf.d rather
+  # than one file, so a setting overridden in a later-sorting file counts.
+  echo '# HELP fleet_unattended_upgrades_enabled 1 only when apt is actually configured to APPLY upgrades unattended.'
   echo '# TYPE fleet_unattended_upgrades_enabled gauge'
-  if systemctl is-enabled --quiet apt-daily-upgrade.timer 2>/dev/null; then
+  uu_periodic="$(apt-config dump APT::Periodic::Unattended-Upgrade 2>/dev/null | awk -F'"' 'NR==1 {print $2}')"
+  if systemctl is-enabled --quiet apt-daily-upgrade.timer 2>/dev/null \
+     && [ "${uu_periodic:-0}" = "1" ] \
+     && command -v unattended-upgrade >/dev/null 2>&1; then
     echo 'fleet_unattended_upgrades_enabled 1'
   else
     echo 'fleet_unattended_upgrades_enabled 0'

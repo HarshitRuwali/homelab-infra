@@ -1,8 +1,21 @@
 # Dashboards
 
-Three dashboards, provisioned from `grafana/dashboards/` and loaded at
-startup. They are read-only in the UI in the same way alert rules are: edit
-the JSON and redeploy.
+Provisioned from `grafana/dashboards/` and loaded at startup, across two
+Grafana folders: **Monitoring** (`fleet/`, fleet-wide and `$host`-filterable)
+and **Servers** (`servers/`, one dashboard per host, no filter needed). Both
+are read-only in the UI in the same way alert rules are: edit the JSON and
+redeploy.
+
+!!! danger "The two provider paths must never nest"
+    Grafana's file reader walks each provider `path` **recursively**. A
+    provider pointed at the root of the dashboards tree would also claim
+    everything under `servers/`, and two providers provisioning the same UID
+    makes those dashboards flip between folders and log duplicate-provisioning
+    errors on every scan.
+
+    That is the whole reason the fleet dashboards sit in `fleet/` rather than
+    at the root: it makes the two paths disjoint siblings. Do not "tidy" them
+    back up a level.
 
 ## VM Fleet Overview
 
@@ -64,6 +77,39 @@ the JSON and redeploy.
 `uid: system-overview`: per-host resource detail. CPU, memory, root disk,
 network throughput, uptime and host count.
 
+## Servers folder
+
+`grafana/dashboards/servers/<host>.json`, `uid: host-<host>`, one per host in
+`monitored`: CPU, memory, disk, network, systemd units, container CPU/memory,
+pending updates, and logs (errors/warnings plus the full stream), all
+hardcoded to that host rather than filtered through `$host`. These are
+detail views to jump into from an alert, not summaries; the fleet-wide
+dashboards above stay the "is everyone healthy" entry point.
+
+`ubuntu-ai` additionally has a GPU row: utilization, memory, temperature,
+power and fan, both as top-strip stats and as per-GPU time series (labelled
+by `uuid`, so a multi-GPU box gets one line per card). See
+[GPU telemetry](../reference/metrics.md#gpu-telemetry) for the metric names,
+and `ansible/roles/gpu_exporter` for how it gets
+there. Empty GPU panels on a host that never had `nvidia-smi` mean the
+exporter correctly never installed, not a scrape failure.
+
+Add a new host's dashboard by copying an existing `servers/*.json`, replacing
+every `host="<name>"` and the `uid`/`title`, and re-running the JSON
+validation command below.
+
+!!! warning "Query the label the host *pushes*, not its inventory name"
+    They are usually the same, but not always. `monitor-lxc` pushes as
+    `host="main-server"` because `monitor_hostname` is pinned in
+    `host_vars/monitor-lxc.yml` (it has history predating the Ansible
+    rollout, and renaming it would fork its identity in Prometheus and Loki),
+    so `servers/monitor-lxc.json` queries `main-server` throughout and says so
+    in its title. Check `monitor_hostname` before writing a new one:
+
+    ```bash
+    ansible-inventory --host <name> | grep monitor_hostname
+    ```
+
 ## Conventions
 
 **Stat panels with a unit need explicit thresholds.** Grafana's default is
@@ -84,12 +130,21 @@ cgroup alongside real containers.
 ## Editing
 
 ```bash
-# edit grafana/dashboards/<name>.json, then:
+# a fleet dashboard (Monitoring folder):
 ansible monitor-lxc -m copy -a \
-  "src=../grafana/dashboards/<name>.json \
-   dest=/var/lib/grafana/dashboards/<name>.json \
+  "src=../grafana/dashboards/fleet/<name>.json \
+   dest=/var/lib/grafana/dashboards/fleet/<name>.json \
+   owner=grafana group=grafana mode=0644"
+
+# a per-host dashboard (Servers folder):
+ansible monitor-lxc -m copy -a \
+  "src=../grafana/dashboards/servers/<host>.json \
+   dest=/var/lib/grafana/dashboards/servers/<host>.json \
    owner=grafana group=grafana mode=0644"
 ```
+
+Both destination directories are created by `write_grafana_config()` in
+`scripts/lxc-install.sh`, so they exist on any host that ran the installer.
 
 The file provider reloads within seconds; no Grafana restart needed, unlike
 alerting.
@@ -102,5 +157,5 @@ alerting.
 Validate before deploying:
 
 ```bash
-python3 -c "import json; json.load(open('grafana/dashboards/x.json'))"
+python3 -c "import json; json.load(open('grafana/dashboards/servers/x.json'))"
 ```

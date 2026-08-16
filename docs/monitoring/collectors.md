@@ -89,5 +89,6 @@ In Grafana, open any dashboard and select the VM from the `host` variable.
 ## Notes
 
 - VMs and LXCs without Docker still report host metrics and journal logs; Docker panels remain empty for those hosts.
+- Hosts with an NVIDIA GPU (`nvidia-smi` present) get GPU telemetry automatically via `roles/gpu_exporter`, run ahead of `alloy_collector` in `playbooks/collectors.yml`. No inventory group to join; it autodetects the same way Docker does. See [Metrics catalogue](../reference/metrics.md#gpu-telemetry).
 - If journald persistent storage is disabled, Alloy can still read runtime logs from `/run/log/journal` when available.
 - Collector debug UI is intentionally not published in `docker-compose.collector.yml`.

@@ -1,0 +1,19 @@
+[Unit]
+Description=Collect SMART disk health metrics for the textfile collector
+Documentation=file://{{ smart_metrics_script }}
+
+[Service]
+Type=oneshot
+# Root is required: reading SMART data issues ATA/NVMe passthrough commands,
+# which need CAP_SYS_RAWIO. There is no group that grants this.
+User=root
+ExecStart={{ smart_metrics_script }}
+
+# Spinning up and interrogating several disks is not instant, and a hung
+# controller must not wedge the timer forever.
+TimeoutStartSec=300
+
+[Install]
+# Wired to multi-user.target so a reboot refreshes disk health immediately
+# rather than waiting out RandomizedDelaySec on the timer.
+WantedBy=multi-user.target

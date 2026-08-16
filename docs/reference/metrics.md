@@ -47,6 +47,64 @@ Written to `fleet-docker.prom` by `fleet-docker-update.sh`, after each run.
 | `fleet_docker_containers_unhealthy` | gauge | failing a Docker healthcheck |
 | `fleet_docker_containers_restarting` | gauge | stuck restarting |
 
+## SMART disk health
+
+Written to `fleet-smart.prom` by `fleet-smart-metrics`, every 15 minutes and
+at boot, from `ansible/roles/smart_metrics`.
+
+| Metric | Meaning |
+|---|---|
+| `fleet_smart_device_health_ok` | `1` if the drive's own SMART self-assessment passes |
+| `fleet_smart_temperature_celsius` | current drive temperature |
+| `fleet_smart_power_on_hours` / `fleet_smart_power_cycle_count` | age and spin-ups |
+| `fleet_smart_reallocated_sectors` | remapped bad sectors (SATA) |
+| `fleet_smart_pending_sectors` | unreadable, not yet remapped: **the urgent one** |
+| `fleet_smart_offline_uncorrectable` | sectors that failed offline scan |
+| `fleet_smart_crc_errors` | cumulative SATA link faults; read the slope, not the value |
+| `fleet_smart_nvme_percentage_used_ratio` | rated write endurance consumed, `0`-`1` |
+| `fleet_smart_nvme_available_spare_ratio` | spare blocks left, `0`-`1` |
+| `fleet_smart_nvme_media_errors` / `..._unsafe_shutdowns` | NVMe integrity counters |
+| `fleet_smart_devices_total` | SMART-capable devices found |
+| `fleet_smart_collection_timestamp_seconds` | when collection last ran |
+
+All are labelled `host`, `device`, `model` and `serial`, one series per
+physical drive.
+
+!!! warning "Only bare metal can report these, and the reason differs per platform"
+    An **LXC** guest sees the host's disks in `/sys`, so `lsblk` lists them,
+    but has no `/dev` nodes and cannot open them. A **KVM** guest has a
+    `/dev/sda` that answers `device lacks SMART capability`. An **SD card**
+    does not implement SMART, and the eMMC health fields (`life_time`,
+    `pre_eol_info`) are absent on real SD media.
+
+    So "no data" is the correct permanent state for every virtualised host,
+    which is why every rule in `rules-storage.yaml` uses `noDataState: OK` and
+    why `fleet-smart-collector-stale` exists to catch a genuinely dead
+    collector instead.
+
+!!! tip "Alert on the slope of `fleet_smart_crc_errors`, never the value"
+    It is a cumulative lifetime counter that never resets, and it usually
+    means a SATA cable rather than a dying platter. The HDD in this estate
+    already carries 23 from a past event, so a `> 0` rule would fire forever.
+    `fleet-smart-crc-errors-rising` uses `increase(...[24h]) > 0`.
+
+## GPU telemetry
+
+Scraped from the standalone `nvidia_gpu_exporter` service (see
+`ansible/roles/gpu_exporter`), installed only on
+hosts where `nvidia-smi` is present. Same figures `nvtop` shows interactively.
+
+| Metric | Meaning |
+|---|---|
+| `nvidia_smi_utilization_gpu_ratio` | GPU compute utilization, `0`-`1` |
+| `nvidia_smi_memory_used_bytes` / `nvidia_smi_memory_total_bytes` | VRAM used / installed |
+| `nvidia_smi_temperature_gpu` | die temperature, Celsius |
+| `nvidia_smi_power_draw_watts` | current power draw |
+| `nvidia_smi_fan_speed_ratio` | fan duty cycle, `0`-`1` |
+
+All are labelled `host` and `uuid` (one series per physical GPU), same as
+every other exporter in this stack.
+
 ## Stock metrics worth knowing
 
 | Metric | Used by |

@@ -233,10 +233,17 @@ groups:
               range: false
               # Normalised by core count so a 4-core Pi and a 20-core
               # hypervisor can share one threshold.
+              #
+              # tailscale-router excluded by request: as the tailnet exit
+              # node and subnet router it legitimately sits around 2x its
+              # core count from routing/NAT softirq work, which made this
+              # alert permanently firing for that one host. See
+              # host_vars/tailscale-router.yml for its other host-specific
+              # exclusions.
               expr: |
-                max by (host) (node_load15)
+                max by (host) (node_load15{host!="tailscale-router"})
                   / on (host)
-                count by (host) (count by (host, cpu) (node_cpu_seconds_total{mode="idle"}))
+                count by (host) (count by (host, cpu) (node_cpu_seconds_total{mode="idle",host!="tailscale-router"}))
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}

@@ -38,7 +38,17 @@ groups:
               editorMode: code
               instant: true
               range: false
-              expr: max by (host) (apt_upgrades_security_pending)
+              # Scoped to hosts that are actually configured to auto-apply.
+              # This alert's premise is "unattended-upgrades is not clearing
+              # them", which is only a fault where it was ever going to run.
+              # On a deliberately hand-patched host (the hypervisor, anything
+              # in `no_autoupdate`) pending security updates are the expected
+              # steady state, and this would fire forever with a runbook
+              # telling you to run a binary that is not installed. The pending
+              # counts stay visible on the dashboards either way.
+              expr: |
+                max by (host) (apt_upgrades_security_pending)
+                  and on (host) (fleet_unattended_upgrades_enabled == 1)
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}

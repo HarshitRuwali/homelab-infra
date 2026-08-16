@@ -119,6 +119,20 @@ loki.source.journal "system" {
   relabel_rules = loki.relabel.journal.rules
   forward_to    = [loki.write.central.receiver]
 }
+{% if gpu_exporter_available | default(false) %}
+
+// --- GPU telemetry (host has an NVIDIA GPU) -------------------------------
+// nvidia_gpu_exporter runs as its own systemd service, installed and bound
+// to loopback by roles/gpu_exporter; there is no in-process Alloy component
+// for this the way prometheus.exporter.unix/.cadvisor are.
+
+prometheus.scrape "gpu" {
+  job_name        = "nvidia-gpu"
+  targets         = [{"__address__" = "{{ gpu_exporter_listen_addr }}"}]
+  scrape_interval = "{{ alloy_scrape_interval }}"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+{% endif %}
 {% if alloy_docker_effective %}
 
 // --- Docker telemetry (host has /var/run/docker.sock) --------------------

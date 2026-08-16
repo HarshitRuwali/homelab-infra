@@ -299,12 +299,19 @@ write_grafana_config() {
   local env_file="/etc/default/grafana-monitoring"
   local listen_addr="${MONITORING_LISTEN_ADDRESS:-127.0.0.1}"
   local dashboard
+  local dashboard_dir
 
   log "Writing Grafana provisioning config."
+  # fleet/ and servers/ are the two provider paths in
+  # grafana/provisioning/dashboards/dashboards.yml, and they are deliberately
+  # disjoint siblings: Grafana scans each path recursively, so a provider at
+  # the parent would double-provision everything below it.
   install -d -m 0755 \
     /etc/grafana/provisioning/datasources \
     /etc/grafana/provisioning/dashboards \
     /var/lib/grafana/dashboards \
+    /var/lib/grafana/dashboards/fleet \
+    /var/lib/grafana/dashboards/servers \
     /etc/systemd/system/grafana-server.service.d
 
   cat > /etc/grafana/provisioning/datasources/datasources.yml <<'EOF'
@@ -335,8 +342,11 @@ EOF
   install -m 0644 "$ROOT_DIR/grafana/provisioning/dashboards/dashboards.yml" /etc/grafana/provisioning/dashboards/dashboards.yml
 
   shopt -s nullglob
-  for dashboard in "$ROOT_DIR"/grafana/dashboards/*.json; do
-    install -m 0644 "$dashboard" "/var/lib/grafana/dashboards/$(basename "$dashboard")"
+  for dashboard_dir in fleet servers; do
+    for dashboard in "$ROOT_DIR/grafana/dashboards/$dashboard_dir"/*.json; do
+      install -m 0644 "$dashboard" \
+        "/var/lib/grafana/dashboards/$dashboard_dir/$(basename "$dashboard")"
+    done
   done
   shopt -u nullglob
 

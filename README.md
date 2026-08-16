@@ -126,13 +126,20 @@ See [Security notes](docs/security.md).
 
 ## What is provisioned
 
-**3 dashboards**, loaded from `grafana/dashboards/`:
+**3 fleet dashboards** in the `Monitoring` folder, loaded from
+`grafana/dashboards/fleet/`:
 
 - **VM Fleet Overview**: fleet freshness, pending updates, which hosts need a
   reboot, top resource consumers, warnings and errors
 - **Services and Logs**: systemd unit state, per-container inventory, journal
   and container logs
 - **System Overview**: CPU, memory, disk, network, uptime, host count
+
+**One dashboard per host** in the `Servers` folder, loaded from
+`grafana/dashboards/servers/`: CPU, memory, disk, network, systemd units,
+containers, pending updates and logs, scoped to a single host instead of
+filtered through `$host`. Hosts with an NVIDIA GPU also get GPU utilization,
+VRAM, temperature, power and fan.
 
 **Alert rules** in `grafana/provisioning/alerting/`: 21 committed across
 availability, resources, updates, containers and services, plus a
@@ -151,11 +158,12 @@ cannot leave a silent gap in down-detection.
 ansible/                       Fleet automation
   playbooks/site.yml             everything, in dependency order
   inventory/hosts.example.yml    template; hosts.local.yml is gitignored
-  roles/                         alloy_collector, update_metrics,
+  roles/                         alloy_collector, gpu_exporter, update_metrics,
                                  unattended_upgrades, docker_updates,
                                  grafana_alerting, matrix_webhook
 alloy/config.alloy             Docker-collector config (native installs use Ansible)
-grafana/dashboards/            Provisioned dashboards
+grafana/dashboards/fleet/      Fleet-wide dashboards (Monitoring folder)
+grafana/dashboards/servers/    Per-host dashboards (Servers folder)
 grafana/provisioning/          Datasources, dashboards, alerting
 loki/, prometheus/             Server configs
 scripts/lxc-install.sh         Direct LXC installer with nginx auth proxy

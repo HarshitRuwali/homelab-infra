@@ -1,0 +1,144 @@
+---
+# GPU telemetry (utilization, memory, temperature, power, fan), the same
+# figures `nvtop` shows interactively. Autodetected the same way
+# alloy_collector autodetects the Docker socket: read off the host, not
+# assumed from inventory group membership, so a GPU passthrough change on the
+# hypervisor is picked up on the next run without touching hosts.local.yml.
+#
+# No native Alloy component exists for this (unlike prometheus.exporter.unix
+# or .cadvisor, which run in-process). This installs the standalone
+# nvidia_gpu_exporter binary as its own systemd service and Alloy scrapes it
+# over loopback; see the "GPU telemetry" block in
+# alloy_collector/templates/config.alloy.j2.
+# `shell`, not `command`: `command -v` is a shell builtin and Debian/Ubuntu
+# ship no /usr/bin/command, so the command module cannot run it and would
+# report rc=2 on every host, silently pinning gpu_exporter_available to false.
+# (macOS does ship /usr/bin/command, which makes this fail only on the
+# targets that matter -- do not "simplify" this back.)
+#
+# `check_mode: false` because this is a read-only probe AND because a skipped
+# shell task does not register nothing, it registers a STUBBED SUCCESS:
+#   {"skipped": true, "rc": 0, "msg": "Command would have run if not in check mode"}
+# That `rc: 0` would make gpu_exporter_available true on every host under
+# --check, sending machines with no GPU down the install path. Let it run.
+- name: Check for the nvidia-smi binary
+  ansible.builtin.shell: command -v nvidia-smi
+  register: gpu_exporter_nvidia_smi
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Resolve GPU availability
+  ansible.builtin.set_fact:
+    gpu_exporter_available: "{{ gpu_exporter_nvidia_smi.rc == 0 }}"
+
+- name: Report the resolved GPU shape
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: gpu={{ gpu_exporter_available }}"
+
+- name: Install the GPU exporter
+  when: gpu_exporter_available | bool
+  block:
+    - name: Map Ansible architecture to the exporter's release arch
+      ansible.builtin.set_fact:
+        gpu_exporter_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] | default('') }}"
+
+    - name: Fail on an architecture with no known release asset
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} reports an NVIDIA GPU on
+          ansible_architecture={{ ansible_architecture }}, which
+          nvidia_gpu_exporter does not publish a .deb for. Add it to
+          gpu_exporter_checksums in defaults/main.yml or install manually.
+      when: gpu_exporter_arch | length == 0
+
+    - name: Download the nvidia_gpu_exporter package
+      ansible.builtin.get_url:
+        url: "https://github.com/utkuozdemir/nvidia_gpu_exporter/releases/download/v{{ gpu_exporter_version }}/nvidia-gpu-exporter_{{ gpu_exporter_version }}_linux_{{ gpu_exporter_arch }}.deb"
+        dest: "/tmp/nvidia-gpu-exporter_{{ gpu_exporter_version }}_{{ gpu_exporter_arch }}.deb"
+        checksum: "{{ gpu_exporter_checksums[gpu_exporter_arch] }}"
+        mode: "0644"
+      register: gpu_exporter_download
+
+    # Everything from here to the readiness check needs the package to
+    # actually exist on disk, which it does not under --check: get_url reports
+    # the download without writing the file, and the systemd unit and the
+    # nvidia_gpu_exporter user only appear via the deb's postinstall script.
+    # A --check run is documented as safe to run fleet-wide (see
+    # docs/getting-started/first-run.md), so these report intent and stop
+    # rather than failing the play.
+    - name: Install the GPU exporter package
+      # The postinstall script this .deb ships (useradd nvidia_gpu_exporter,
+      # daemon-reload, enable, restart) runs on every install/upgrade, which
+      # is exactly when Ansible reports `changed` here.
+      ansible.builtin.apt:
+        deb: "{{ gpu_exporter_download.dest }}"
+      when: not ansible_check_mode
+
+    - name: Ensure the GPU exporter systemd drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/system/nvidia_gpu_exporter.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Bind the GPU exporter to loopback only
+      ansible.builtin.copy:
+        content: |
+          # Managed by ansible/roles/gpu_exporter.
+          # The packaged unit listens on :9835 (all interfaces) by default.
+          # Alloy scrapes it over loopback, so nothing else needs it exposed.
+          [Service]
+          ExecStart=
+          ExecStart=/usr/bin/nvidia_gpu_exporter --web.listen-address={{ gpu_exporter_listen_addr }}
+        dest: /etc/systemd/system/nvidia_gpu_exporter.service.d/10-listen-address.conf
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart nvidia_gpu_exporter
+
+    - name: Grant the exporter user access to the GPU device nodes
+      # Harmless where /dev/nvidia* is already world-readable; a safety net
+      # for driver installs that instead lock it to the video group.
+      ansible.builtin.user:
+        name: nvidia_gpu_exporter
+        groups: video
+        append: true
+      when: not ansible_check_mode
+      notify: Restart nvidia_gpu_exporter
+
+    - name: Enable and start the GPU exporter
+      ansible.builtin.systemd:
+        name: nvidia_gpu_exporter
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    - name: Flush handlers so the readiness check tests the new config
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for the GPU exporter to become ready
+      ansible.builtin.uri:
+        url: "http://{{ gpu_exporter_listen_addr }}/metrics"
+        status_code: [200]
+      register: gpu_exporter_ready
+      retries: 10
+      delay: 3
+      until: gpu_exporter_ready is succeeded
+      when: not ansible_check_mode
+
+- name: Remove the GPU exporter where no GPU is present
+  when: not (gpu_exporter_available | bool)
+  block:
+    - name: Purge the GPU exporter package
+      ansible.builtin.apt:
+        name: nvidia-gpu-exporter
+        state: absent
+        purge: true
+
+    - name: Remove the GPU exporter systemd drop-in
+      ansible.builtin.file:
+        path: /etc/systemd/system/nvidia_gpu_exporter.service.d
+        state: absent

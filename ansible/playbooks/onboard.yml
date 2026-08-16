@@ -139,8 +139,16 @@
       when: (onboard_ntp.stdout | trim) != 'yes'
 
   roles:
-    # Order matches site.yml: the collector first, then the exporter whose
+    # Order matches site.yml: GPU detection first because config.alloy.j2
+    # reads the fact it sets, then the collector, then the exporter whose
     # .prom files the collector's textfile directory picks up.
+    #
+    # gpu_exporter must stay in this list, not just in collectors.yml. This
+    # play re-renders the Alloy config, so running it without gpu_exporter
+    # leaves gpu_exporter_available undefined, silently drops the GPU scrape
+    # block and restarts Alloy -- costing a GPU host its telemetry on a play
+    # that is documented as safe to re-run.
+    - gpu_exporter
     - alloy_collector
     - update_metrics
 
