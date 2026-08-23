@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily Immich/Nextcloud backup to S3
+
+[Timer]
+# 01:30 with up to 30 minutes of jitter: finished well before the fleet's
+# 04:00 container-update window, so a backup never overlaps an image pull.
+OnCalendar=*-*-* 01:30:00
+RandomizedDelaySec=30m
+# Catch up after downtime instead of silently skipping a day.
+Persistent=true
+Unit=s3-backup.service
+
+[Install]
+WantedBy=timers.target

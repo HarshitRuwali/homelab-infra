@@ -1,0 +1,20 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadExactlyOneSecret",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret"
+      ],
+      "Resource": "SECRET_ARN"
+    },
+    {
+      "Sid": "DenyEverythingElseInSecretsManager",
+      "Effect": "Deny",
+      "Action": "secretsmanager:*",
+      "NotResource": "SECRET_ARN"
+    }
+  ]
+}

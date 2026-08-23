@@ -1,0 +1,7 @@
+# Never commit real config or secrets
+config/backup.env
+config/*.local
+*.password
+restic-password*
+.staging/
+*.log
