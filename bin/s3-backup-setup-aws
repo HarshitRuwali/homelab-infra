@@ -8,7 +8,9 @@
 #   sudo s3-backup-setup-aws --bucket my-homelab-backup --region ap-south-1
 #   sudo s3-backup-setup-aws --bucket my-homelab-backup --region ap-south-1 --apply
 #
-# Uses your ADMIN credentials (an ~/.aws profile, or the environment). Access
+# Uses your ADMIN credentials (an ~/.aws profile, or the environment). Under
+# sudo it reads the invoking user's ~/.aws, not root's; override with
+# --aws-config-dir if they live somewhere else. Access
 # keys it creates are written straight into backup.env at mode 0600 and are
 # never printed, so no secret reaches your terminal, scrollback or shell
 # history. There is nothing for you to copy by hand.
@@ -33,7 +35,7 @@ source "$LIB_DIR/common.sh"
 CONFIG_FILE="${CONFIG_FILE:-/etc/s3-backup/backup.env}"
 ARG_BUCKET=""; ARG_REGION=""; ARG_SECRET_ID=""; PROFILE=""; APPLY=0
 IAM_USER="s3-backup-homelab"; BOOTSTRAP_USER="s3-backup-bootstrap"
-KMS_KEY=""; PW_FILE=""
+KMS_KEY=""; PW_FILE=""; ARG_AWS_CONFIG_DIR=""
 
 usage() { awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit "${1:-0}"; }
 
@@ -47,12 +49,20 @@ while (( $# )); do
     --bootstrap-user)       BOOTSTRAP_USER="$2"; shift 2 ;;
     --kms-key-id)           KMS_KEY="$2"; shift 2 ;;
     --restic-password-file) PW_FILE="$2"; shift 2 ;;
+    --aws-config-dir)       ARG_AWS_CONFIG_DIR="$2"; shift 2 ;;
     --config)               CONFIG_FILE="$2"; shift 2 ;;
     --apply)                APPLY=1; shift ;;
     -h|--help)              usage 0 ;;
     *) err "unknown argument: $1"; usage 1 ;;
   esac
 done
+
+# Captured before backup.env is sourced: that file defines AWS_ACCESS_KEY_ID
+# for the backup host, a least-privilege key that cannot create buckets or IAM
+# users. Only credentials that were genuinely in the environment count as admin.
+ENV_AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+ENV_AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+ENV_AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN:-}"
 
 [[ "$(id -u)" == "0" ]] || die "must run as root (it writes $CONFIG_FILE)"
 [[ -r "$CONFIG_FILE" ]] || die "$CONFIG_FILE not found - run install.sh first"
@@ -95,14 +105,75 @@ sed "s/BUCKET_NAME/${BUCKET}/g" "$AWS_DIR/iam-policy.json"        > "$WORK/iam-p
 sed "s/BUCKET_NAME/${BUCKET}/g" "$AWS_DIR/bucket-policy-tls.json" > "$WORK/bucket-policy-tls.json"
 cp "$AWS_DIR/lifecycle.json" "$WORK/lifecycle.json"
 
+# Where the ADMIN credentials live. Under sudo, $HOME is root's, not the
+# invoking user's, so an ~/.aws written as harshit is at /home/harshit/.aws.
+# Getting this wrong is silent: `docker -v` creates a missing bind source as an
+# empty directory, and the AWS CLI then reports "profile could not be found".
+if [[ -n "$ARG_AWS_CONFIG_DIR" ]]; then
+  AWS_CONFIG_DIR="$ARG_AWS_CONFIG_DIR"
+elif [[ -n "${SUDO_USER:-}" ]] && home="$(getent passwd "$SUDO_USER" | cut -d: -f6)" \
+     && [[ -n "$home" ]]; then
+  AWS_CONFIG_DIR="$home/.aws"
+else
+  AWS_CONFIG_DIR="${HOME:-/root}/.aws"
+fi
+
+HAVE_ENV_CREDS=0
+[[ -n "$ENV_AWS_ACCESS_KEY_ID" && -n "$ENV_AWS_SECRET_ACCESS_KEY" ]] && HAVE_ENV_CREDS=1
+
+if [[ ! -d "$AWS_CONFIG_DIR" ]] && (( ! HAVE_ENV_CREDS )); then
+  err "no AWS admin credentials found."
+  err "  looked for a config directory at: $AWS_CONFIG_DIR"
+  [[ -n "${SUDO_USER:-}" ]] && err "  (resolved from SUDO_USER=$SUDO_USER; \$HOME under sudo is ${HOME:-/root})"
+  err "Fix with either:"
+  err "  1. point at an existing one:"
+  err "       sudo $(basename "$0") ... --aws-config-dir /path/to/.aws"
+  err "  2. or create ~/.aws/credentials as your normal user (not root)."
+  err "     There is no aws CLI on this host by design, so write the file directly:"
+  err "       mkdir -p ~/.aws && chmod 700 ~/.aws"
+  err "       \$EDITOR ~/.aws/credentials    # then chmod 600 it"
+  err "     containing, with your ADMIN key:"
+  err "       [default]"
+  err "       aws_access_key_id = ..."
+  err "       aws_secret_access_key = ..."
+  die "cannot continue without admin credentials"
+fi
+
+if [[ -n "$PROFILE" ]]; then
+  if [[ ! -d "$AWS_CONFIG_DIR" ]]; then
+    die "--profile $PROFILE given, but no config directory at $AWS_CONFIG_DIR"
+  fi
+  if ! grep -qE "^\[(profile )?${PROFILE}\]" "$AWS_CONFIG_DIR"/config "$AWS_CONFIG_DIR"/credentials 2>/dev/null; then
+    err "profile '$PROFILE' is not defined in $AWS_CONFIG_DIR/{config,credentials}"
+    err "profiles found: $(grep -hoE '^\[(profile )?[^]]+\]' "$AWS_CONFIG_DIR"/config "$AWS_CONFIG_DIR"/credentials 2>/dev/null | tr -d '[]' | sed 's/^profile //' | sort -u | paste -sd' ' || echo none)"
+    die "no such profile"
+  fi
+fi
+
 aws_env=()
 [[ -n "$PROFILE" ]] && aws_env+=(-e "AWS_PROFILE=$PROFILE")
-for v in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN; do
-  [[ -n "${!v:-}" ]] && aws_env+=(-e "$v")
-done
+if (( HAVE_ENV_CREDS )); then
+  # Re-export the snapshot: sourcing backup.env overwrote these with the
+  # backup host's key. Values pass through by name, never in argv.
+  export AWS_ACCESS_KEY_ID="$ENV_AWS_ACCESS_KEY_ID"
+  export AWS_SECRET_ACCESS_KEY="$ENV_AWS_SECRET_ACCESS_KEY"
+  aws_env+=(-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY)
+  if [[ -n "$ENV_AWS_SESSION_TOKEN" ]]; then
+    export AWS_SESSION_TOKEN="$ENV_AWS_SESSION_TOKEN"
+    aws_env+=(-e AWS_SESSION_TOKEN)
+  fi
+else
+  # Nothing from the environment: unset so the CLI cannot pick up the
+  # low-privilege key that backup.env just put into our shell.
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+fi
+aws_mounts=(-v "$WORK:/work:ro")
+# Mount only when it really exists, so docker cannot fabricate an empty one.
+[[ -d "$AWS_CONFIG_DIR" ]] && aws_mounts+=(-v "$AWS_CONFIG_DIR:/root/.aws:ro")
+
 awscli() {
   docker run --rm -i "${aws_env[@]}" -e "AWS_DEFAULT_REGION=$REGION" \
-    -v "$HOME/.aws:/root/.aws:ro" -v "$WORK:/work:ro" "$AWSCLI_IMAGE" "$@"
+    "${aws_mounts[@]}" "$AWSCLI_IMAGE" "$@"
 }
 
 did() { printf '   \033[32m+\033[0m %s\n' "$*"; }
@@ -130,6 +201,7 @@ echo "region          : $REGION"
 echo "secrets backend : $SECRETS_BACKEND"
 (( WANT_SECRET )) && echo "secret id       : $SECRET_ID"
 echo "config          : $CONFIG_FILE"
+echo "aws credentials : $( (( HAVE_ENV_CREDS )) && echo "environment" || echo "$AWS_CONFIG_DIR${PROFILE:+ (profile $PROFILE)}")"
 (( APPLY )) || printf '\n\033[33mDRY RUN\033[0m - nothing will be created. Re-run with --apply.\n'
 
 echo

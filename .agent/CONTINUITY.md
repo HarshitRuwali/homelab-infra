@@ -111,6 +111,27 @@ Canonical briefing. Facts only.
   replaced by setup-aws; it is reused. Replacing it would orphan the
   repository, and rotating it is `restic key add`.
 
+## [DISCOVERIES - first real-server run]
+
+- 2026-08-23T10:42Z [USER] `sudo s3-backup-setup-aws --profile default` failed
+  on `cloud-services` with "The config profile (default) could not be found".
+- 2026-08-23T10:45Z [CODE] Two defects, both mine:
+  (a) `awscli()` mounted `$HOME/.aws`, but under sudo `$HOME` is `/root`, so it
+      mounted `/root/.aws` instead of the invoking user's. `docker -v` then
+      CREATED that path as an empty dir, turning "no config" into the
+      misleading "profile not found". Now resolved via `SUDO_USER`, overridable
+      with `--aws-config-dir`, mounted only when it already exists.
+  (b) `HAVE_ENV_CREDS` was computed AFTER sourcing backup.env, so it picked up
+      `AWS_ACCESS_KEY_ID` = the backup host's least-privilege S3 key and would
+      have attempted bucket/IAM creation with it. Admin credentials are now
+      snapshotted before the config is sourced.
+- 2026-08-23T10:50Z [TOOL] The existing setup-aws tests had been passing
+  *because of* defect (b): they supplied no admin credentials and silently used
+  the stale key from backup.env. They now pass admin credentials explicitly.
+  Evidence that a green suite can encode the bug it should catch.
+- 2026-08-23T10:52Z [TOOL] Both fixes mutation-tested: reverting the env
+  snapshot produces 19 failures, reintroducing the sudo `$HOME` bug produces 6.
+
 ## [OUTCOMES]
 
 - 2026-08-23T09:35Z [TOOL] Added `tests/docs-consistency-test.sh` (8 checks:

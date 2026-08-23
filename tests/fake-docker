@@ -94,7 +94,10 @@ case "$cmd" in
       printf '%s' "${FAKE_SECRET_PAYLOAD:-$default_payload}"
       exit 0
     fi
-    if [[ "$tool" == sts ]]; then echo "123456789012"; exit 0; fi
+    if [[ "$tool" == sts ]]; then
+      echo "${AWS_ACCESS_KEY_ID:-none}" > "$STATE/admin-key"
+      echo "123456789012"; exit 0
+    fi
 
     if [[ "$tool" == s3api ]]; then
       sub="${1:-}"

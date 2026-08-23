@@ -241,6 +241,10 @@ echo "############ s3-backup-setup-aws ############"
 
 SETUP="$REPO/bin/s3-backup-setup-aws"
 CFG="$T/setup.env"
+# Admin credentials come from the environment. They must be supplied explicitly:
+# the key inside backup.env belongs to the backup host and is deliberately
+# ignored, so these tests would otherwise fail for the right reason.
+admin() { AWS_ACCESS_KEY_ID=AKIAADMIN AWS_SECRET_ACCESS_KEY=adminsecret HOME=/root "$SETUP" "$@"; }
 rm -rf "$FAKE_DOCKER_STATE"; mkdir -p "$FAKE_DOCKER_STATE"
 cat > "$CFG" <<'EOF'
 SECRETS_BACKEND="aws-secrets-manager"
@@ -257,8 +261,70 @@ chmod 600 "$CFG"
 cp "$CFG" "$T/setup.env.orig"
 
 echo
+echo "== admin credential discovery (the sudo \$HOME trap) =="
+# Reproduces: `sudo s3-backup-setup-aws --profile default` failing with
+# "The config profile (default) could not be found" because $HOME is root's.
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+
+rm -rf /root/.aws
+HOME=/root "$SETUP" --bucket b1 --region r1 --config "$CFG" >"$T/cred.log" 2>&1
+check '[[ $? -ne 0 ]]'                              "fails when there are no admin credentials at all"
+check 'grep -q "looked for a config directory at: /root/.aws" "$T/cred.log"' \
+      "  ...and says exactly which path it tried"
+check '[[ ! -d /root/.aws ]]' \
+      "  ...and does not let docker fabricate an empty /root/.aws"
+
+# A real user whose home holds the credentials, reached through SUDO_USER.
+id testadmin >/dev/null 2>&1 || useradd -m testadmin >/dev/null 2>&1
+ADMIN_HOME="$(getent passwd testadmin | cut -d: -f6)"
+mkdir -p "$ADMIN_HOME/.aws"
+printf '[default]\naws_access_key_id = AKIAADMIN\n' > "$ADMIN_HOME/.aws/credentials"
+printf '[profile other]\nregion = eu-west-1\n'      > "$ADMIN_HOME/.aws/config"
+
+: > "$FAKE_DOCKER_LOG"
+HOME=/root SUDO_USER=testadmin "$SETUP" --bucket b1 --region r1 --config "$CFG" >"$T/cred.log" 2>&1
+check '[[ $? -eq 0 ]]' "finds credentials in the sudo-invoking user's home"
+check "grep -q \"$ADMIN_HOME/.aws:/root/.aws:ro\" \"$FAKE_DOCKER_LOG\"" \
+      "  ...and mounts that directory, not root's"
+check "grep -q \"aws credentials : $ADMIN_HOME/.aws\" \"$T/cred.log\"" \
+      "  ...and reports which one it chose"
+# backup.env defines AWS_ACCESS_KEY_ID for the backup host: a least-privilege
+# key that cannot create buckets or IAM users. It must never be used as admin.
+check_eq "$(cat "$FAKE_DOCKER_STATE/admin-key" 2>/dev/null)" none \
+      "  ...and never authenticates with the low-privilege key from backup.env"
+
+HOME=/root SUDO_USER=testadmin "$SETUP" --bucket b1 --region r1 --config "$CFG" \
+  --profile nosuchprofile >"$T/cred.log" 2>&1
+check '[[ $? -ne 0 ]]' "rejects a profile that is not defined"
+check 'grep -q "profiles found: default other" "$T/cred.log"' \
+      "  ...and lists the profiles that do exist"
+
+HOME=/root SUDO_USER=testadmin "$SETUP" --bucket b1 --region r1 --config "$CFG" \
+  --profile default >"$T/cred.log" 2>&1
+check '[[ $? -eq 0 ]]' "accepts a profile that is defined in credentials"
+
+: > "$FAKE_DOCKER_LOG"
+mkdir -p "$T/elsewhere/.aws"; printf '[default]\n' > "$T/elsewhere/.aws/credentials"
+HOME=/root "$SETUP" --bucket b1 --region r1 --config "$CFG" \
+  --aws-config-dir "$T/elsewhere/.aws" >"$T/cred.log" 2>&1
+check '[[ $? -eq 0 ]]' "--aws-config-dir overrides discovery"
+check "grep -q \"$T/elsewhere/.aws:/root/.aws:ro\" \"$FAKE_DOCKER_LOG\"" \
+      "  ...and is what gets mounted"
+
+# Environment credentials alone are enough, with no config directory anywhere.
+: > "$FAKE_DOCKER_LOG"
+HOME=/root AWS_ACCESS_KEY_ID=AKIAENV AWS_SECRET_ACCESS_KEY=envsecret \
+  "$SETUP" --bucket b1 --region r1 --config "$CFG" >"$T/cred.log" 2>&1
+check '[[ $? -eq 0 ]]' "environment credentials work with no ~/.aws at all"
+check 'grep -q "aws credentials : environment" "$T/cred.log"' "  ...and are reported as such"
+check '! grep -q "/root/.aws:ro" "$FAKE_DOCKER_LOG"' "  ...with no credential directory mounted"
+
+rm -rf "$FAKE_DOCKER_STATE"; mkdir -p "$FAKE_DOCKER_STATE"
+cp "$T/setup.env.orig" "$CFG"; chmod 600 "$CFG"
+
+echo
 echo "== dry run changes nothing =="
-"$SETUP" --bucket b1 --region ap-south-1 --secret-id homelab/s3-backup --config "$CFG" >"$T/setup.log" 2>&1
+admin --bucket b1 --region ap-south-1 --secret-id homelab/s3-backup --config "$CFG" >"$T/setup.log" 2>&1
 check '[[ $? -eq 0 ]]' "dry run exits 0"
 check 'diff -q "$CFG" "$T/setup.env.orig" >/dev/null' "config untouched by the dry run"
 check '[[ ! -f "$FAKE_DOCKER_STATE/bucket" ]]' "no bucket created by the dry run"
@@ -267,7 +333,7 @@ check 'grep -q "DRY RUN" "$T/setup.log"' "says it is a dry run"
 
 echo
 echo "== apply creates everything and writes the config =="
-"$SETUP" --bucket b1 --region ap-south-1 --secret-id homelab/s3-backup --config "$CFG" --apply >"$T/setup.log" 2>&1
+admin --bucket b1 --region ap-south-1 --secret-id homelab/s3-backup --config "$CFG" --apply >"$T/setup.log" 2>&1
 RC=$?
 check '[[ $RC -eq 0 ]]' "apply exits 0"
 [[ $RC -ne 0 ]] && { echo "--- output ---"; cat "$T/setup.log"; }
@@ -281,6 +347,8 @@ check 'grep -q "^AWS_SECRET_ACCESS_KEY=\"\"$" "$CFG"'          "stale on-disk S3
 check '[[ "$(stat -c %a "$CFG")" == "600" ]]'                    "config still mode 0600"
 check '[[ -f "$FAKE_DOCKER_STATE/secret" ]]'                     "secret created"
 check 'grep -q "^create-secret$" "$FAKE_DOCKER_STATE/secret-writes"' "created rather than overwrote"
+check_eq "$(cat "$FAKE_DOCKER_STATE/admin-key" 2>/dev/null)" AKIAADMIN \
+      "authenticated with the admin key, not the backup host's key"
 
 echo
 echo "== the rewrite does not corrupt the config =="
@@ -295,7 +363,7 @@ check '! grep -q "fake-secret-value" "$T/setup.log"' "no access key secret in th
 
 echo
 echo "== re-running is safe and preserves the restic password =="
-"$SETUP" --bucket b1 --region ap-south-1 --secret-id homelab/s3-backup --config "$CFG" --apply >"$T/setup2.log" 2>&1
+admin --bucket b1 --region ap-south-1 --secret-id homelab/s3-backup --config "$CFG" --apply >"$T/setup2.log" 2>&1
 check '[[ $? -eq 0 ]]' "second apply exits 0"
 check 'grep -q "already exists" "$T/setup2.log"' "reports existing resources instead of recreating them"
 check 'grep -q "reusing the restic password" "$T/setup2.log"' "reuses the stored restic password"

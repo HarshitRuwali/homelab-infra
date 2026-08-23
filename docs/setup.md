@@ -5,8 +5,9 @@ Six steps. Everything runs **on the server that has the HDD**.
 ## 0. Prerequisites
 
 - Docker, with Immich and Nextcloud already running under it.
-- AWS admin credentials available on that server for step 2, either as an
-  `~/.aws` profile or in the environment. They are used once and never stored.
+- AWS admin credentials available on that server for step 2, as an `~/.aws`
+  profile belonging to your normal user, or in the environment. They are used
+  once and never stored.
 - Root.
 
 ## 1. Install
@@ -70,6 +71,19 @@ that would leave the repository unopenable, and changing it is
 
 Pick a bucket region close to the server; it is where your egress bill comes
 from during a restore.
+
+### Where it looks for your admin credentials
+
+Under `sudo`, `$HOME` is root's, so the command reads `~/.aws` belonging to the
+user who invoked sudo (via `SUDO_USER`), not `/root/.aws`. It prints which one
+it chose in the header. Override with `--aws-config-dir /path/to/.aws`, or
+export `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` instead.
+
+Credentials in `backup.env` are deliberately ignored here: that key belongs to
+the backup host and cannot create buckets or IAM users.
+
+If `--profile NAME` is not defined in your config, the command says so and
+lists the profiles that are, rather than failing inside the AWS CLI.
 
 > **Save the restic password offline now.** It exists only in AWS. Losing the
 > account loses the backups and the key to them. The command is in
