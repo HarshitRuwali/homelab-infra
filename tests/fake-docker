@@ -70,12 +70,18 @@ case "$cmd" in
     tool=""
     while (( $# )); do
       case "$1" in
-        restic|rclone|secretsmanager|sts|jq) tool="$1"; shift; break ;;
+        restic|rclone|secretsmanager|sts|jq|s3api|iam) tool="$1"; shift; break ;;
         *) shift ;;
       esac
     done
 
     if [[ "$tool" == secretsmanager ]]; then
+      sub="${1:-}"
+      case "$sub" in
+        describe-secret) [[ -f "$STATE/secret" ]] || exit 254; exit 0 ;;
+        create-secret|put-secret-value)
+          touch "$STATE/secret"; echo "$sub" >> "$STATE/secret-writes"; exit 0 ;;
+      esac
       # Record which credentials the caller authenticated with, so the test can
       # prove the bootstrap key is used for the fetch and the operational key
       # for S3.
@@ -89,17 +95,65 @@ case "$cmd" in
       exit 0
     fi
     if [[ "$tool" == sts ]]; then echo "123456789012"; exit 0; fi
+
+    if [[ "$tool" == s3api ]]; then
+      sub="${1:-}"
+      case "$sub" in
+        head-bucket)   [[ -f "$STATE/bucket" ]] || exit 254 ;;
+        create-bucket) touch "$STATE/bucket"; echo '{"Location":"/b"}' ;;
+        *)             echo "{}" ;;
+      esac
+      echo "$sub" >> "$STATE/s3api-calls"
+      exit 0
+    fi
+
+    if [[ "$tool" == iam ]]; then
+      sub="${1:-}"; shift || true
+      user=""
+      while (( $# )); do
+        case "$1" in --user-name) user="$2"; shift 2 ;; *) shift ;;
+      esac
+      done
+      case "$sub" in
+        get-user)    [[ -f "$STATE/user-$user" ]] || exit 254 ;;
+        create-user) touch "$STATE/user-$user" ;;
+        create-access-key)
+          # matches --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text
+          n=$(( $(cat "$STATE/keycount" 2>/dev/null || echo 0) + 1 ))
+          echo "$n" > "$STATE/keycount"
+          printf 'AKIAFAKEKEY%03d\tfake-secret-value-%03d\n' "$n" "$n" ;;
+      esac
+      echo "$sub $user" >> "$STATE/iam-calls"
+      exit 0
+    fi
     [[ -n "$tool" ]] || exit 0
     sub="${1:-}"; shift || true
+
+    if [[ "$tool" == jq && "${1:-}" == "-n" ]]; then
+      if [[ -n "${AKID:-}" ]]; then
+        printf '{"restic_password":"%s","aws_access_key_id":"%s","aws_secret_access_key":"%s"}' \
+          "${RP:-}" "$AKID" "${ASAK:-}"
+      else
+        printf '{"restic_password":"%s"}' "${RP:-}"
+      fi
+      exit 0
+    fi
 
     if [[ "$tool" == jq ]]; then
       # A crude stand-in for jq, adequate for the fixed payloads this suite
       # uses. The real filter is exercised against the real image by
       # tests/secret-parse-test.sh.
-      key=""
+      key=""; filter=""
       while (( $# )); do
-        case "$1" in --arg) key="$3"; shift 3 ;; *) shift ;; esac
+        case "$1" in
+          --arg) key="$3"; shift 3 ;;
+          -r|-e) shift ;;
+          *) filter="$1"; shift ;;
+        esac
       done
+      # Positional filters like '.restic_password // ""' carry the field name
+      # in the filter rather than in --arg.
+      [[ -n "$key" ]] || key="$(printf '%s' "$filter" | grep -oE '\.[a-z_]+' | head -1 | tr -d '.')"
       sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"
       exit 0
     fi

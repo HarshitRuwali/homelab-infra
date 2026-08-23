@@ -236,6 +236,72 @@ check '[[ $? -ne 0 ]]' "run fails when the secret does not exist"
 check 'grep -q "could not read secret" "$T/out.log"' "  ...with a clear message"
 check '[[ ! -f "$FAKE_DOCKER_STATE/backup-ran" ]]' "  ...and no backup was attempted"
 
+echo
+echo "############ s3-backup-setup-aws ############"
+
+SETUP="$REPO/bin/s3-backup-setup-aws"
+CFG="$T/setup.env"
+rm -rf "$FAKE_DOCKER_STATE"; mkdir -p "$FAKE_DOCKER_STATE"
+cat > "$CFG" <<'EOF'
+SECRETS_BACKEND="aws-secrets-manager"
+S3_BUCKET=""
+AWS_DEFAULT_REGION=""
+SECRET_ID=""
+AWS_ACCESS_KEY_ID="stale-value-that-must-be-cleared"
+AWS_SECRET_ACCESS_KEY="stale-secret"
+BOOTSTRAP_AWS_ACCESS_KEY_ID=""
+BOOTSTRAP_AWS_SECRET_ACCESS_KEY=""
+NEXTCLOUD_DB_ENGINE="mysql"
+EOF
+chmod 600 "$CFG"
+cp "$CFG" "$T/setup.env.orig"
+
+echo
+echo "== dry run changes nothing =="
+"$SETUP" --bucket b1 --region ap-south-1 --secret-id homelab/s3-backup --config "$CFG" >"$T/setup.log" 2>&1
+check '[[ $? -eq 0 ]]' "dry run exits 0"
+check 'diff -q "$CFG" "$T/setup.env.orig" >/dev/null' "config untouched by the dry run"
+check '[[ ! -f "$FAKE_DOCKER_STATE/bucket" ]]' "no bucket created by the dry run"
+check '[[ ! -f "$FAKE_DOCKER_STATE/secret" ]]' "no secret created by the dry run"
+check 'grep -q "DRY RUN" "$T/setup.log"' "says it is a dry run"
+
+echo
+echo "== apply creates everything and writes the config =="
+"$SETUP" --bucket b1 --region ap-south-1 --secret-id homelab/s3-backup --config "$CFG" --apply >"$T/setup.log" 2>&1
+RC=$?
+check '[[ $RC -eq 0 ]]' "apply exits 0"
+[[ $RC -ne 0 ]] && { echo "--- output ---"; cat "$T/setup.log"; }
+check 'grep -q "^S3_BUCKET=\"b1\"" "$CFG"'                     "S3_BUCKET written"
+check 'grep -q "^AWS_DEFAULT_REGION=\"ap-south-1\"" "$CFG"'    "AWS_DEFAULT_REGION written"
+check 'grep -q "^SECRET_ID=\"homelab/s3-backup\"" "$CFG"'      "SECRET_ID written"
+check 'grep -qE "^BOOTSTRAP_AWS_ACCESS_KEY_ID=\"AKIAFAKEKEY" "$CFG"' "bootstrap key written"
+check 'grep -qE "^BOOTSTRAP_AWS_SECRET_ACCESS_KEY=\"fake-secret" "$CFG"' "bootstrap secret written"
+check 'grep -q "^AWS_ACCESS_KEY_ID=\"\"$" "$CFG"'              "stale on-disk S3 key cleared"
+check 'grep -q "^AWS_SECRET_ACCESS_KEY=\"\"$" "$CFG"'          "stale on-disk S3 secret cleared"
+check '[[ "$(stat -c %a "$CFG")" == "600" ]]'                    "config still mode 0600"
+check '[[ -f "$FAKE_DOCKER_STATE/secret" ]]'                     "secret created"
+check 'grep -q "^create-secret$" "$FAKE_DOCKER_STATE/secret-writes"' "created rather than overwrote"
+
+echo
+echo "== the rewrite does not corrupt the config =="
+check '[[ $(grep -c "^S3_BUCKET=" "$CFG") -eq 1 ]]'  "no duplicate S3_BUCKET line"
+check '[[ $(grep -c "^SECRET_ID=" "$CFG") -eq 1 ]]'  "no duplicate SECRET_ID line"
+check 'grep -q "^NEXTCLOUD_DB_ENGINE=\"mysql\"" "$CFG"' "unrelated settings preserved"
+check 'bash -n "$CFG"'                                "config is still valid shell"
+
+echo
+echo "== nothing sensitive is printed =="
+check '! grep -q "fake-secret-value" "$T/setup.log"' "no access key secret in the output"
+
+echo
+echo "== re-running is safe and preserves the restic password =="
+"$SETUP" --bucket b1 --region ap-south-1 --secret-id homelab/s3-backup --config "$CFG" --apply >"$T/setup2.log" 2>&1
+check '[[ $? -eq 0 ]]' "second apply exits 0"
+check 'grep -q "already exists" "$T/setup2.log"' "reports existing resources instead of recreating them"
+check 'grep -q "reusing the restic password" "$T/setup2.log"' "reuses the stored restic password"
+check '[[ $(grep -c "^create-secret$" "$FAKE_DOCKER_STATE/secret-writes") -eq 1 ]]' \
+      "secret was never re-created"
+
 rm -rf "$T" "$RTDIR"
 echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"

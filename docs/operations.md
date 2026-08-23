@@ -8,10 +8,11 @@
 | `s3-backup --dry-run run` | Full run that writes nothing. |
 | `s3-backup preflight` | Safety and credential checks only. |
 | `s3-backup snapshots` | List restic snapshots. |
-| `s3-backup verify` | Full restic integrity check — downloads all data, costs egress. |
+| `s3-backup verify` | Full restic integrity check, downloads all data, costs egress. |
 | `s3-backup install-canaries` | (Re)write the mount-detection markers. |
 | `s3-backup-status` | Timer state, last run, snapshot list, mirror size, recent log. |
 | `s3-backup-discover` | Print a config draft from the running containers. |
+| `s3-backup-setup-aws` | Create/repair the bucket, IAM users, secret and keys, and write them into `backup.env`. Dry run unless `--apply`. |
 | `s3-backup-restore-drill [--deep]` | Prove the backups restore. |
 
 ## Monitoring
@@ -28,7 +29,7 @@ directory your Alloy `unix` exporter uses for the textfile collector.
 | `s3_backup_phase_success{phase=…}` | Per-phase: `dumps`, `restic`, `immich`, `retention`. |
 | `s3_backup_immich_remote_bytes` / `_files` | Size and object count of the S3 mirror. |
 
-The alert that matters is **staleness**, not failure — a backup that stops
+The alert that matters is **staleness**, not failure, a backup that stops
 running produces no failures at all:
 
 ```yaml
@@ -53,8 +54,8 @@ told even when the whole monitoring stack is down.
 ## Retention
 
 restic keeps 7 daily, 4 weekly, 6 monthly and 1 yearly snapshot by default.
-`forget` runs nightly and is cheap; `prune` — which actually rewrites pack
-files and reclaims space — runs only on `RESTIC_PRUNE_DAY` (Sunday), together
+`forget` runs nightly and is cheap; `prune` - which actually rewrites pack
+files and reclaims space, runs only on `RESTIC_PRUNE_DAY` (Sunday), together
 with a `--read-data-subset=1/52` check. Over a year that verifies the whole
 repository without ever paying for a full download.
 
@@ -74,7 +75,7 @@ bucket versioning.
 
 ## Routine tasks
 
-**Rotate credentials.** All of it — S3 key, bootstrap key, restic password —
+**Rotate credentials.** All of it, S3 key, bootstrap key, restic password,
 is in [Secrets](secrets.md#rotation). The one rule worth repeating here:
 changing the stored restic password does not change the repository's password,
 it just makes the repository unopenable. Use `restic key add` / `restic key
@@ -85,7 +86,7 @@ bump `RUNNER_IMAGE` in `backup.env`. The image is pinned on purpose: an
 unpinned backup tool is an unreviewed change to your recovery path.
 
 **A run failed.** `journalctl -u s3-backup.service -e`. If it died mid-run,
-confirm Nextcloud is not stuck in maintenance mode — the trap should have
+confirm Nextcloud is not stuck in maintenance mode, the trap should have
 cleared it, but verify with
 `docker exec -u www-data nextcloud php occ maintenance:mode`.
 

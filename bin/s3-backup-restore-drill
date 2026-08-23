@@ -17,7 +17,14 @@ source "$LIB_DIR/restic-repo.sh"
 source "$LIB_DIR/immich-sync.sh"
 
 DEEP=0
-[[ "${1:-}" == "--deep" ]] && DEEP=1
+while (( $# )); do
+  case "$1" in
+    --deep)    DEEP=1; shift ;;
+    -c|--config) CONFIG_FILE="$2"; shift 2 ;;
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
+    *) err "unknown argument: $1"; exit 1 ;;
+  esac
+done
 load_config
 
 WORK="$(mktemp -d /var/tmp/s3-backup-drill.XXXXXX)"

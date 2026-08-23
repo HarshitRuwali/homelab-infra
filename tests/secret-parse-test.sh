@@ -64,5 +64,20 @@ expect_err '"just a string"'       restic_password 'a bare JSON string is reject
 expect_err '{not json at all'      restic_password 'malformed JSON is rejected'
 
 echo
+echo "== the filter s3-backup-setup-aws uses to preserve an existing password =="
+reuse_filter() {
+  printf '%s' "$1" | docker run --rm -i "$RUNNER_IMAGE" \
+    jq -r 'if type=="object" then (.restic_password // "") else . end'
+}
+expect_reuse() {
+  local got; got="$(reuse_filter "$1")"
+  if [[ "$got" == "$2" ]]; then printf '  \033[32mPASS\033[0m %s\n' "$3"; PASS=$((PASS+1))
+  else printf '  \033[31mFAIL\033[0m %s\n       want %q\n        got %q\n' "$3" "$2" "$got"; FAIL=$((FAIL+1)); fi
+}
+expect_reuse '{"restic_password":"kept","aws_access_key_id":"AKIAX"}' kept  'JSON secret yields the stored password'
+expect_reuse '"a-bare-string-secret"' a-bare-string-secret               'bare string secret is returned as-is'
+expect_reuse '{"aws_access_key_id":"AKIAX"}' ""                          'object without the field yields empty, so setup refuses'
+
+echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
 (( FAIL == 0 ))

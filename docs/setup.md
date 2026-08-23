@@ -1,14 +1,15 @@
 # Setup
 
-Everything below runs **on the server that has the HDD**.
+Six steps. Everything runs **on the server that has the HDD**.
 
 ## 0. Prerequisites
 
-- Docker, and Immich + Nextcloud already running under it.
-- An AWS account with admin credentials available for the one-time setup.
-- Root on the server.
+- Docker, with Immich and Nextcloud already running under it.
+- AWS admin credentials available on that server for step 2, either as an
+  `~/.aws` profile or in the environment. They are used once and never stored.
+- Root.
 
-## 1. Copy the repository over
+## 1. Install
 
 ```bash
 scp -r s3-backup-automation/ youruser@server:/tmp/
@@ -16,108 +17,94 @@ ssh youruser@server
 sudo /tmp/s3-backup-automation/install.sh --secrets aws
 ```
 
-The installer copies to `/opt/s3-backup`, symlinks the commands into
-`/usr/local/bin`, builds the pinned runner image, pulls the AWS CLI image, and
-enables the timers. Use `--secrets file` instead to keep the restic password on
-disk; the installer then generates one, and you must copy it off the machine
-immediately.
+This copies to `/opt/s3-backup`, symlinks the commands into `/usr/local/bin`,
+builds the pinned runner image, pulls the AWS CLI image, enables the timers,
+and writes `/etc/s3-backup/backup.env` by inspecting your running containers.
 
-## 2. Create the bucket and the IAM user
+Use `--secrets file` instead to keep the restic password on disk rather than in
+Secrets Manager. The installer then generates one, and you must copy it off the
+machine immediately. The trade-offs are in [Secrets](secrets.md).
 
-Dry run first — the script changes nothing until you pass `--apply`:
-
-```bash
-cd /opt/s3-backup/aws
-./bucket-setup.sh --bucket my-homelab-backup --region ap-south-1
-./bucket-setup.sh --bucket my-homelab-backup --region ap-south-1 --apply
-```
-
-This creates the bucket and applies: all public access blocked, SSE-S3
-encryption, versioning, the lifecycle rules from `lifecycle.json`, a policy
-denying non-TLS access, and an IAM user with the least-privilege policy from
-`iam-policy.json`.
-
-Then create the access key yourself (deliberately not done by the script, so
-the secret never enters a log):
+### Check what it guessed
 
 ```bash
-aws iam create-access-key --user-name s3-backup-homelab
+sudo nano /etc/s3-backup/backup.env
 ```
+
+The AWS values are deliberately blank; step 2 fills them in. What to verify:
+
+| Setting | Should be |
+|---|---|
+| `IMMICH_DB_CONTAINER`, `NEXTCLOUD_APP_CONTAINER`, `NEXTCLOUD_DB_CONTAINER` | your actual container names |
+| `IMMICH_UPLOAD_LOCATION` | the directory containing `library/`, `upload/`, `profile/` |
+| `NEXTCLOUD_DATA_DIR`, `NEXTCLOUD_CONFIG_DIR` | Nextcloud's data and config directories |
+| `NEXTCLOUD_DB_ENGINE` | `mysql` or `postgres`, never `UNKNOWN` |
+| `HDD_MOUNTPOINT` | the HDD's mount point, not `/` |
+
+`s3-backup-discover` prints the same draft on demand if you want to compare.
+
+## 2. Create everything in AWS
+
+One command. Dry run first: it prints a plan and changes nothing.
+
+```bash
+sudo s3-backup-setup-aws --bucket my-homelab-backup --region ap-south-1
+sudo s3-backup-setup-aws --bucket my-homelab-backup --region ap-south-1 --apply
+```
+
+It creates, skipping whatever already exists:
+
+1. the bucket, with public access blocked, SSE-S3, versioning, the lifecycle
+   rules from `aws/lifecycle.json`, and a policy denying non-TLS access;
+2. an IAM user for the backup host, restricted to that one bucket;
+3. a Secrets Manager secret holding the restic password and the S3 key;
+4. a bootstrap IAM user that can read that one secret and nothing else;
+5. the access keys, written straight into `backup.env` at mode 0600.
+
+**No secret is printed and there is nothing to paste.** Access key values go
+from the AWS API into the config file without passing through your terminal.
+
+Re-running it is safe. An existing secret keeps its restic password: replacing
+that would leave the repository unopenable, and changing it is
+[`restic key add`](secrets.md#rotation), not this script's job.
 
 Pick a bucket region close to the server; it is where your egress bill comes
 from during a restore.
 
-## 2b. Create the secret and the bootstrap user
+> **Save the restic password offline now.** It exists only in AWS. Losing the
+> account loses the backups and the key to them. The command is in
+> [Secrets](secrets.md#disaster-recovery), and the reasoning is in
+> [the trade-off](secrets.md#the-trade-off-you-are-accepting).
 
-Dry run first, as before:
+Migrating an existing repository from `SECRETS_BACKEND=file`? Pass
+`--restic-password-file /etc/s3-backup/restic-password` so the current password
+moves into the secret unchanged, then follow
+[Secrets: migrating](secrets.md#migrating-from-file).
 
-```bash
-cd /opt/s3-backup/aws
-./secret-setup.sh --secret-id homelab/s3-backup --region ap-south-1 --generate
-./secret-setup.sh --secret-id homelab/s3-backup --region ap-south-1 --generate --apply
-aws iam create-access-key --user-name s3-backup-bootstrap
-```
+## 3. Mark the drive
 
-This generates a restic password that exists only in Secrets Manager, and
-creates an IAM user that can read that one secret and nothing else.
-
-> **Save the restic password offline anyway.** Read
-> [Secrets](secrets.md#the-trade-off-you-are-accepting) before deciding this
-> step is optional — losing the AWS account loses the backups *and* the key.
-
-Optionally fold the S3 access key into the same secret so it can be rotated
-centrally:
-
-```bash
-printf '%s' 'THE-SECRET-KEY' > /tmp/s3key && chmod 600 /tmp/s3key
-./secret-setup.sh --secret-id homelab/s3-backup --region ap-south-1 \
-    --restic-password-file /dev/null --s3-access-key-id AKIA... \
-    --s3-secret-key-file /tmp/s3key --apply
-shred -u /tmp/s3key
-```
-
-## 3. Write the config
-
-`s3-backup-discover` reads your running containers and prints a filled-in
-draft — container names, the HDD mount point, Immich's upload location,
-Nextcloud's data and config paths, and the database engine:
-
-```bash
-sudo s3-backup-discover
-```
-
-Review it, then write it out and add the values from steps 2 and 2b:
-
-```bash
-sudo s3-backup-discover | sudo tee /etc/s3-backup/backup.env >/dev/null
-sudo chmod 600 /etc/s3-backup/backup.env
-sudo nano /etc/s3-backup/backup.env
-```
-
-Every option is documented in `config/backup.env.example`.
-
-## 4. Place the canaries
-
-These marker files are how the backup tells "the drive is empty" apart from
-"the drive is not mounted":
+These files are how the backup tells "the drive is empty" apart from "the drive
+is not mounted". Without them it refuses to run.
 
 ```bash
 sudo s3-backup install-canaries
 ```
 
-## 5. Verify before touching S3
+## 4. Verify, without touching S3
 
 ```bash
-sudo s3-backup preflight      # safety checks and credential test only
-sudo s3-backup --dry-run run  # full run, writes nothing
+sudo s3-backup preflight      # safety checks, secret fetch, credential test
+sudo s3-backup --dry-run run  # the full run, writing nothing
 ```
 
-Fix anything that fails here. `preflight` is intentionally strict.
+Fix anything that fails here. `preflight` is strict on purpose: it is the last
+thing standing between an unmounted HDD and an `rclone sync` that mirrors the
+resulting emptiness over your only cloud copy.
 
-## 6. Seed
+## 5. Seed
 
-The first run uploads everything. For 100 GB–1 TB on a home connection this is
-hours to days, so run it detached:
+The first run uploads everything. For 100 GB to 1 TB on a home connection that
+is hours to days, so run it detached:
 
 ```bash
 tmux new -s backup
@@ -125,21 +112,34 @@ sudo systemctl start s3-backup.service
 journalctl -u s3-backup.service -f
 ```
 
-It is resumable: restic and rclone both pick up where they left off, so an
-interrupted seed costs you only the in-flight file. If the upload saturates
-your connection, set `RCLONE_BWLIMIT="20M"` in `backup.env`.
+It is resumable. restic and rclone both continue where they stopped, so an
+interrupted seed costs only the in-flight file. If it saturates your uplink,
+set `RCLONE_BWLIMIT="20M"` in `backup.env`.
 
-After the seed, the timer takes over at 01:30 nightly (±30 min jitter, chosen
-to finish before the fleet's 04:00 container-update window).
+After this the timer takes over at 01:30 nightly, with up to 30 minutes of
+jitter, chosen to finish before the fleet's 04:00 container-update window.
 
-## 7. Prove it works
+## 6. Prove it restores
 
-Do not skip this. It is the only step that tells you the previous six worked:
+Do not skip this. It is the only step that tells you the previous five worked.
 
 ```bash
 sudo s3-backup-restore-drill --deep
 ```
 
-This pulls the dumps back out of S3, verifies them, loads them into throwaway
-database containers built from the same images as production, and queries
-them. It runs monthly on its own timer thereafter.
+It pulls the dumps back out of S3, verifies them, loads them into throwaway
+database containers built from the same images as production, and queries them.
+It runs monthly on its own timer from here on.
+
+## Where things ended up
+
+| | |
+|---|---|
+| Commands | `/usr/local/bin/s3-backup*` |
+| Code, docs, policies | `/opt/s3-backup` |
+| Config | `/etc/s3-backup/backup.env` (0600) |
+| Database dumps awaiting upload | `/var/lib/s3-backup/staging` |
+| restic cache | `/var/cache/restic` |
+| Restic password during a run | `/run/s3-backup` (tmpfs, removed afterwards) |
+| Logs | `journalctl -u s3-backup.service` |
+| Metrics | `$METRICS_DIR/s3_backup.prom` |

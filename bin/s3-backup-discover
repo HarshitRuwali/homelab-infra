@@ -62,20 +62,20 @@ say ""
 [[ -z "$IMMICH_SERVER" ]] && note "Could not find an Immich server container. Set IMMICH_* by hand."
 [[ -z "$NC_APP"        ]] && note "Could not find a Nextcloud container. Set NEXTCLOUD_* by hand."
 say ""
-note "Fill these in from aws/bucket-setup.sh output:"
+note "Left blank on purpose: s3-backup-setup-aws fills all of these in."
 say 'S3_BUCKET=""'
 say 'AWS_DEFAULT_REGION=""'
 say 'S3_ENDPOINT=""'
 say 'S3_PROVIDER="AWS"'
 say ""
-note "Secrets. Keep aws-secrets-manager and fill in the bootstrap key from"
-note "aws/secret-setup.sh, or switch to file and set the two AWS keys instead."
 say 'SECRETS_BACKEND="aws-secrets-manager"'
-say 'SECRET_ID="homelab/s3-backup"'
+say 'SECRET_ID=""'
 say 'SECRET_REGION=""'
 say 'BOOTSTRAP_AWS_ACCESS_KEY_ID=""'
 say 'BOOTSTRAP_AWS_SECRET_ACCESS_KEY=""'
 say 'BOOTSTRAP_AWS_PROFILE=""'
+say 'AWS_ACCESS_KEY_ID=""'
+say 'AWS_SECRET_ACCESS_KEY=""'
 say 'RUNTIME_SECRET_DIR="/run/s3-backup"'
 say 'AWSCLI_IMAGE="amazon/aws-cli:2.17.0"'
 say ""

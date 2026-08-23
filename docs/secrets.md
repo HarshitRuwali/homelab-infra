@@ -11,7 +11,7 @@ Two backends, selected by `SECRETS_BACKEND` in `/etc/s3-backup/backup.env`.
 ## Why a bootstrap credential still exists
 
 Reading a secret from AWS requires an AWS credential, so that one credential
-cannot itself be fetched. `aws/secret-setup.sh` creates an IAM user whose only
+cannot itself be fetched. `s3-backup-setup-aws` creates an IAM user whose only
 permission is `GetSecretValue` on one secret ARN, with an explicit `Deny` on
 every other Secrets Manager action.
 
@@ -32,7 +32,7 @@ you gain is:
 If you want no long-lived key on disk at all, that is **IAM Roles Anywhere**:
 set `BOOTSTRAP_AWS_PROFILE` to a profile in `/root/.aws` that uses
 `credential_process`. In that configuration the secret must also carry the S3
-keys, because the runner image has no credential helper — `s3-backup` fails
+keys, because the runner image has no credential helper - `s3-backup` fails
 with an explicit message if it does not.
 
 ## The trade-off you are accepting
@@ -49,7 +49,7 @@ Two consequences worth acting on:
    lose the backups *and* the key to them. The offline copy is what makes that
    recoverable if you ever manage to get the objects back another way.
 2. **Consider a customer-managed KMS key.** Pass `--kms-key-id` to
-   `secret-setup.sh` and give the key a restrictive key policy. An IAM
+   `s3-backup-setup-aws` and give the key a restrictive key policy. An IAM
    principal then needs both `GetSecretValue` *and* `kms:Decrypt` to read the
    password, which a broad but not unlimited compromise may not have.
 
@@ -58,24 +58,10 @@ and keep the password off-box manually. That is a legitimate choice.
 
 ## Setting it up
 
-```bash
-# New installation - generate a password that only ever exists in AWS
-aws/secret-setup.sh --secret-id homelab/s3-backup --region ap-south-1 --generate
-aws/secret-setup.sh --secret-id homelab/s3-backup --region ap-south-1 --generate --apply
-
-# Then create the bootstrap key (not done by the script, so it never lands in
-# a log or your shell history)
-aws iam create-access-key --user-name s3-backup-bootstrap
-```
-
-Put the result in `backup.env`:
-
-```bash
-SECRETS_BACKEND="aws-secrets-manager"
-SECRET_ID="homelab/s3-backup"
-BOOTSTRAP_AWS_ACCESS_KEY_ID="AKIA..."
-BOOTSTRAP_AWS_SECRET_ACCESS_KEY="..."
-```
+There is no separate step: `s3-backup-setup-aws` creates the secret, the
+bootstrap user and the access keys, and writes them into `backup.env` itself.
+See [Setup step 2](setup.md#2-create-everything-in-aws). Nothing is printed and
+nothing is pasted by hand.
 
 ### Secret format
 
@@ -98,11 +84,14 @@ silent empty password.
 ## Migrating from `file`
 
 ```bash
-# 1. Move the existing password into the secret, unchanged
-sudo aws/secret-setup.sh --secret-id homelab/s3-backup --region ap-south-1 \
-     --restic-password-file /etc/s3-backup/restic-password --apply
+# 1. Switch the backend
+sudo sed -i 's/^SECRETS_BACKEND=.*/SECRETS_BACKEND="aws-secrets-manager"/' \
+     /etc/s3-backup/backup.env
 
-# 2. Switch backends in /etc/s3-backup/backup.env, add the bootstrap key
+# 2. Move the existing password into the secret, unchanged, and create the
+#    bootstrap user and key
+sudo s3-backup-setup-aws --secret-id homelab/s3-backup \
+     --restic-password-file /etc/s3-backup/restic-password --apply
 
 # 3. Prove the repository still opens BEFORE deleting anything
 sudo s3-backup preflight
@@ -113,18 +102,27 @@ sudo shred -u /etc/s3-backup/restic-password
 ```
 
 Step 3 is the whole point of the ordering: if the secret is wrong, you still
-have the file.
+have the file. `--restic-password-file` is also refused if the secret already
+exists, so this cannot silently replace a working password.
 
 ## Rotation
 
-**S3 access key** — routine. Create the new key, update the secret with
-`secret-setup.sh --apply`, run `sudo s3-backup preflight`, delete the old key.
-No server is touched.
+**S3 access key** (routine). Delete the old key in IAM, then re-run setup: it
+notices the secret exists, keeps the restic password, mints a fresh S3 key and
+writes it into the secret.
 
-**Bootstrap key** — create the new key, update `backup.env` on each host, run
-`preflight`, delete the old key.
+```bash
+aws iam list-access-keys --user-name s3-backup-homelab      # find the old one
+aws iam delete-access-key --user-name s3-backup-homelab --access-key-id AKIA...
+sudo s3-backup-setup-aws --apply
+sudo s3-backup preflight
+```
 
-**restic password** — *not* a matter of editing the secret. Changing the stored
+**Bootstrap key.** Same shape: delete the old key, clear
+`BOOTSTRAP_AWS_ACCESS_KEY_ID` in `backup.env`, re-run
+`s3-backup-setup-aws --apply`, then `preflight`.
+
+**restic password** - *not* a matter of editing the secret. Changing the stored
 value only makes the repository unopenable. Use restic's own key management:
 
 ```bash
@@ -150,5 +148,5 @@ aws secretsmanager get-secret-value --secret-id homelab/s3-backup \
 
 That command needs a credential with `GetSecretValue`. **Keep the bootstrap
 key, or an admin credential, somewhere you can reach when the server is
-gone** — a password manager entry alongside the offline copy of the restic
+gone** - a password manager entry alongside the offline copy of the restic
 password. A backup you cannot authenticate to is not a backup.

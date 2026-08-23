@@ -5,7 +5,7 @@ under pressure.
 
 You need two things: **an AWS credential** and **the restic password**. With
 `SECRETS_BACKEND=aws-secrets-manager` the password is in Secrets Manager, so
-the AWS credential gets you both — see
+the AWS credential gets you both, see
 [Secrets: disaster recovery](secrets.md#disaster-recovery) for the one command
 that retrieves it. If the only copy of either was on the failed machine, stop
 and read [Secrets](secrets.md) now, while you still have a working system.
@@ -21,13 +21,13 @@ and read [Secrets](secrets.md) now, while you still have a working system.
 
 ---
 
-## A. Recover a single Immich photo — no tooling
+## A. Recover a single Immich photo, no tooling
 
 Because Immich originals are a plain mirror, this needs nothing but a browser.
 
 1. S3 console → your bucket → `immich/library/<user-id>/…`
 2. Find the file and download it.
-3. If it is in `GLACIER_IR`, download works immediately — no restore job.
+3. If it is in `GLACIER_IR`, download works immediately, no restore job.
 
 If Immich deleted it and you want it back *as an Immich asset*, upload the
 file to Immich again rather than dropping it into `library/`; Immich's
@@ -60,13 +60,13 @@ Copy the file back into place, `chown` it to the web server user, then:
 docker exec -u www-data nextcloud php occ files:scan --path="alice/files/Documents"
 ```
 
-`restic mount` is often easier for browsing — it exposes every snapshot as a
+`restic mount` is often easier for browsing, it exposes every snapshot as a
 FUSE filesystem. It needs `--cap-add SYS_ADMIN --device /dev/fuse` on the
 `docker run`.
 
 ---
 
-## C. The HDD died — full restore
+## C. The HDD died, full restore
 
 ### C1. Prepare the new drive
 
@@ -95,7 +95,7 @@ docker run --rm \
     --transfers 16 --fast-list --progress
 ```
 
-`copy`, not `sync` — never point a `sync` at a half-restored directory.
+`copy`, not `sync` - never point a `sync` at a half-restored directory.
 
 Then fix ownership to whatever your Immich compose file runs as:
 
@@ -186,7 +186,7 @@ docker exec -u www-data nextcloud php occ maintenance:data-fingerprint
 ```
 
 - `files:scan --all` closes the consistency window described in
-  [architecture](architecture.md#consistency) — it reconciles what is on disk
+  [architecture](architecture.md#consistency) - it reconciles what is on disk
   with what the database believes.
 - `data-fingerprint` tells every synced client that the server was restored
   from backup, so they re-check rather than pushing local deletions up.
@@ -204,12 +204,12 @@ sudo s3-backup preflight
 ## D. The whole server died
 
 1. New Docker host, redeploy the Immich and Nextcloud compose stacks (from
-   your own configuration management — **this backup does not contain your
+   your own configuration management - **this backup does not contain your
    compose files**; see [gaps](#what-this-does-not-cover)).
 2. Reinstall this tool: `sudo ./install.sh`.
 3. Restore the restic password before running anything:
    - `SECRETS_BACKEND=aws-secrets-manager`: nothing to do beyond putting the
-     bootstrap key back into `backup.env` — the password comes from AWS. Verify
+     bootstrap key back into `backup.env` - the password comes from AWS. Verify
      with `sudo s3-backup snapshots` before going further.
    - `SECRETS_BACKEND=file`: put `/etc/s3-backup/restic-password` back from
      your password manager **before** running `install.sh`, so it does not
@@ -221,7 +221,7 @@ sudo s3-backup preflight
 
 Deliberate gaps, so you know where the edges are:
 
-- **Compose files, `.env` files and reverse-proxy config** are not backed up —
+- **Compose files, `.env` files and reverse-proxy config** are not backed up,
   they usually live outside the HDD. Keep them in git. If they live on the
   HDD, add their directory to the restic paths.
 - **Immich `thumbs/` and `encoded-video/`** are excluded; Immich regenerates

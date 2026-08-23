@@ -1,6 +1,6 @@
 # Costs
 
-List prices below are AWS `us-east-1` and are **approximate** — they vary by
+List prices below are AWS `us-east-1` and are **approximate** - they vary by
 region (`ap-south-1` runs slightly higher) and change over time. Check the
 [S3 pricing page](https://aws.amazon.com/s3/pricing/) before committing.
 
@@ -34,8 +34,8 @@ $0.02 per 1,000 for `GLACIER_IR`, so 100,000 photos costs about $2 once.
 
 **Immich → `GLACIER_IR`.** Originals are written once and never modified, so
 the 90-day minimum storage duration never triggers an early-deletion charge.
-Retrieval is instant — no restore job, no waiting — which keeps [scenario
-A](restore.md#a-recover-a-single-immich-photo--no-tooling) a browser-only
+Retrieval is instant (no restore job, no waiting), which keeps [scenario
+A](restore.md#a-recover-a-single-immich-photo-no-tooling) a browser-only
 operation. Objects under 128 KB are billed as 128 KB; photos are far larger,
 so this is noise.
 
@@ -43,7 +43,7 @@ so this is noise.
 straight to IA looks cheaper, but `prune` can delete a pack file within days
 of writing it, and IA bills a 30-day minimum regardless. Transitioning at day
 30 gets essentially all of the saving with no early-deletion exposure.
-`restic/index/`, `restic/snapshots/` and `restic/locks/` stay in Standard —
+`restic/index/`, `restic/snapshots/` and `restic/locks/` stay in Standard,
 they are read on every single run, and IA charges per retrieval.
 
 **Deep Archive is deliberately not used.** At $0.00099/GB it is four times
@@ -66,7 +66,7 @@ the cheapest part of the day.
 
 `s3-backup verify` (full `restic check --read-data`) downloads the entire
 restic repository and therefore costs full egress. The scheduled weekly check
-reads only 1/52 of the data — a few cents — and covers the whole repository
+reads only 1/52 of the data for a few cents, and covers the whole repository
 over a year.
 
 ## Reducing cost further

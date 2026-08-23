@@ -14,33 +14,32 @@ rclone  ->  Immich originals                                    (plain browsable
 On the server that has the HDD:
 
 ```bash
-sudo ./install.sh --secrets aws                      # deploy, build image, enable timers
-sudo aws/bucket-setup.sh --bucket B --region R       # dry run
-sudo aws/bucket-setup.sh --bucket B --region R --apply
-sudo aws/secret-setup.sh --secret-id homelab/s3-backup --region R --generate --apply
-sudo s3-backup-discover | sudo tee /etc/s3-backup/backup.env   # then add keys
-sudo s3-backup install-canaries
-sudo s3-backup preflight
-sudo s3-backup --dry-run run
-sudo systemctl start s3-backup.service               # seed, in tmux
-sudo s3-backup-restore-drill --deep                  # prove it
+sudo ./install.sh --secrets aws
 ```
 
-Full walkthrough: **[docs/setup.md](docs/setup.md)**.
+That deploys to `/opt/s3-backup`, builds the pinned runner image, writes
+`/etc/s3-backup/backup.env` from your running Immich and Nextcloud containers,
+and enables the timers. It then prints the three commands that finish the job,
+the first of which, `s3-backup-setup-aws`, creates the bucket, IAM users,
+secret and access keys and writes them into the config itself. There is nothing
+to copy by hand.
+
+Step-by-step, with the reasoning: **[docs/setup.md](docs/setup.md)**.
 
 ## Layout
 
 ```
 bin/
-  s3-backup                  main orchestrator (run / preflight / snapshots / verify)
-  s3-backup-discover         generates backup.env from your running containers
+  s3-backup                  orchestrator (run / preflight / snapshots / verify / install-canaries)
+  s3-backup-setup-aws        creates bucket, IAM users, secret and keys; writes the config
+  s3-backup-discover         reads your containers and prints a backup.env draft
   s3-backup-status           timer state, last run, snapshots, mirror size
   s3-backup-restore-drill    restores from S3 into throwaway DBs and queries them
-config/backup.env.example    every option, documented
-docker/                      pinned restic+rclone runner image
-systemd/                     nightly backup timer, monthly drill timer
   lib/                       common, secrets, preflight, dumps, restic-repo, immich-sync, metrics
-aws/                         bucket + secret setup, IAM policies, lifecycle, TLS-only policy
+config/backup.env.example    every option, documented
+docker/                      pinned restic + rclone + jq runner image
+systemd/                     nightly backup timer, monthly restore-drill timer
+aws/                         IAM policies, lifecycle rules, TLS-only bucket policy
 docs/                        setup, architecture, secrets, restore, operations, costs
 tests/                       smoke test (mocked docker) + secret-parser test (real image)
 ```
@@ -48,17 +47,23 @@ tests/                       smoke test (mocked docker) + secret-parser test (re
 ## Tests
 
 ```bash
-./tests/run.sh                 # 56 assertions, throwaway container, no host changes
-./tests/secret-parse-test.sh   # 16 assertions against the real runner image
+./tests/run.sh                     # 81 assertions, throwaway container, no host changes
+./tests/secret-parse-test.sh       # 19 assertions against the real runner image
+./tests/docs-consistency-test.sh   # 8 checks that the docs match the code
 ```
 
 The suite mocks `docker` and runs the real orchestrator end to end. It asserts
 the phase ordering, that maintenance mode is entered exactly once and always
 cleared, that dumps are verified, that every safety guard refuses to run, that
 metrics are written on both success and failure, that concurrent runs are
-locked out, and — for the Secrets Manager backend — that the fetched password
-never reaches the disk, never appears in a log or a `docker` argument, and is
-gone when the run ends.
+locked out, that `s3-backup-setup-aws` writes the config without corrupting it
+or printing a key, and that the fetched password never reaches the disk, never
+appears in a log or a `docker` argument, and is gone when the run ends.
+
+The third suite is what stops the docs drifting away from the code: it checks
+that every command and flag shown to a user exists, that referenced files and
+links resolve, that every config key with a default is documented, and that the
+installer's output and `docs/setup.md` agree on the order of the steps.
 
 ## Design notes
 
@@ -75,15 +80,15 @@ gone when the run ends.
   empty disk over your only cloud copy.
 - **`rclone --backup-dir` plus bucket versioning** mean no sync can destroy
   data; removed objects move to `_deleted/<date>/` for 90 days.
-- **The restore is tested, monthly, automatically** —
+- **The restore is tested, monthly, automatically** -
   `s3-backup-restore-drill --deep` loads the dumps into scratch containers
   built from the production images and checks that the tables have rows.
 
 ## The two things that will actually lose your data
 
-1. **Losing the restic password.** There is no recovery — and moving it into
+1. **Losing the restic password.** There is no recovery, and moving it into
    Secrets Manager does not change that, since losing the AWS account loses the
    password and the backups together. Keep an offline copy.
 2. **Never testing a restore.** Run the drill.
 
-Costs about **$3.50/month for 600 GB** — see [docs/costs.md](docs/costs.md).
+Costs about **$3.50/month for 600 GB** - see [docs/costs.md](docs/costs.md).

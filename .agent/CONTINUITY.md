@@ -1,4 +1,4 @@
-# CONTINUITY — s3-backup-automation
+# CONTINUITY, s3-backup-automation
 
 Canonical briefing. Facts only.
 
@@ -16,7 +16,7 @@ Canonical briefing. Facts only.
 - 2026-08-19T08:52Z [USER] Tiered engines: restic for databases + Nextcloud
   data; rclone `sync` for Immich originals so photos stay browsable in S3.
 - 2026-08-19T08:52Z [USER] No AWS resources exist yet; repo ships bucket/IAM/
-  lifecycle setup as a dry-run-by-default script (`aws/bucket-setup.sh`).
+  lifecycle setup as a dry-run-by-default script (now `bin/s3-backup-setup-aws`).
 - 2026-08-19T08:52Z [USER] Data volume 100 GB – 1 TB. Seed must be resumable.
 - 2026-08-19T09:00Z [ASSUMPTION] Storage classes: Immich → `GLACIER_IR` at
   upload (write-once data, 90-day minimum never triggers); restic data →
@@ -59,7 +59,7 @@ Canonical briefing. Facts only.
 - 2026-08-19T09:45Z [USER] Requested credentials move to AWS Secrets Manager,
   read at run time, rather than sitting in files on the server.
 - 2026-08-19T09:55Z [CODE] Added `SECRETS_BACKEND` (`file` |
-  `aws-secrets-manager`) in `bin/lib/secrets.sh`, `aws/secret-setup.sh`,
+  `aws-secrets-manager`) in `bin/lib/secrets.sh`,
   `aws/bootstrap-iam-policy.json`, `docs/secrets.md`. Default remains `file`
   for backward compatibility; `install.sh --secrets aws` selects the other.
 
@@ -67,7 +67,7 @@ Canonical briefing. Facts only.
   status / restore-drill tools, pinned runner image, 2 systemd timers, AWS
   setup + policies, 6 docs pages. `bash -n` clean on all scripts.
 
-## [DECISIONS — secrets]
+## [DECISIONS, secrets]
 
 - 2026-08-19T09:50Z [ASSUMPTION] A bootstrap credential on disk is unavoidable:
   reading Secrets Manager requires an AWS credential, so it cannot itself be
@@ -88,8 +88,40 @@ Canonical briefing. Facts only.
   account compromise yields ciphertext AND key. Mitigations offered: keep an
   offline copy regardless, and optionally a customer-managed KMS key.
 
+## [DECISIONS - setup flow]
+
+- 2026-08-23T09:10Z [USER] Reported the setup flow was inconsistent: README,
+  install.sh output and docs/setup.md disagreed on ordering, and "then add
+  keys" had no well-defined meaning after the Secrets Manager change.
+- 2026-08-23T09:15Z [CODE] Root cause was structural, not editorial: setup was
+  split across `aws/bucket-setup.sh` + `aws/secret-setup.sh` + a manual
+  backup.env edit, so no surface owned the sequence. Consolidated into a single
+  `bin/s3-backup-setup-aws`; both old scripts deleted.
+- 2026-08-23T09:15Z [CODE] Superseded the earlier decision to have the user run
+  `aws iam create-access-key` by hand (taken so secrets stayed out of logs).
+  The script now captures the key from the API and writes it into backup.env at
+  0600 without printing it - same secrecy property, no manual paste.
+- 2026-08-23T09:16Z [CODE] `install.sh` now seeds `/etc/s3-backup/backup.env`
+  by running discover, so the only blank values are the ones setup-aws fills.
+- 2026-08-23T09:20Z [ASSUMPTION] Canonical order, enforced by test: install.sh
+  -> s3-backup-setup-aws -> install-canaries -> preflight -> systemctl start
+  -> restore-drill. Each surface has a distinct job: README = orientation,
+  installer output = next actions, docs/setup.md = canonical walkthrough.
+- 2026-08-23T09:20Z [CODE] An existing secret NEVER has its restic password
+  replaced by setup-aws; it is reused. Replacing it would orphan the
+  repository, and rotating it is `restic key add`.
+
 ## [OUTCOMES]
 
+- 2026-08-23T09:35Z [TOOL] Added `tests/docs-consistency-test.sh` (8 checks:
+  unknown commands, unknown flags, missing files, broken links/anchors,
+  undocumented config keys, step ordering). Mutation-tested: all six drift
+  classes are caught. Also added a global rule in `~/.claude/CLAUDE.md`
+  ("No drift between docs, scripts, and output") per [USER] request.
+- 2026-08-23T09:36Z [DISCOVERIES] The em dash sweep (global writing rule)
+  silently broke a markdown anchor, `restore.md#a-recover-a-single-immich-photo--no-tooling`,
+  because the heading gained a literal hyphen. Caught by the new consistency
+  test, not by review. Heading changed to use parentheses instead.
 - 2026-08-19T10:00Z [TOOL] Verified on `ubuntu-dev`: shellcheck clean
   (0 warnings, `-S warning`, SC1091/SC2034/SC2016 excluded as cross-file
   false positives); `tests/run.sh` 56/56 and `tests/secret-parse-test.sh`
@@ -113,5 +145,5 @@ Canonical briefing. Facts only.
   Nextcloud DB engine, Immich upload location. `s3-backup-discover` exists to
   resolve all four on the server.
 - 2026-08-19T09:30Z [PLANS] Next actions are all on server `100.83.72.78`:
-  install.sh -> bucket-setup.sh --apply -> discover -> install-canaries ->
-  preflight -> --dry-run -> seed -> restore-drill --deep.
+  install.sh --secrets aws -> s3-backup-setup-aws --apply -> install-canaries
+  -> preflight -> --dry-run run -> seed -> restore-drill --deep.

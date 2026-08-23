@@ -5,7 +5,7 @@
 Nothing backup-related is installed on the host. Per the container-first
 policy, `restic` and `rclone` live in a pinned image (`s3-backup-runner`), and
 the AWS CLI is only ever used through `amazon/aws-cli` during one-time bucket
-setup. The host needs `docker`, `bash` and `flock` — all already present on
+setup. The host needs `docker`, `bash` and `flock` - all already present on
 Ubuntu.
 
 ```
@@ -42,8 +42,8 @@ that.
 With `SECRETS_BACKEND=aws-secrets-manager`, the only credential on disk is a
 bootstrap key scoped to `GetSecretValue` on one secret ARN. Before preflight,
 `s3-backup` fetches the secret through a pinned `amazon/aws-cli` container,
-parses it with `jq` from the runner image — so no JSON parser is needed on the
-host — and writes the restic password to `/run/s3-backup`, a tmpfs.
+parses it with `jq` from the runner image, so no JSON parser is needed on the
+host, and writes the restic password to `/run/s3-backup`, a tmpfs.
 
 Secret values are passed to containers by environment *passthrough*
 (`docker run -e VAR`, no value in argv) and by stdin, never as command
@@ -64,7 +64,7 @@ Full detail, including what this does and does not protect against, is in
 | 3 | immich | `rclone sync` each Immich subdirectory to S3. |
 | 4 | retention | `restic forget`; on `RESTIC_PRUNE_DAY` also `prune` and a 1/52 integrity check. |
 
-Nextcloud is in maintenance mode only for phase 1 — seconds to a couple of
+Nextcloud is in maintenance mode only for phase 1, seconds to a couple of
 minutes. Set `NEXTCLOUD_MAINTENANCE_MODE=full_run` to hold it for the whole
 run instead; see [the consistency trade-off](#consistency).
 
@@ -105,5 +105,5 @@ and never mutated, so a mid-run asset is simply included in tomorrow's run.
 
 A `flock` on `LOCK_FILE` means one run at a time. An `EXIT` trap guarantees
 Nextcloud is taken **out** of maintenance mode even if the run dies, and
-writes the metrics file either way — a failed run reports
+writes the metrics file either way, a failed run reports
 `s3_backup_success 0` rather than going quiet.
