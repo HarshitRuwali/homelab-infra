@@ -4,7 +4,8 @@ Six steps. Everything runs **on the server that has the HDD**.
 
 ## 0. Prerequisites
 
-- Docker, with Immich and Nextcloud already running under it.
+- Docker, with Immich and/or Nextcloud already running under it. Either one
+  alone is fine; the other is switched off and its settings ignored.
 - AWS admin credentials available on that server for step 2, as an `~/.aws`
   profile belonging to your normal user, or in the environment. They are used
   once and never stored.
@@ -13,10 +14,15 @@ Six steps. Everything runs **on the server that has the HDD**.
 ## 1. Install
 
 ```bash
-scp -r s3-backup-automation/ youruser@server:/tmp/
 ssh youruser@server
-sudo /tmp/s3-backup-automation/install.sh --secrets aws
+git clone https://github.com/HarshitRuwali/s3-backup-automation.git
+cd s3-backup-automation
+sudo ./install.sh --secrets aws
 ```
+
+Keep the checkout: it is how you update later. If the server cannot reach
+GitHub, `scp -r s3-backup-automation/ youruser@server:~/` instead and run
+`sudo ./install.sh --secrets aws` from that directory.
 
 This copies to `/opt/s3-backup`, symlinks the commands into `/usr/local/bin`,
 builds the pinned runner image, pulls the AWS CLI image, enables the timers,
@@ -26,6 +32,17 @@ Use `--secrets file` instead to keep the restic password on disk rather than in
 Secrets Manager. The installer then generates one, and you must copy it off the
 machine immediately. The trade-offs are in [Secrets](secrets.md).
 
+`git pull` alone changes nothing that runs: the commands in `/usr/local/bin`
+execute from `/opt/s3-backup`, and only `install.sh` writes there. After every
+pull, from the checkout:
+
+```bash
+sudo ./install.sh --check          # stale or up to date; changes nothing
+sudo ./install.sh --secrets aws    # deploy
+```
+
+Full detail in [Operations: updating](operations.md#updating).
+
 ### Check what it guessed
 
 ```bash
@@ -34,20 +51,24 @@ sudo nano /etc/s3-backup/backup.env
 
 The AWS values are deliberately blank; step 2 fills them in. What to verify:
 
-| Setting | Should be |
-|---|---|
-| `IMMICH_DB_CONTAINER`, `NEXTCLOUD_APP_CONTAINER`, `NEXTCLOUD_DB_CONTAINER` | your actual container names |
-| `IMMICH_UPLOAD_LOCATION` | the directory containing `library/`, `upload/`, `profile/` |
-| `NEXTCLOUD_DATA_DIR`, `NEXTCLOUD_CONFIG_DIR` | Nextcloud's data and config directories |
-| `NEXTCLOUD_DB_ENGINE` | `mysql` or `postgres` (only read when Nextcloud is enabled) |
-| `HDD_MOUNTPOINT` | the HDD's mount point, not `/` |
+| Setting | Should be | Checked when |
+|---|---|---|
+| `IMMICH_ENABLED`, `NEXTCLOUD_ENABLED` | 1 for what you actually run | always |
+| `HDD_MOUNTPOINT` | the HDD's mount point, not `/` | always |
+| `IMMICH_DB_CONTAINER` | your Immich Postgres container | `IMMICH_ENABLED=1` |
+| `IMMICH_UPLOAD_LOCATION` | the directory containing `library/`, `upload/`, `profile/` | `IMMICH_ENABLED=1` |
+| `NEXTCLOUD_APP_CONTAINER`, `NEXTCLOUD_DB_CONTAINER` | your Nextcloud containers | `NEXTCLOUD_ENABLED=1` |
+| `NEXTCLOUD_DATA_DIR`, `NEXTCLOUD_CONFIG_DIR` | Nextcloud's data and config directories | `NEXTCLOUD_ENABLED=1` |
+| `NEXTCLOUD_DB_ENGINE` | `mysql` or `postgres` | `NEXTCLOUD_ENABLED=1` |
+
+A setting for a disabled service is ignored and never validated, so leaving
+`UNKNOWN` or a wrong path there is harmless until you switch it on.
 
 `s3-backup-discover` prints the same draft on demand if you want to compare.
 
-**Running only one of the two services is fine.** Discover sets
-`IMMICH_ENABLED` and `NEXTCLOUD_ENABLED` from what it actually found, and the
-disabled service's settings are then ignored and never validated. Set them by
-hand if you add a service later. At least one must be enabled.
+Discover sets `IMMICH_ENABLED` and `NEXTCLOUD_ENABLED` from what it actually
+found. Set them by hand if you add a service later. At least one must be
+enabled.
 
 ## 2. Create everything in AWS
 
@@ -155,7 +176,8 @@ It runs monthly on its own timer from here on.
 | | |
 |---|---|
 | Commands | `/usr/local/bin/s3-backup*` |
-| Code, docs, policies | `/opt/s3-backup` |
+| Code, docs, policies | `/opt/s3-backup` (what actually runs) |
+| Which build is deployed | `/opt/s3-backup/.installed`, or `s3-backup --version` |
 | Config | `/etc/s3-backup/backup.env` (0600) |
 | Database dumps awaiting upload | `/var/lib/s3-backup/staging` |
 | restic cache | `/var/cache/restic` |

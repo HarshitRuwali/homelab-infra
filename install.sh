@@ -4,16 +4,23 @@
 #
 #   sudo ./install.sh                  # secrets on disk (default)
 #   sudo ./install.sh --secrets aws    # secrets in AWS Secrets Manager
+#   sudo ./install.sh --check          # is the deployed copy up to date?
+#
+# Re-run it after every `git pull`: pulling updates this checkout, not the
+# copy under /opt that actually runs. The image is only rebuilt when the
+# Dockerfile changed, so a reinstall is quick.
 #
 # Idempotent. It will never overwrite an existing backup.env or an existing
 # restic password file.
 #
 set -euo pipefail
 
-SECRETS="file"
+SECRETS="file"; CHECK=0; SKIP_BUILD=0
 while (( $# )); do
   case "$1" in
     --secrets) SECRETS="$2"; shift 2 ;;
+    --check) CHECK=1; shift ;;
+    --skip-build) SKIP_BUILD=1; shift ;;
     -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
@@ -24,6 +31,30 @@ PREFIX="${PREFIX:-/opt/s3-backup}"
 ETC="${ETC:-/etc/s3-backup}"
 SRC="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 
+# shellcheck source=bin/lib/common.sh
+source "$SRC/bin/lib/common.sh"
+
+SRC_FP="$(fingerprint_tree "$SRC")"
+COMMIT="$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+
+if (( CHECK )); then
+  if [[ ! -r "$PREFIX/.installed" ]]; then
+    echo "not installed at $PREFIX"; exit 1
+  fi
+  dep_fp="$(fingerprint_tree "$PREFIX")"
+  rec="$(sed -n 's/^version=//p' "$PREFIX/.installed")"
+  echo "source   : $SRC_FP  (commit $COMMIT)"
+  echo "deployed : $dep_fp  ($(sed -n 's/^installed=//p' "$PREFIX/.installed"))"
+  if [[ "$SRC_FP" == "$dep_fp" ]]; then
+    echo "up to date"; exit 0
+  fi
+  echo
+  echo "DEPLOYED COPY IS STALE. The commands under /usr/local/bin run from"
+  echo "$PREFIX, not from this checkout. Re-run:  sudo ./install.sh${SECRETS:+ --secrets $SECRETS}"
+  [[ "$rec" != "$dep_fp" ]] && echo "(files under $PREFIX were also edited by hand since install)"
+  exit 1
+fi
+
 [[ "$(id -u)" == "0" ]] || { echo "run as root: sudo ./install.sh" >&2; exit 1; }
 command -v docker >/dev/null || { echo "docker is required" >&2; exit 1; }
 
@@ -31,8 +62,8 @@ say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 say "1/6  installing to $PREFIX"
 install -d -m 0755 "$PREFIX"
-rm -rf "${PREFIX:?}/bin" "${PREFIX:?}/docker" "${PREFIX:?}/aws" "${PREFIX:?}/docs"
-cp -r "$SRC/bin" "$SRC/docker" "$SRC/aws" "$SRC/docs" "$PREFIX/"
+rm -rf "${PREFIX:?}/bin" "${PREFIX:?}/docker" "${PREFIX:?}/aws" "${PREFIX:?}/docs" "${PREFIX:?}/systemd"
+cp -r "$SRC/bin" "$SRC/docker" "$SRC/aws" "$SRC/docs" "$SRC/systemd" "$PREFIX/"
 chmod 0755 "$PREFIX"/bin/s3-backup*
 for b in s3-backup s3-backup-status s3-backup-discover s3-backup-restore-drill s3-backup-setup-aws; do
   ln -sf "$PREFIX/bin/$b" "/usr/local/bin/$b"
@@ -86,8 +117,20 @@ say "4/6  runtime directories"
 install -d -m 0700 /var/lib/s3-backup/staging
 install -d -m 0700 /var/cache/restic
 
-say "5/6  building the runner image"
-"$PREFIX/docker/build.sh"
+say "5/6  runner image"
+# Rebuild only when the image is missing or its definition changed, so
+# reinstalling after a pull stays cheap.
+DOCKERFILE_FP="$(sha256sum "$SRC/docker/Dockerfile" "$SRC/docker/build.sh" | sha256sum | cut -c1-12)"
+PREV_DOCKERFILE_FP="$(sed -n 's/^dockerfile=//p' "$PREFIX/.installed" 2>/dev/null || true)"
+RUNNER_IMAGE_NAME="${RUNNER_IMAGE:-s3-backup-runner:1.0.0}"
+if (( SKIP_BUILD )); then
+  echo "     skipped (--skip-build)"
+elif docker image inspect "$RUNNER_IMAGE_NAME" >/dev/null 2>&1 \
+     && [[ "$DOCKERFILE_FP" == "$PREV_DOCKERFILE_FP" ]]; then
+  echo "     unchanged, keeping $RUNNER_IMAGE_NAME"
+else
+  "$PREFIX/docker/build.sh"
+fi
 if [[ "$SECRETS" == "aws" ]]; then
   AWSCLI_IMAGE="${AWSCLI_IMAGE:-amazon/aws-cli:2.17.0}"
   echo "     pulling $AWSCLI_IMAGE (used to read the secret at run time)"
@@ -99,6 +142,11 @@ install -m 0644 "$SRC"/systemd/*.service "$SRC"/systemd/*.timer /etc/systemd/sys
 systemctl daemon-reload
 systemctl enable --now s3-backup.timer s3-backup-drill.timer
 systemctl list-timers 's3-backup*' --no-pager
+
+# Written last, so a stamp always means a completed install.
+printf 'version=%s\ncommit=%s\ndockerfile=%s\ninstalled=%s\n' \
+  "$SRC_FP" "$COMMIT" "$DOCKERFILE_FP" "$(date -Is)" > "$PREFIX/.installed"
+chmod 0644 "$PREFIX/.installed"
 
 if [[ "$SECRETS" == aws ]]; then
   CREATES="the bucket, the IAM users, the Secrets Manager secret and the access keys"

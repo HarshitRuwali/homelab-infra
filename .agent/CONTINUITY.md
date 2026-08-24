@@ -151,6 +151,26 @@ Canonical briefing. Facts only.
   exiting 1. The user re-ran the removed path from scrollback and got only
   "command not found". Both rules added to `~/.claude/CLAUDE.md`.
 
+## [DISCOVERIES - deploy staleness]
+
+- 2026-08-24T09:25Z [USER] After `git pull`, `sudo s3-backup preflight` still
+  failed with the old NEXTCLOUD_DB_ENGINE error. Root cause: `git pull` updates
+  the checkout, but the commands are symlinks into `/opt/s3-backup`, which only
+  install.sh writes. Diagnosed from the error text: the fixed version appends a
+  second line the user's output did not have.
+- 2026-08-24T09:40Z [CODE] This was the third drift incident and the first that
+  was NOT a docs problem. Added a deployment fingerprint: install.sh writes
+  `$PREFIX/.installed` (content hash of bin/docker/aws/systemd + git commit +
+  timestamp) as its LAST action, so a stamp always means a completed install.
+  `install.sh --check` compares source against deployment and names the fix;
+  `s3-backup --version` prints the stamp and warns on hand-edited files.
+- 2026-08-24T09:45Z [CODE] Reinstall now skips the image build unless the
+  Dockerfile or build.sh changed, so "pull then reinstall" costs seconds and
+  there is no incentive to skip it.
+- 2026-08-24T09:50Z [TOOL] `tests/deploy-test.sh` covers this in a throwaway
+  container (writes to /tmp/opt, never the real /opt), including that a failed
+  install leaves no stamp.
+
 ## [OUTCOMES]
 
 - 2026-08-23T09:35Z [TOOL] Added `tests/docs-consistency-test.sh` (8 checks:

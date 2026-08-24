@@ -203,7 +203,7 @@ sudo s3-backup preflight
 
 ## D. The whole server died
 
-1. New Docker host, redeploy the Immich and Nextcloud compose stacks (from
+1. New Docker host, redeploy whichever compose stacks you back up (from
    your own configuration management - **this backup does not contain your
    compose files**; see [gaps](#what-this-does-not-cover)).
 2. Reinstall this tool: `sudo ./install.sh`.

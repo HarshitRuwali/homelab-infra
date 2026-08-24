@@ -18,11 +18,20 @@ sudo ./install.sh --secrets aws
 ```
 
 That deploys to `/opt/s3-backup`, builds the pinned runner image, writes
-`/etc/s3-backup/backup.env` from your running Immich and Nextcloud containers,
+`/etc/s3-backup/backup.env` from whichever of Immich and Nextcloud you run,
 and enables the timers. It then prints the three commands that finish the job,
 the first of which, `s3-backup-setup-aws`, creates the bucket, IAM users,
 secret and access keys and writes them into the config itself. There is nothing
 to copy by hand.
+
+After any `git pull`, re-run the installer. Pulling updates this checkout; the
+commands in `/usr/local/bin` run from `/opt/s3-backup`, which only `install.sh`
+writes. It rebuilds the image only when the Dockerfile changed, so it is quick.
+
+```bash
+sudo ./install.sh --check          # is the deployed copy stale?
+sudo ./install.sh --secrets aws    # bring it up to date
+```
 
 Step-by-step, with the reasoning: **[docs/setup.md](docs/setup.md)**.
 
@@ -50,6 +59,7 @@ tests/                       smoke test (mocked docker) + secret-parser test (re
 ./tests/run.sh                     # orchestrator, mocked docker, throwaway container
 ./tests/secret-parse-test.sh       # secret parsing, against the real runner image
 ./tests/docs-consistency-test.sh   # the docs still match the code
+./tests/deploy-test.sh             # install.sh staleness detection
 ```
 
 The suite mocks `docker` and runs the real orchestrator end to end. It asserts

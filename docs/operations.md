@@ -11,6 +11,7 @@
 | `s3-backup verify` | Full restic integrity check, downloads all data, costs egress. |
 | `s3-backup install-canaries` | (Re)write the mount-detection markers. |
 | `s3-backup-status` | Timer state, last run, snapshot list, mirror size, recent log. |
+| `s3-backup --version` | Which build is deployed, and whether `/opt/s3-backup` was edited since. |
 | `s3-backup-discover` | Print a config draft from the running containers. |
 | `s3-backup-setup-aws` | Create/repair the bucket, IAM users, secret and keys, and write them into `backup.env`. Dry run unless `--apply`. |
 | `s3-backup-restore-drill [--deep]` | Prove the backups restore. |
@@ -72,6 +73,24 @@ bucket versioning.
 | `NEXTCLOUD_EXCLUDE_PREVIEWS` | Set to 0 only if regenerating previews after a restore is unacceptable. They are large and Nextcloud rebuilds them. |
 | `IMMICH_SYNC_DIRS` | `thumbs` and `encoded-video` are excluded because Immich regenerates them. Add them only if you want a restore to be instantly fast rather than instantly complete. |
 | `RESTIC_PRUNE_DAY` | Empty disables prune entirely (repo grows). |
+
+## Updating
+
+`git pull` updates your checkout, not the deployment. The commands in
+`/usr/local/bin` are symlinks into `/opt/s3-backup`, and only `install.sh`
+writes there.
+
+```bash
+cd ~/s3-backup-automation
+git pull
+sudo ./install.sh --check          # reports stale vs up to date, changes nothing
+sudo ./install.sh --secrets aws    # deploy
+```
+
+The image is rebuilt only when `docker/Dockerfile` or `docker/build.sh`
+changed, so a routine update takes seconds. `s3-backup --version` prints the
+deployed fingerprint and warns if files under `/opt/s3-backup` were edited by
+hand since the last install.
 
 ## Routine tasks
 

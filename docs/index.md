@@ -1,6 +1,6 @@
 # Immich + Nextcloud → S3 backup
 
-Nightly off-site backup of the Immich and Nextcloud data on the HDD, so the
+Nightly off-site backup of the Immich and/or Nextcloud data on the HDD, so the
 loss of that drive is an inconvenience rather than a catastrophe.
 
 Two engines, chosen per data type:
@@ -9,6 +9,9 @@ Two engines, chosen per data type:
 |---|---|---|
 | Immich Postgres, Nextcloud DB, Nextcloud `data/` + `config/` | **restic** | Encrypted, deduplicated, incremental. Nextcloud files change constantly; dedup means a nightly run uploads only the delta. Snapshots let you go back to *last Tuesday*, not just to *now*. |
 | Immich originals (`library/`, `profile/`, `upload/`) | **rclone sync** | Photos are write-once and irreplaceable. A plain mirror means you can browse and download them from the S3 console with no tooling and no restic password, the restore path that still works when everything else has gone wrong. |
+
+Either service can be switched off with `IMMICH_ENABLED=0` or
+`NEXTCLOUD_ENABLED=0`; everything below applies to whichever you run.
 
 ## Read next
 

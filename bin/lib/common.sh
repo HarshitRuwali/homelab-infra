@@ -147,4 +147,13 @@ run_in_runner() {
     "$RUNNER_IMAGE" "$@"
 }
 
+# Content fingerprint of a deployed or source tree. Only the functional
+# directories: a docs edit should not make a working install look stale.
+fingerprint_tree() {
+  local root="$1"
+  ( cd "$root" 2>/dev/null || return 1
+    find bin docker aws systemd -type f -print0 2>/dev/null \
+      | LC_ALL=C sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -c1-12 )
+}
+
 human() { numfmt --to=iec-i --suffix=B "${1:-0}" 2>/dev/null || echo "${1:-0}"; }

@@ -12,6 +12,7 @@
 #   s3-backup preflight        run the safety checks only
 #   s3-backup snapshots        list restic snapshots
 #   s3-backup verify           full restic integrity check (reads all data)
+#   s3-backup --version        which build is deployed under /opt
 #
 # Options:
 #   -n, --dry-run              change nothing, show what would happen
@@ -132,6 +133,17 @@ main() {
       -n|--dry-run) DRY_RUN=1; shift ;;
       -c|--config)  CONFIG_FILE="$2"; shift 2 ;;
       -h|--help)    usage 0 ;;
+      -V|--version)
+        root="$(cd "$LIB_DIR/../.." && pwd)"
+        if [[ -r "$root/.installed" ]]; then
+          cat "$root/.installed"
+          now="$(fingerprint_tree "$root")"
+          rec="$(sed -n 's/^version=//p' "$root/.installed")"
+          [[ "$now" == "$rec" ]] || warn "files under $root changed since install (now $now)"
+        else
+          echo "unknown (no $root/.installed)"
+        fi
+        exit 0 ;;
       run|preflight|install-canaries|snapshots|verify) cmd="$1"; shift ;;
       *) err "unknown argument: $1"; usage 1 ;;
     esac
