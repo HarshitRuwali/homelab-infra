@@ -223,6 +223,40 @@ Canonical briefing. Facts only.
   "clears after redeploy" and "docs-only doesn't nag" assertions. Both
   mutations caught precisely, confirming the check does what it claims.
 
+## [DISCOVERIES - restic init: "docker: invalid reference format"]
+
+- 2026-08-24T09:55Z [USER] preflight now passed (confirms the deployment IS
+  current), but `--dry-run run` failed at `restic init` with a raw docker CLI
+  error: "invalid reference format".
+- 2026-08-24T10:00Z [TOOL] Reproduced against REAL docker (not the mock) on
+  ubuntu-dev, isolated from AWS entirely by calling `restic_run version`
+  directly. Root cause: `RUNNER_MOUNTS=("${RESTIC_MOUNTS[@]:-}") run_in_runner
+  restic "$@"` in restic_run() (and the identical pattern in rclone_run()) -
+  bash only parses `name=(...)` as a compound ARRAY assignment in a plain,
+  command-free statement. Used as a prefix to a command on the same line, it
+  is taken as a literal SCALAR string, parens included, so `docker run`
+  received a single argv token `(-v /path:/path:ro)` instead of two properly
+  separated `-v` and `path:path:ro` tokens, and rejected it. Confirmed via a
+  minimal bash reproduction outside the project entirely. Fixed by splitting
+  the assignment onto its own statement in both functions.
+- 2026-08-24T10:05Z [DISCOVERIES] This is a systemic verification gap, not a
+  one-off: `tests/fake-docker` skips unrecognized argv tokens until it finds a
+  known tool name, so the malformed collapsed-array token was silently
+  ignored rather than erroring - meaning the ENTIRE mocked suite (121+19+10+19
+  assertions, all green) could never have caught this class of bug. Real
+  docker validates strictly; the mock did not. This is why the bug reached
+  production despite "full" test coverage.
+- 2026-08-24T10:08Z [CODE] Hardened tests/fake-docker: any `docker run` argv
+  token matching `(*)` now fails exactly like real docker
+  ("invalid reference format", exit 125), specifically targeting this bash
+  pitfall's signature rather than modeling docker's full CLI grammar.
+  Mutation-tested by reintroducing the exact original bug: 121 passed -> 90
+  passed / 31 failed, confirming the mock now catches what it previously
+  missed. Re-verified clean after restoring the fix.
+- 2026-08-24T10:10Z [ASSUMPTION] Grepped for the same `VAR=(...) cmd` pattern
+  elsewhere in bin/lib/*.sh and bin/s3-backup*; none found. These were the
+  only two occurrences.
+
 ## [OUTCOMES]
 
 - 2026-08-23T09:35Z [TOOL] Added `tests/docs-consistency-test.sh` (8 checks:

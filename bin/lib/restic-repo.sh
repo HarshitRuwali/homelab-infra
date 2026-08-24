@@ -4,7 +4,13 @@
 # snapshotted repository in S3.
 
 restic_run() {
-  RUNNER_MOUNTS=("${RESTIC_MOUNTS[@]:-}") run_in_runner restic "$@"
+  # NOT `RUNNER_MOUNTS=(...) run_in_runner ...` on one line: bash only parses
+  # `name=(...)` as a compound array assignment in a plain, command-free
+  # statement. As a prefix to a command it is taken as a literal scalar
+  # string, parens included, which `docker run` then rejects as a malformed
+  # argument ("invalid reference format"). Verified against real docker.
+  RUNNER_MOUNTS=("${RESTIC_MOUNTS[@]:-}")
+  run_in_runner restic "$@"
 }
 
 restic_ensure_repo() {

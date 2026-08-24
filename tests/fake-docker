@@ -66,6 +66,25 @@ case "$cmd" in
     exit 0 ;;
 
   run)
+    # Reject the exact failure signature of the `VAR=(...) some_command` bash
+    # pitfall: `name=(...)` is only parsed as a compound array assignment in a
+    # plain, command-free statement. Used as a prefix to a command (as in
+    # `RUNNER_MOUNTS=("${X[@]}") run_in_runner ...`), it collapses to a single
+    # literal scalar, parens included - which real docker rejects with
+    # "invalid reference format". The rest of this mock is deliberately
+    # permissive (it does not model docker's full grammar), so this is the one
+    # shape it actively polices - real docker caught this in production while
+    # every other mocked assertion in this suite passed. See restic_run() in
+    # bin/lib/restic-repo.sh for the fix and the full explanation.
+    for a in "$@"; do
+      if [[ "$a" == \(*\) ]]; then
+        echo "docker: invalid reference format" >&2
+        echo >&2
+        echo "Run 'docker run --help' for more information" >&2
+        exit 125
+      fi
+    done
+
     # Skip flags until the image name, then dispatch on the tool.
     tool=""
     while (( $# )); do

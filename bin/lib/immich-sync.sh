@@ -4,7 +4,10 @@
 # restorable without any tooling beyond the AWS console.
 
 rclone_run() {
-  RUNNER_MOUNTS=("${IMMICH_MOUNTS[@]:-}") run_in_runner rclone "$@"
+  # Split across two statements deliberately - see the comment on restic_run
+  # in restic-repo.sh for why `VAR=(...) cmd` on one line is broken here.
+  RUNNER_MOUNTS=("${IMMICH_MOUNTS[@]:-}")
+  run_in_runner rclone "$@"
 }
 
 immich_sync() {
