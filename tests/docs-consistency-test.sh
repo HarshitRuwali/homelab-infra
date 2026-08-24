@@ -129,6 +129,28 @@ done < <(grep -ohE '\$\{[A-Z][A-Z0-9_]+:=' bin/lib/common.sh | grep -ohE '[A-Z][
 (( keyfail )) || ok "every key with a default in common.sh appears in the template"
 
 echo
+echo "== no counts restated in prose =="
+# A number that lives in tool output drifts the moment a test is added.
+if grep -rnE '[0-9]+ (assertion|check|test)s?\b' README.md docs/*.md >/dev/null 2>&1; then
+  grep -rnE '[0-9]+ (assertion|check|test)s?\b' README.md docs/*.md | while read -r hit; do
+    no "hardcoded count in prose: $hit"
+  done
+else
+  ok "no hardcoded test counts in README or docs"
+fi
+
+echo
+echo "== retired commands leave a working pointer =="
+tombfail=0
+while read -r t; do
+  grep -q 'REMOVED' "$t" || { no "$t exists but is not marked REMOVED"; tombfail=1; continue; }
+  repl="$(grep -oE 's3-backup-[a-z-]+' "$t" | head -1)"
+  [[ -n "$repl" && -x "bin/$repl" ]] \
+    || { no "$t does not name an existing replacement"; tombfail=1; }
+done < <(grep -rlE '^# REMOVED' aws/*.sh 2>/dev/null)
+(( tombfail )) || ok "every tombstone names a command that exists"
+
+echo
 echo "== the canonical step order matches everywhere =="
 STEPS='install\.sh|s3-backup-setup-aws|install-canaries|preflight|systemctl start s3-backup|restore-drill'
 want="install.sh s3-backup-setup-aws install-canaries preflight systemctl start s3-backup restore-drill"

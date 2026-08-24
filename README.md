@@ -47,9 +47,9 @@ tests/                       smoke test (mocked docker) + secret-parser test (re
 ## Tests
 
 ```bash
-./tests/run.sh                     # 81 assertions, throwaway container, no host changes
-./tests/secret-parse-test.sh       # 19 assertions against the real runner image
-./tests/docs-consistency-test.sh   # 8 checks that the docs match the code
+./tests/run.sh                     # orchestrator, mocked docker, throwaway container
+./tests/secret-parse-test.sh       # secret parsing, against the real runner image
+./tests/docs-consistency-test.sh   # the docs still match the code
 ```
 
 The suite mocks `docker` and runs the real orchestrator end to end. It asserts

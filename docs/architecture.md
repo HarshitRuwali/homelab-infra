@@ -54,6 +54,13 @@ if the process is `SIGKILL`ed.
 Full detail, including what this does and does not protect against, is in
 [Secrets](secrets.md).
 
+## Optional services
+
+Immich and Nextcloud are independent. `IMMICH_ENABLED=0` or
+`NEXTCLOUD_ENABLED=0` removes that service from every phase: no dump, no
+maintenance mode, no source directory checked, no canary placed, and its
+settings are not validated. Enabling neither is refused.
+
 ## Run order
 
 | # | Phase | What happens |

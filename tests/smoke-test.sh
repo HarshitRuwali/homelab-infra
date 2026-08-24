@@ -169,6 +169,65 @@ echo "== locking =="
 check 'grep -q "another s3-backup run holds" "$T/lock.log"' "a second concurrent run is refused"
 
 echo
+echo "############ Immich only (no Nextcloud) ############"
+# Reproduces the real-server failure: s3-backup-discover finds no Nextcloud,
+# writes NEXTCLOUD_DB_ENGINE="UNKNOWN", and every command then refused to run
+# even though Nextcloud was disabled.
+NOCLOUD="$T/nonextcloud.env"
+sed -e 's|^NEXTCLOUD_ENABLED=.*|NEXTCLOUD_ENABLED=0|' \
+    -e 's|^NEXTCLOUD_DB_ENGINE=.*|NEXTCLOUD_DB_ENGINE="UNKNOWN"|' \
+    "$T/backup.env" > "$NOCLOUD"
+chmod 600 "$NOCLOUD"
+rm -rf "$FAKE_DOCKER_STATE"; mkdir -p "$FAKE_DOCKER_STATE"
+: > "$FAKE_DOCKER_LOG"
+rm -f "$T"/staging/*.sql.gz   # earlier suites left dumps here
+nc_off() { "$BK" --config "$NOCLOUD" "$@" >"$T/nc.log" 2>&1; }
+
+nc_off preflight
+check '[[ $? -eq 0 ]]' "preflight accepts NEXTCLOUD_DB_ENGINE=UNKNOWN when Nextcloud is disabled"
+check '! grep -q "must be .mysql. or .postgres" "$T/nc.log"' "  ...and does not complain about the engine"
+
+nc_off run
+RC=$?
+check '[[ $RC -eq 0 ]]' "a full run succeeds with Immich only"
+[[ $RC -ne 0 ]] && { echo "--- output ---"; cat "$T/nc.log"; }
+check 'ls "$T"/staging/immich-db-*.sql.gz >/dev/null 2>&1' "Immich database still dumped"
+check '! ls "$T"/staging/nextcloud-db-*.sql.gz >/dev/null 2>&1' "no Nextcloud dump attempted"
+check '! grep -q "maintenance:mode" "$FAKE_DOCKER_LOG"' "Nextcloud maintenance mode never touched"
+check '! grep -q "mysqldump" "$FAKE_DOCKER_LOG"' "mysqldump never run"
+check '[[ -f "$FAKE_DOCKER_STATE/sync-ran" ]]' "Immich mirror still synced"
+
+nc_off install-canaries
+check '[[ $? -eq 0 ]]' "install-canaries works with Nextcloud disabled"
+check '[[ -f "$HDD/immich/.s3-backup-canary" ]]' "  ...and marks the Immich root"
+rm -f "$HDD/nextcloud/data/.s3-backup-canary"
+nc_off install-canaries
+check '[[ ! -f "$HDD/nextcloud/data/.s3-backup-canary" ]]' \
+      "  ...and does not mark a disabled service"
+
+# The disabled-service check above deleted the Nextcloud canary; put it back
+# before any configuration that needs it.
+"$BK" --config "$T/backup.env" install-canaries >/dev/null 2>&1
+
+echo
+echo "== the reverse, and the degenerate case =="
+sed 's|^IMMICH_ENABLED=.*|IMMICH_ENABLED=0|' "$T/backup.env" > "$T/nc-only.env"
+chmod 600 "$T/nc-only.env"
+"$BK" --config "$T/nc-only.env" preflight >"$T/nc.log" 2>&1
+check '[[ $? -eq 0 ]]' "Nextcloud-only is also a valid configuration"
+
+sed -e 's|^IMMICH_ENABLED=.*|IMMICH_ENABLED=0|' -e 's|^NEXTCLOUD_ENABLED=.*|NEXTCLOUD_ENABLED=0|' \
+    "$T/backup.env" > "$T/neither.env"
+chmod 600 "$T/neither.env"
+"$BK" --config "$T/neither.env" preflight >"$T/nc.log" 2>&1
+check '[[ $? -ne 0 ]]' "disabling both services is rejected"
+check 'grep -q "nothing to back up" "$T/nc.log"' "  ...with a message saying why"
+
+# restore the canary the other suites rely on
+"$BK" --config "$T/backup.env" install-canaries >/dev/null 2>&1
+rm -rf "$FAKE_DOCKER_STATE"; mkdir -p "$FAKE_DOCKER_STATE"
+
+echo
 echo "############ SECRETS_BACKEND=aws-secrets-manager ############"
 
 # /run is tmpfs inside the container, matching the real deployment.

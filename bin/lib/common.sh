@@ -77,14 +77,32 @@ load_config() {
     *) die "SECRETS_BACKEND must be 'file' or 'aws-secrets-manager', got '$SECRETS_BACKEND'" ;;
   esac
 
-  case "$NEXTCLOUD_DB_ENGINE" in
-    mysql|postgres) ;;
-    *) die "NEXTCLOUD_DB_ENGINE must be 'mysql' or 'postgres', got '$NEXTCLOUD_DB_ENGINE'" ;;
-  esac
-  case "$NEXTCLOUD_MAINTENANCE_MODE" in
-    dumps_only|full_run) ;;
-    *) die "NEXTCLOUD_MAINTENANCE_MODE must be 'dumps_only' or 'full_run'" ;;
-  esac
+  # Both services are optional, but backing up neither is certainly a mistake.
+  [[ "$IMMICH_ENABLED" == "1" || "$NEXTCLOUD_ENABLED" == "1" ]] \
+    || die "both IMMICH_ENABLED and NEXTCLOUD_ENABLED are 0: there is nothing to back up"
+
+  # Only validate a service's settings when that service is switched on.
+  # s3-backup-discover writes UNKNOWN for a database it could not identify;
+  # that is fine as long as the service is disabled.
+  if [[ "$NEXTCLOUD_ENABLED" == "1" ]]; then
+    : "${NEXTCLOUD_APP_CONTAINER:?NEXTCLOUD_APP_CONTAINER must be set when NEXTCLOUD_ENABLED=1}"
+    : "${NEXTCLOUD_DB_CONTAINER:?NEXTCLOUD_DB_CONTAINER must be set when NEXTCLOUD_ENABLED=1}"
+    : "${NEXTCLOUD_DATA_DIR:?NEXTCLOUD_DATA_DIR must be set when NEXTCLOUD_ENABLED=1}"
+    case "$NEXTCLOUD_DB_ENGINE" in
+      mysql|postgres) ;;
+      *) die "NEXTCLOUD_DB_ENGINE must be 'mysql' or 'postgres', got '$NEXTCLOUD_DB_ENGINE'.
+   If you do not run Nextcloud, set NEXTCLOUD_ENABLED=0 in $CONFIG_FILE." ;;
+    esac
+    case "$NEXTCLOUD_MAINTENANCE_MODE" in
+      dumps_only|full_run) ;;
+      *) die "NEXTCLOUD_MAINTENANCE_MODE must be 'dumps_only' or 'full_run'" ;;
+    esac
+  fi
+
+  if [[ "$IMMICH_ENABLED" == "1" ]]; then
+    : "${IMMICH_DB_CONTAINER:?IMMICH_DB_CONTAINER must be set when IMMICH_ENABLED=1}"
+    : "${IMMICH_UPLOAD_LOCATION:?IMMICH_UPLOAD_LOCATION must be set when IMMICH_ENABLED=1}"
+  fi
 
   export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION
 

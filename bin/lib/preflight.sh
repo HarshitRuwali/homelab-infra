@@ -79,8 +79,11 @@ preflight() {
 }
 
 install_canaries() {
-  local p
-  for p in "${IMMICH_UPLOAD_LOCATION:-}" "${NEXTCLOUD_DATA_DIR:-}"; do
+  local p roots=()
+  [[ "$IMMICH_ENABLED"    == "1" ]] && roots+=("${IMMICH_UPLOAD_LOCATION:-}")
+  [[ "$NEXTCLOUD_ENABLED" == "1" ]] && roots+=("${NEXTCLOUD_DATA_DIR:-}")
+  (( ${#roots[@]} )) || { warn "no enabled service to place a canary in"; return 0; }
+  for p in "${roots[@]}"; do
     [[ -n "$p" && -d "$p" ]] || continue
     printf 'Created by s3-backup-automation on %s.\nDo not delete: its absence stops the backup from mistaking an unmounted drive for an empty one.\n' \
       "$(date -Is)" > "${p%/}/${CANARY_FILE:-.s3-backup-canary}"

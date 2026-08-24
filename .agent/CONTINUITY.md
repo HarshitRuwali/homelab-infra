@@ -132,6 +132,25 @@ Canonical briefing. Facts only.
 - 2026-08-23T10:52Z [TOOL] Both fixes mutation-tested: reverting the env
   snapshot produces 19 failures, reintroducing the sudo `$HOME` bug produces 6.
 
+## [DISCOVERIES - Immich-only deployment]
+
+- 2026-08-24T07:01Z [USER] `sudo s3-backup install-canaries` died with
+  "NEXTCLOUD_DB_ENGINE must be 'mysql' or 'postgres', got 'UNKNOWN'" on a host
+  that runs Immich but no Nextcloud.
+- 2026-08-24T07:05Z [CODE] `load_config` validated Nextcloud settings
+  unconditionally, so a disabled service could still block every command.
+  Validation is now gated on `NEXTCLOUD_ENABLED` / `IMMICH_ENABLED`, discover
+  emits a valid placeholder rather than `UNKNOWN` when nothing is found, and
+  enabling neither service is refused. Mutation-tested: 6 failures on revert.
+- 2026-08-24T07:20Z [CODE] README claimed "81 assertions" against an actual
+  111. Counts restated in prose cannot be kept true; removed them and added a
+  consistency check forbidding them. First regex missed a comma-terminated
+  case and was widened after the mutation test failed to trip it.
+- 2026-08-24T07:25Z [CODE] `aws/bucket-setup.sh` and `aws/secret-setup.sh`
+  reinstated as tombstones: executable stubs naming `s3-backup-setup-aws` and
+  exiting 1. The user re-ran the removed path from scrollback and got only
+  "command not found". Both rules added to `~/.claude/CLAUDE.md`.
+
 ## [OUTCOMES]
 
 - 2026-08-23T09:35Z [TOOL] Added `tests/docs-consistency-test.sh` (8 checks:

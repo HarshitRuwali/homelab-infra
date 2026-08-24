@@ -39,10 +39,15 @@ The AWS values are deliberately blank; step 2 fills them in. What to verify:
 | `IMMICH_DB_CONTAINER`, `NEXTCLOUD_APP_CONTAINER`, `NEXTCLOUD_DB_CONTAINER` | your actual container names |
 | `IMMICH_UPLOAD_LOCATION` | the directory containing `library/`, `upload/`, `profile/` |
 | `NEXTCLOUD_DATA_DIR`, `NEXTCLOUD_CONFIG_DIR` | Nextcloud's data and config directories |
-| `NEXTCLOUD_DB_ENGINE` | `mysql` or `postgres`, never `UNKNOWN` |
+| `NEXTCLOUD_DB_ENGINE` | `mysql` or `postgres` (only read when Nextcloud is enabled) |
 | `HDD_MOUNTPOINT` | the HDD's mount point, not `/` |
 
 `s3-backup-discover` prints the same draft on demand if you want to compare.
+
+**Running only one of the two services is fine.** Discover sets
+`IMMICH_ENABLED` and `NEXTCLOUD_ENABLED` from what it actually found, and the
+disabled service's settings are then ignored and never validated. Set them by
+hand if you add a service later. At least one must be enabled.
 
 ## 2. Create everything in AWS
 
