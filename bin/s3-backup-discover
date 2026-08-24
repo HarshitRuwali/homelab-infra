@@ -7,6 +7,11 @@
 #
 set -euo pipefail
 
+LIB_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib" && pwd)"
+# shellcheck source=lib/common.sh
+source "$LIB_DIR/common.sh"
+check_deployment_freshness   # warns on stderr only; never touches stdout, which is the config draft
+
 command -v docker >/dev/null || { echo "docker not found" >&2; exit 1; }
 
 say() { printf '%s\n' "$*"; }

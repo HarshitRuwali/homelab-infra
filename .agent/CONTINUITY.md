@@ -197,6 +197,32 @@ Canonical briefing. Facts only.
   word-splitting absorbed the stray whitespace - but unreadable; rewritten
   with the Edit tool directly rather than scripted substitution.
 
+## [DISCOVERIES - staleness recurred, made it automatic]
+
+- 2026-08-24T09:48Z [USER] Same failure class again after a `git pull`: the
+  OLD generic preflight error text, not the new diagnosed one. Confirmed by
+  grep - that exact string does not exist anywhere in current source. Second
+  occurrence of this class despite `--check` and doc updates from the prior
+  incident: telling the user to remember a step is not a fix.
+- 2026-08-24T10:05Z [CODE] Made staleness detection automatic and passive
+  instead of opt-in. `check_deployment_freshness()` in bin/lib/common.sh
+  compares the fingerprint recorded at install time against a live hash of the
+  checkout it was installed from (path now recorded in `.installed` as
+  `source_dir=`), and warns on stderr - never blocks - before any other check
+  runs. Wired into `load_config()` (covers s3-backup run/preflight/snapshots/
+  verify/install-canaries and s3-backup-status/restore-drill) plus explicit
+  calls in s3-backup-setup-aws and s3-backup-discover, which bypass
+  load_config. `.installed` also now records which `--secrets` flag was used,
+  so the warning names the exact redeploy command.
+- 2026-08-24T10:10Z [TOOL] Extended tests/deploy-test.sh (12 -> 19 assertions):
+  warns on discover/status/setup-aws, warning clears after redeploy, and -
+  the case that mattered most - a docs-only change does NOT trigger it (the
+  fingerprint covers only bin/docker/aws/systemd). Mutation-tested: removing
+  the load_config call site breaks exactly the status-based assertion and
+  nothing else; forcing a constant-mismatch fingerprint breaks exactly the
+  "clears after redeploy" and "docs-only doesn't nag" assertions. Both
+  mutations caught precisely, confirming the check does what it claims.
+
 ## [OUTCOMES]
 
 - 2026-08-23T09:35Z [TOOL] Added `tests/docs-consistency-test.sh` (8 checks:

@@ -26,7 +26,9 @@ to copy by hand.
 
 After any `git pull`, re-run the installer. Pulling updates this checkout; the
 commands in `/usr/local/bin` run from `/opt/s3-backup`, which only `install.sh`
-writes. It rebuilds the image only when the Dockerfile changed, so it is quick.
+writes. Every command detects this automatically and warns if you forget, so
+it fails loudly instead of silently running last month's code. It rebuilds the
+image only when the Dockerfile changed, so redeploying is quick.
 
 ```bash
 sudo ./install.sh --check          # is the deployed copy stale?
@@ -59,7 +61,7 @@ tests/                       smoke test (mocked docker) + secret-parser test (re
 ./tests/run.sh                     # orchestrator, mocked docker, throwaway container
 ./tests/secret-parse-test.sh       # secret parsing, against the real runner image
 ./tests/docs-consistency-test.sh   # the docs still match the code
-./tests/deploy-test.sh             # install.sh staleness detection
+./tests/deploy-test.sh             # install.sh --check, and the automatic warning on every command
 ```
 
 The suite mocks `docker` and runs the real orchestrator end to end. It asserts

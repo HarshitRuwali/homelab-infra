@@ -80,6 +80,23 @@ bucket versioning.
 `/usr/local/bin` are symlinks into `/opt/s3-backup`, and only `install.sh`
 writes there.
 
+**Every command checks this automatically and warns**, so forgetting to
+redeploy is now visible rather than silent:
+
+```
+[WARN ] the deployed copy in /opt/s3-backup is out of date with
+        /home/you/s3-backup-automation - you likely ran 'git pull' without
+        redeploying. Re-run: sudo /home/you/s3-backup-automation/install.sh --secrets aws
+```
+
+It compares a content fingerprint of `bin/ docker/ aws/ systemd/` between the
+checkout and the deployment, so a docs-only pull does not nag. It fires before
+any other check, on every command, including `install-canaries`, `preflight`,
+`run`, `s3-backup-status`, `s3-backup-setup-aws` and `s3-backup-discover` - it
+still warns even when the command goes on to fail for an unrelated reason.
+
+Fix it the same way either way:
+
 ```bash
 cd ~/s3-backup-automation
 git pull

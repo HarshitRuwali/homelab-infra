@@ -36,6 +36,38 @@ ck '[[ $? -ne 0 ]]' "--check detects a stale deployment after a source change"
 ck 'grep -q "DEPLOYED COPY IS STALE" /tmp/o' "  ...and says exactly that"
 ck 'grep -q "sudo ./install.sh" /tmp/o' "  ...and gives the command to fix it"
 
+# the same divergence must also surface automatically on every real command,
+# not just when someone remembers to run --check. check_deployment_freshness
+# fires before any config validation, so a nonexistent config is a fine target.
+/tmp/opt/bin/s3-backup-discover >/tmp/disc.out 2>/tmp/disc.err
+ck 'grep -q "you likely ran .git pull. without redeploying" /tmp/disc.err' \
+   "s3-backup-discover warns automatically when the checkout has moved on"
+ck '! grep -q "git pull" /tmp/disc.out' \
+   "  ...and the warning stays on stderr, out of the config draft on stdout"
+
+CONFIG_FILE=/tmp/nonexistent.env /tmp/opt/bin/s3-backup-status >/tmp/st.out 2>/tmp/st.err
+ck 'grep -q "you likely ran .git pull. without redeploying" /tmp/st.err' \
+   "s3-backup snapshots/status warns too (via load_config), even before the config is read"
+
+/tmp/opt/bin/s3-backup-setup-aws --config /tmp/nonexistent.env >/tmp/sa.out 2>/tmp/sa.err
+ck 'grep -q "you likely ran .git pull. without redeploying" /tmp/sa.err' \
+   "s3-backup-setup-aws warns too, despite bypassing load_config"
+ck 'grep -q "sudo /tmp/srccopy/install.sh --secrets aws" /tmp/sa.err' \
+   "  ...naming the exact redeploy command, including the --secrets flag used originally"
+
+# once redeployed, the warning must go away
+"$SRC/install.sh" --secrets aws >/tmp/o 2>&1
+/tmp/opt/bin/s3-backup-discover >/tmp/disc2.out 2>/tmp/disc2.err
+ck '! grep -q "git pull" /tmp/disc2.err' \
+   "the warning is gone immediately after redeploying"
+
+# and a docs-only change must NOT trigger it: the fingerprint only covers
+# bin/docker/aws/systemd, so editing docs must not nag on every command.
+echo "# doc change" >> "$SRC/docs/index.md"
+/tmp/opt/bin/s3-backup-discover >/tmp/disc3.out 2>/tmp/disc3.err
+ck '! grep -q "git pull" /tmp/disc3.err' \
+   "a docs-only change does not trigger the staleness warning"
+
 # and detects a hand-edited deployment
 "$SRC/install.sh" --secrets aws >/tmp/o 2>&1
 echo "# hand edit" >> /tmp/opt/bin/lib/common.sh

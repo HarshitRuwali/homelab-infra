@@ -144,8 +144,8 @@ systemctl enable --now s3-backup.timer s3-backup-drill.timer
 systemctl list-timers 's3-backup*' --no-pager
 
 # Written last, so a stamp always means a completed install.
-printf 'version=%s\ncommit=%s\ndockerfile=%s\ninstalled=%s\n' \
-  "$SRC_FP" "$COMMIT" "$DOCKERFILE_FP" "$(date -Is)" > "$PREFIX/.installed"
+printf 'version=%s\ncommit=%s\ndockerfile=%s\ninstalled=%s\nsource_dir=%s\nsecrets=%s\n' \
+  "$SRC_FP" "$COMMIT" "$DOCKERFILE_FP" "$(date -Is)" "$SRC" "$SECRETS" > "$PREFIX/.installed"
 chmod 0644 "$PREFIX/.installed"
 
 if [[ "$SECRETS" == aws ]]; then

@@ -15,6 +15,8 @@ die()  { err "$@"; exit 1; }
 redact() { sed -E 's/(AWS_SECRET_ACCESS_KEY|PASSWORD|password|token)=[^ ]*/\1=<redacted>/g'; }
 
 load_config() {
+  check_deployment_freshness
+
   [[ -r "$CONFIG_FILE" ]] || die "config not readable: $CONFIG_FILE (copy config/backup.env.example)"
   local mode
   mode="$(stat -c '%a' "$CONFIG_FILE")"
@@ -154,6 +156,32 @@ fingerprint_tree() {
   ( cd "$root" 2>/dev/null || return 1
     find bin docker aws systemd -type f -print0 2>/dev/null \
       | LC_ALL=C sort -z | xargs -0 sha256sum 2>/dev/null | sha256sum | cut -c1-12 )
+}
+
+# Warn - never block - when the deployed tree under /opt no longer matches
+# the checkout it was installed from. `git pull` fast-forwards the checkout;
+# it does not touch /opt, and nothing else makes that visible. This is the
+# generalized form of `install.sh --check`, run automatically on every
+# command instead of only when someone remembers to ask.
+check_deployment_freshness() {
+  local self_lib self_prefix installed_file source_dir installed_fp current_fp secrets_hint
+  self_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"      # .../bin/lib
+  self_prefix="$(cd "$self_lib/../.." && pwd)"                  # install root
+
+  installed_file="$self_prefix/.installed"
+  [[ -r "$installed_file" ]] || return 0   # not a real install (e.g. dev checkout, tests)
+
+  source_dir="$(sed -n 's/^source_dir=//p' "$installed_file")"
+  installed_fp="$(sed -n 's/^version=//p' "$installed_file")"
+  secrets_hint="$(sed -n 's/^secrets=//p' "$installed_file")"
+  [[ -n "$source_dir" && -d "$source_dir" ]] || return 0
+
+  current_fp="$(fingerprint_tree "$source_dir" 2>/dev/null)" || return 0
+  [[ -n "$current_fp" && -n "$installed_fp" ]] || return 0
+
+  if [[ "$current_fp" != "$installed_fp" ]]; then
+    warn "the deployed copy in $self_prefix is out of date with $source_dir - you likely ran 'git pull' without redeploying. Re-run: sudo $source_dir/install.sh${secrets_hint:+ --secrets $secrets_hint}"
+  fi
 }
 
 human() { numfmt --to=iec-i --suffix=B "${1:-0}" 2>/dev/null || echo "${1:-0}"; }

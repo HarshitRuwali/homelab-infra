@@ -33,8 +33,11 @@ Secrets Manager. The installer then generates one, and you must copy it off the
 machine immediately. The trade-offs are in [Secrets](secrets.md).
 
 `git pull` alone changes nothing that runs: the commands in `/usr/local/bin`
-execute from `/opt/s3-backup`, and only `install.sh` writes there. After every
-pull, from the checkout:
+execute from `/opt/s3-backup`, and only `install.sh` writes there. Every
+command checks for this automatically and warns on stderr if the checkout has
+moved on, so a stale deployment no longer fails silently with confusing
+errors - but the fix is still to redeploy. After every pull, from the
+checkout:
 
 ```bash
 sudo ./install.sh --check          # stale or up to date; changes nothing
