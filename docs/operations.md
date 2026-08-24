@@ -104,6 +104,16 @@ remove`.
 bump `RUNNER_IMAGE` in `backup.env`. The image is pinned on purpose: an
 unpinned backup tool is an unreviewed change to your recovery path.
 
+**`preflight` fails right after `s3-backup-setup-aws`.** A freshly created IAM
+access key is eventually consistent; using it seconds after creation can
+briefly fail with `InvalidAccessKeyId`. `preflight` already retries that
+specific case up to five times with backoff before giving up. If it still
+fails, it prints the actual error from `rclone` (not a generic message) and a
+diagnosis: `AccessDenied` means the policy was not attached, `NoSuchBucket`
+means the bucket name or region is wrong, `SignatureDoesNotMatch` means the
+secret key in the secret does not match its access key ID. The last two are
+not retried, because retrying cannot fix them.
+
 **A run failed.** `journalctl -u s3-backup.service -e`. If it died mid-run,
 confirm Nextcloud is not stuck in maintenance mode, the trap should have
 cleared it, but verify with

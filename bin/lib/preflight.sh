@@ -71,11 +71,48 @@ preflight() {
     container_running "$NEXTCLOUD_APP_CONTAINER" || die "Nextcloud app container '$NEXTCLOUD_APP_CONTAINER' not running"
   fi
 
-  # Cheap end-to-end credential + bucket reachability test.
-  RUNNER_MOUNTS=() run_in_runner rclone lsd "s3:${S3_BUCKET}" >/dev/null 2>&1 \
-    || die "cannot list s3://${S3_BUCKET} - check credentials, region and bucket name"
-
+  check_s3_reachable
   info "preflight: OK"
+}
+
+# Cheap end-to-end credential + bucket reachability test. Retried: an access
+# key minted moments ago by s3-backup-setup-aws is a real, common case here -
+# IAM access keys are eventually consistent, and using one within seconds of
+# creation routinely fails with InvalidAccessKeyId until it propagates.
+check_s3_reachable() {
+  local attempt out rc delay="${S3_PREFLIGHT_RETRY_DELAY:-2}"
+  for attempt in 1 2 3 4 5; do
+    RUNNER_MOUNTS=()
+    if out="$(run_in_runner rclone lsd "s3:${S3_BUCKET}" 2>&1)"; then
+      return 0
+    fi
+    rc=$?
+    # Only InvalidAccessKeyId is retried: a freshly minted IAM access key is
+    # genuinely eventually consistent. SignatureDoesNotMatch (wrong secret) and
+    # NoSuchBucket ("...does not exist") are permanent; retrying cannot fix
+    # them, so they must not match this pattern.
+    if (( attempt < 5 )) && printf '%s' "$out" | grep -qiE 'InvalidAccessKeyId'; then
+      warn "preflight: S3 not reachable yet (attempt $attempt/5) - a freshly created access key can take a few seconds to propagate. Retrying in ${delay}s."
+      sleep "$delay"
+      delay=$(( delay * 2 ))
+      continue
+    fi
+    break
+  done
+
+  err "preflight: cannot list s3://${S3_BUCKET} (rclone exit $rc)"
+  printf '%s\n' "$out" | redact | tail -10 | sed 's/^/  /' >&2
+
+  if printf '%s' "$out" | grep -qiE 'InvalidAccessKeyId'; then
+    err "The access key does not exist yet from AWS's point of view. If you just ran s3-backup-setup-aws, this can take up to a minute to clear on its own; re-run 'sudo s3-backup preflight' shortly."
+  elif printf '%s' "$out" | grep -qiE 'SignatureDoesNotMatch'; then
+    err "The secret key does not match the access key ID. Check the value stored in Secrets Manager, or re-run s3-backup-setup-aws --apply."
+  elif printf '%s' "$out" | grep -qiE 'NoSuchBucket'; then
+    err "Bucket '${S3_BUCKET}' does not exist in this account/region. Check S3_BUCKET and AWS_DEFAULT_REGION in $CONFIG_FILE."
+  elif printf '%s' "$out" | grep -qiE 'AccessDenied|Forbidden'; then
+    err "Credentials are valid but lack permission on this bucket. Re-run s3-backup-setup-aws --apply to reattach the IAM policy."
+  fi
+  die "S3 preflight check failed"
 }
 
 install_canaries() {

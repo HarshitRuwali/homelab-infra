@@ -182,7 +182,18 @@ case "$cmd" in
     fi
 
     case "$sub" in
-      lsd)  echo "          -1 2026-01-01 00:00:00        -1 restic" ;;
+      lsd)
+        n=$(( $(cat "$STATE/lsd-calls" 2>/dev/null || echo 0) + 1 ))
+        echo "$n" > "$STATE/lsd-calls"
+        fail_until="${FAKE_LSD_FAIL_UNTIL_ATTEMPT:-0}"
+        if [[ -n "${FAKE_LSD_ALWAYS_FAIL:-}" ]]; then
+          echo "Failed to lsd: ${FAKE_LSD_ERROR:-AccessDenied: Access Denied.}" >&2
+          exit 1
+        elif (( n <= fail_until )); then
+          echo "Failed to lsd: InvalidAccessKeyId: The AWS Access Key Id you provided does not exist in our records." >&2
+          exit 1
+        fi
+        echo "          -1 2026-01-01 00:00:00        -1 restic" ;;
       sync) echo "Transferred: 0 / 0 Bytes, -, 0 Bytes/s"; touch "$STATE/sync-ran" ;;
       size) echo '{"count":1234,"bytes":567890123}' ;;
       check) echo "0 differences found" ;;

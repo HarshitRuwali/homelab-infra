@@ -171,6 +171,32 @@ Canonical briefing. Facts only.
   container (writes to /tmp/opt, never the real /opt), including that a failed
   install leaves no stamp.
 
+## [DISCOVERIES - preflight S3 check]
+
+- 2026-08-24T09:39Z [USER] `sudo s3-backup preflight` failed with "cannot list
+  s3://... - check credentials, region and bucket name" immediately after a
+  successful `s3-backup-setup-aws --apply` that had just minted a fresh IAM
+  access key for s3-backup-homelab.
+- 2026-08-24T09:45Z [CODE] Two problems: (a) the check swallowed rclone's
+  stderr entirely (`>/dev/null 2>&1`), so the real cause was never visible;
+  (b) no accounting for IAM access-key eventual consistency, a well-known AWS
+  behavior where a just-created key can fail with InvalidAccessKeyId for a
+  short window. `check_s3_reachable()` in bin/lib/preflight.sh now retries
+  only that specific error (5 attempts, 2/4/8/16s backoff) and otherwise shows
+  the real error plus a diagnosis keyed on AccessDenied / NoSuchBucket /
+  SignatureDoesNotMatch / InvalidAccessKeyId.
+- 2026-08-24T09:55Z [DISCOVERIES] While writing the test for this, caught two
+  bugs in the fix itself before they shipped: the retry regex also matched
+  "does not exist", which would have wrongly retried a permanent NoSuchBucket;
+  and SignatureDoesNotMatch (wrong secret) was being retried even though no
+  amount of retrying fixes a real credential mismatch. Narrowed the retry
+  condition to InvalidAccessKeyId only.
+- 2026-08-24T09:58Z [DISCOVERIES] A python-based multi-line edit mangled the
+  err/warn call formatting (backslash continuations collapsed, embedded
+  literal newline in a printf format string). Functionally harmless - bash
+  word-splitting absorbed the stray whitespace - but unreadable; rewritten
+  with the Edit tool directly rather than scripted substitution.
+
 ## [OUTCOMES]
 
 - 2026-08-23T09:35Z [TOOL] Added `tests/docs-consistency-test.sh` (8 checks:

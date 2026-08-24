@@ -96,6 +96,43 @@ run_backup preflight
 check '[[ $? -eq 0 ]]' "preflight succeeds"
 
 echo
+echo "== S3 reachability: transient InvalidAccessKeyId is retried and recovers =="
+export S3_PREFLIGHT_RETRY_DELAY=0   # keep the test fast; real code defaults to 2s
+rm -f "$FAKE_DOCKER_STATE/lsd-calls"
+FAKE_LSD_FAIL_UNTIL_ATTEMPT=2 run_backup preflight
+check '[[ $? -eq 0 ]]' "preflight succeeds once the key propagates"
+check '[[ "$(cat "$FAKE_DOCKER_STATE/lsd-calls")" == "3" ]]' \
+      "  ...after exactly 3 attempts (2 failures then success)"
+check 'grep -q "a freshly created" "$T/out.log"' \
+      "  ...and explains why it is retrying"
+
+echo
+echo "== S3 reachability: a permanent AccessDenied is not silently retried forever, and is diagnosed =="
+rm -f "$FAKE_DOCKER_STATE/lsd-calls"
+FAKE_LSD_ALWAYS_FAIL=1 FAKE_LSD_ERROR="AccessDenied: Access Denied." run_backup preflight
+check '[[ $? -ne 0 ]]' "preflight fails after exhausting retries"
+check '[[ "$(cat "$FAKE_DOCKER_STATE/lsd-calls")" == "1" ]]' \
+      "  ...AccessDenied is not a propagation delay, so it is not retried"
+check 'grep -q "Access Denied" "$T/out.log"' \
+      "  ...and shows the actual rclone error, not just a generic message"
+check 'grep -q "lack permission on this bucket" "$T/out.log"' \
+      "  ...with a diagnosis specific to AccessDenied"
+
+rm -f "$FAKE_DOCKER_STATE/lsd-calls"
+FAKE_LSD_ALWAYS_FAIL=1 FAKE_LSD_ERROR="NoSuchBucket: The specified bucket does not exist" run_backup preflight
+check 'grep -q "does not exist in this account" "$T/out.log"' \
+      "  ...and a different diagnosis for NoSuchBucket"
+
+rm -f "$FAKE_DOCKER_STATE/lsd-calls"
+FAKE_LSD_ALWAYS_FAIL=1 FAKE_LSD_ERROR="SignatureDoesNotMatch: The request signature we calculated does not match" \
+  run_backup preflight
+check '[[ "$(cat "$FAKE_DOCKER_STATE/lsd-calls")" == "1" ]]' \
+      "SignatureDoesNotMatch (a real credential mismatch) is not retried like a propagation delay"
+check 'grep -q "secret key does not match" "$T/out.log"' \
+      "  ...and is diagnosed correctly"
+unset S3_PREFLIGHT_RETRY_DELAY
+
+echo
 echo "== full run =="
 run_backup run
 RC=$?
