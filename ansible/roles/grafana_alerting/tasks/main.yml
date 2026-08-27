@@ -82,6 +82,11 @@
       - "'fleet-dpkg-wedged' in (ga_rules.json | map(attribute='uid') | list)"        # rules-updates
       - "'fleet-systemd-unit-failed' in (ga_rules.json | map(attribute='uid') | list)"  # rules-services
       - "'fleet-container-restart-loop' in (ga_rules.json | map(attribute='uid') | list)"  # rules-containers
+      # One probe per rules file, so a file that silently fails to load is
+      # caught here rather than discovered when it does not fire.
+      - "'fleet-smart-health-failed' in (ga_rules.json | map(attribute='uid') | list)"    # rules-storage
+      - "'fleet-net-link-lost' in (ga_rules.json | map(attribute='uid') | list)"          # rules-network
+      - "'fleet-gpu-exporter-down' in (ga_rules.json | map(attribute='uid') | list)"      # rules-gpu
     fail_msg: >-
       Alerting provisioning did not load. Check:
       journalctl -u grafana-server -n 100 | grep -i provision

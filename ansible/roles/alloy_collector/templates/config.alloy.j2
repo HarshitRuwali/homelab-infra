@@ -119,6 +119,46 @@ loki.source.journal "system" {
   relabel_rules = loki.relabel.journal.rules
   forward_to    = [loki.write.central.receiver]
 }
+{% if alloy_enable_process | default(false) %}
+
+// --- Per-process metrics -------------------------------------------------
+// Opt-in per host; see alloy_enable_process in the role defaults for the
+// cardinality reasoning.
+
+prometheus.exporter.process "processes" {
+  // Group by command name, so every PID of the same program collapses into
+  // one series. Grouping by PID instead mints a new series on every restart
+  // and grows without bound.
+  //
+  // The matcher name is hardcoded rather than exposed as a variable on
+  // purpose: its value is the literal string {{ "{{.Comm}}" }}, and Ansible
+  // templates variable values too, so holding it in a var means fighting two
+  // layers of Jinja to keep the braces intact. It is not worth a knob.
+  // `cmdline`, not `comm`. They are not interchangeable: comm is a list of
+  // EXACT command names, cmdline is a list of REGEXES. `comm = [".+"]` is
+  // therefore not "match everything", it matches a process literally named
+  // ".+", which is nothing at all. Verified the wrong way round first: the
+  // component started cleanly, the scrape pool came up, and exactly zero
+  // series were produced.
+  matcher {
+    name    = "{{ "{{.Comm}}" }}"
+    cmdline = [".+"]
+  }
+
+  // Both off deliberately. track_threads multiplies series by thread count,
+  // and gather_smaps walks /proc/*/smaps on every scrape, which is expensive
+  // on a host with many processes and buys detail nothing here charts.
+  track_threads = false
+  gather_smaps  = false
+}
+
+prometheus.scrape "processes" {
+  job_name        = "host-process"
+  targets         = prometheus.exporter.process.processes.targets
+  scrape_interval = "{{ alloy_scrape_interval }}"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+{% endif %}
 {% if gpu_exporter_available | default(false) %}
 
 // --- GPU telemetry (host has an NVIDIA GPU) -------------------------------

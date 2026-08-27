@@ -153,11 +153,21 @@ groups:
               editorMode: code
               instant: true
               range: false
-              # No exclusions: every monitored host now auto-patches, the
-              # central node included. If you park a host in the Ansible
-              # no_autoupdate group, exclude it here too or this will fire
-              # for it permanently.
-              expr: min by (host) (fleet_unattended_upgrades_enabled)
+              # Gated on INTENT, not on a hardcoded host list. The previous
+              # version assumed every monitored host auto-patches and warned
+              # that parking one outside `autoupdate` would make this fire
+              # forever; onboarding the hypervisor did exactly that.
+              #
+              # fleet_autoupdate_expected is templated from group membership
+              # by roles/update_metrics, so a host moving between autoupdate
+              # and no_autoupdate updates this rule's scope on its own.
+              #
+              # `and on (host)` keeps only the hosts that are supposed to
+              # patch. It is not interchangeable with `or`, which would ADD
+              # the hosts that are not supposed to and invert the meaning.
+              expr: |
+                min by (host) (fleet_unattended_upgrades_enabled)
+                  and on (host) (max by (host) (fleet_autoupdate_expected) == 1)
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}

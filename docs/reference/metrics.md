@@ -15,7 +15,8 @@ and at boot.
 | `fleet_reboot_required_since_timestamp_seconds` | gauge | when it first became required |
 | `needrestart_kernel_status` | gauge | `0` unknown, `1` current, `2` ABI pending, `3` version pending |
 | `needrestart_services_count` | gauge | services running outdated binaries |
-| `fleet_unattended_upgrades_enabled` | gauge | `1` if auto-patching is configured |
+| `fleet_unattended_upgrades_enabled` | gauge | `1` only if apt will actually **apply** upgrades unattended |
+| `fleet_autoupdate_expected` | gauge | `1` if the inventory puts this host in `autoupdate` |
 | `fleet_unattended_upgrades_last_run_timestamp_seconds` | gauge | last unattended run |
 | `fleet_apt_last_update_timestamp_seconds` | gauge | package cache freshness |
 | `fleet_dpkg_needs_configure` | gauge | `1` if dpkg is wedged |
@@ -29,6 +30,23 @@ and at boot.
     the Pi kernel comes from `/boot/firmware`. A Pi with both Debian and RPi
     kernels installed reports `3` indefinitely. **No alert keys off it** for
     this reason; it is dashboard information only.
+
+!!! warning "`fleet_unattended_upgrades_enabled` needs all three conditions"
+    The timer alone is not enough. `apt-daily-upgrade.timer` ships **enabled**
+    on stock Debian, so testing only the timer reports "auto-patching is on"
+    for a box that has never been configured to patch itself and may not even
+    have the `unattended-upgrade` binary. That is the dangerous direction to be
+    wrong in: an unpatched host looks covered.
+
+    It now requires the timer, an effective
+    `APT::Periodic::Unattended-Upgrade "1"`, and the binary on disk.
+
+!!! tip "INTENT vs STATE: `fleet_autoupdate_expected` against `fleet_unattended_upgrades_enabled`"
+    Templated from group membership, so it says whether a host is *supposed*
+    to auto-patch, while the other says whether it *does*. Together they let
+    `fleet-autoupdates-disabled` fire only on genuine drift, and stay silent on
+    a deliberately hand-patched host like the hypervisor. Move a host between
+    `autoupdate` and `no_autoupdate` and the alert's scope follows on its own.
 
 ## Container update state
 
@@ -46,6 +64,29 @@ Written to `fleet-docker.prom` by `fleet-docker-update.sh`, after each run.
 | `fleet_docker_containers_running` | gauge | running after the update |
 | `fleet_docker_containers_unhealthy` | gauge | failing a Docker healthcheck |
 | `fleet_docker_containers_restarting` | gauge | stuck restarting |
+
+## Per-process metrics
+
+From `prometheus.exporter.process`, **opt-in per host** via
+`alloy_enable_process`; see [Variables](variables.md#collector).
+
+| Metric | Meaning |
+|---|---|
+| `namedprocess_namegroup_num_procs` | processes in the group |
+| `namedprocess_namegroup_cpu_seconds_total` | CPU seconds, by mode |
+| `namedprocess_namegroup_memory_bytes{memtype="resident"}` | RSS; `virtual` exists but is misleading |
+| `namedprocess_namegroup_num_threads` / `..._open_filedesc` | threads and open FDs |
+| `namedprocess_namegroup_oldest_start_time_seconds` | age of the oldest PID in the group |
+
+Grouped by `groupname`, which is the command name, so every PID of the same
+program is one series and a restart does not mint a new one.
+
+!!! danger "`comm` and `cmdline` are not interchangeable in the matcher"
+    `comm` is a list of **exact** command names; `cmdline` is a list of
+    **regexes**. So `comm = [".+"]` is not "match everything", it matches a
+    process literally named `.+`, which is nothing. The symptom is the worst
+    kind: the component starts cleanly, the scrape pool comes up, and exactly
+    zero series are produced. Use `cmdline = [".+"]`.
 
 ## SMART disk health
 

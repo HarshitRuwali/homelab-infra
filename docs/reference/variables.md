@@ -20,11 +20,28 @@ For how variable precedence works at all, see
 | `alloy_scrape_interval` | `15s` | |
 | `alloy_journal_max_age` | `12h` | lower to `1h` on hosts with huge journals |
 | `alloy_enable_docker` | `auto` | `auto` stats `/var/run/docker.sock` |
+| `alloy_enable_process` | `false` | per-process metrics; **opt-in on cardinality grounds** |
 | `alloy_fs_mount_points_exclude` | see file | |
 | `alloy_fs_types_exclude` | see file | |
 | `alloy_systemd_unit_exclude` | see file | |
 | `journald_system_max_use` | `""` | empty leaves journald's own default |
 | `collector_basic_auth_required` | `true` | `false` on the central node |
+
+!!! warning "`alloy_enable_process` is off by default for a measured reason"
+    It emits about **1000 series per host** (measured on `ubuntu-dev`: 47
+    process groups, 1072 series) against a fleet head of ~52k. Enabling it
+    everywhere is roughly a 20% jump in series, and at 7-day retention that is
+    real disk on the central LXC, which has already hit 100% once.
+
+    Turn it on where you would actually open a process view, and set it in
+    `host_vars`, not with `-e`: a command-line override lasts one run, and the
+    next `collectors.yml` pass would re-render the config without it and
+    silently drop the metrics.
+
+    ```yaml
+    # inventory/host_vars/<host>.yml
+    alloy_enable_process: true
+    ```
 
 !!! danger "Backslashes in these regexes"
     They land inside double quotes in the generated `.alloy` file, and Alloy
@@ -121,7 +138,7 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | `grafana_admin_user` | `admin` | **override this**; `lxc-install.sh` writes a real username |
 | `grafana_api_url` | `http://127.0.0.1:3000` | |
 | `central_host_label` | from `host_vars` | must match `MONITOR_HOSTNAME` |
-| `grafana_alerting_static_files` | 7 files | `rules-availability.yaml` is templated, not listed |
+| `grafana_alerting_static_files` | 11 files | `rules-availability.yaml` is templated, not listed |
 
 ## Site-wide
 

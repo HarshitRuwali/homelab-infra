@@ -15,7 +15,7 @@ room through a local relay.
     | `fleet-clock-unsynced` | warning | 30m | NTP not synchronised |
     | `fleet-central-stack-down` | critical | 2m | a core service on the central LXC is not active |
 
-=== "Resources (6)"
+=== "Resources (8)"
 
     | uid | Severity | For | Threshold |
     |---|---|---|---|
@@ -24,7 +24,9 @@ room through a local relay.
     | `fleet-disk-will-fill` | warning | 1h | trending to full in 24h **and** under 10% free |
     | `fleet-memory-high` | warning | 15m | available memory under 10% |
     | `fleet-oom-kills` | critical | 0m | kernel OOM killer active in last 15 min |
-    | `fleet-load-high` | warning | 20m | load15 over 2× core count |
+    | `fleet-load-high` | warning | 20m | load15 over 2× core count, `tailscale-router` excluded |
+    | `fleet-filesystem-readonly` | critical | 5m | kernel remounted a filesystem read-only after an I/O error |
+    | `fleet-inodes-high` | warning | 15m | over **90%** of the inode limit, which fails writes while space looks free |
 
 === "Updates (6)"
 
@@ -49,12 +51,55 @@ room through a local relay.
     | `fleet-docker-update-failed` | critical | 0m | nightly update failed or left restarts |
     | `fleet-docker-update-stale` | warning | 1h | no successful update in 50h |
 
-=== "Services (2)"
+=== "Services (3)"
 
     | uid | Severity | For | Fires when |
     |---|---|---|---|
     | `fleet-systemd-unit-failed` | warning | 10m | a unit is failed, excluding known-chronic ones |
     | `fleet-unattended-upgrades-errors` | warning | 0m | errors in the journal (Loki query) |
+    | `fleet-systemd-unit-restart-loop` | warning | 10m | >5 restarts in 30 min; a flapping unit reads `active` between crashes, so the failed-unit rule never sees it |
+
+=== "Storage (8)"
+
+    SMART disk health. Only hosts in the `metal` group can produce these
+    series, so every rule uses `noDataState: OK`.
+
+    | uid | Severity | For | Fires when |
+    |---|---|---|---|
+    | `fleet-smart-health-failed` | critical | 5m | the drive's own self-assessment failed |
+    | `fleet-smart-pending-sectors` | critical | 15m | unreadable sectors not yet remapped |
+    | `fleet-smart-reallocated-sectors` | warning | 30m | any remapped bad sector |
+    | `fleet-smart-crc-errors-rising` | warning | 0m | **new** SATA link errors in 24h, not the lifetime count |
+    | `fleet-smart-nvme-wearout` | warning | 1h | over 85% of rated write endurance |
+    | `fleet-smart-nvme-spare-low` | critical | 15m | under 10% spare blocks left |
+    | `fleet-smart-temperature-high` | warning | 30m | over 60 C |
+    | `fleet-smart-collector-stale` | warning | 30m | no refresh in an hour on a host that has disks |
+
+=== "Network (5)"
+
+    Every rule excludes virtual interfaces (`veth`, `tap`, `fwbr`, `vmbr`,
+    `docker`, `cni`), which churn constantly on Docker and PVE hosts.
+
+    | uid | Severity | For | Fires when |
+    |---|---|---|---|
+    | `fleet-net-interface-errors` | warning | 15m | any sustained rx/tx error rate |
+    | `fleet-net-interface-drops` | warning | 15m | over 1 dropped packet/s |
+    | `fleet-net-link-lost` | critical | 5m | an interface that was up in the last 6h is now down |
+    | `fleet-net-conntrack-near-limit` | warning | 10m | conntrack table over 85% |
+    | `fleet-net-tcp-retransmits` | warning | 20m | over 5% of segments retransmitted, above a traffic floor |
+
+=== "GPU (5)"
+
+    From `roles/gpu_exporter`. Liveness keys on `up{job="nvidia-gpu"}`, not on
+    absent `nvidia_smi_*` series.
+
+    | uid | Severity | For | Fires when |
+    |---|---|---|---|
+    | `fleet-gpu-temperature-critical` | critical | 10m | at or above 87 C, where NVIDIA parts throttle |
+    | `fleet-gpu-temperature-high` | warning | 30m | above 80 C |
+    | `fleet-gpu-vram-exhausted` | warning | 15m | under 5% VRAM free |
+    | `fleet-gpu-fan-stopped` | critical | 15m | fan reads zero while the card is over 70 C |
+    | `fleet-gpu-exporter-down` | warning | 15m | the exporter stopped responding |
 
 ## Rule structure
 

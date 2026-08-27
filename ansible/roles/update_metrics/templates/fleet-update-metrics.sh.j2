@@ -80,6 +80,22 @@ START="$(date +%s.%N)"
   fi
 {% endif %}
 
+  # --- patch policy: intent, then state -----------------------------------
+  # INTENT, templated from the inventory at render time, as distinct from the
+  # STATE measured below. Together they answer the only question worth
+  # alerting on: "is a host that is SUPPOSED to auto-patch failing to?"
+  #
+  # Without this, fleet-auto-updates-disabled has to assume every monitored
+  # host auto-patches. That was true until the hypervisor was onboarded, and
+  # it is deliberately never true for it: patching t7920 restarts
+  # pveproxy/pvedaemon under running guests, so it is monitored but hand
+  # patched. The rule's own comment predicted this and asked for an exclusion;
+  # keying off group membership is that exclusion, and it maintains itself
+  # when a host moves between autoupdate and no_autoupdate.
+  echo '# HELP fleet_autoupdate_expected 1 when the inventory puts this host in the autoupdate group.'
+  echo '# TYPE fleet_autoupdate_expected gauge'
+  echo 'fleet_autoupdate_expected {{ 1 if "autoupdate" in group_names else 0 }}'
+
   # --- unattended-upgrades health ----------------------------------------
   # BOTH CONDITIONS ARE REQUIRED, and the timer alone is not one of them.
   #

@@ -126,7 +126,7 @@ See [Security notes](docs/security.md).
 
 ## What is provisioned
 
-**3 fleet dashboards** in the `Monitoring` folder, loaded from
+**6 fleet dashboards** in the `Monitoring` folder, loaded from
 `grafana/dashboards/fleet/`:
 
 - **VM Fleet Overview**: fleet freshness, pending updates, which hosts need a
@@ -134,6 +134,12 @@ See [Security notes](docs/security.md).
 - **Services and Logs**: systemd unit state, per-container inventory, journal
   and container logs
 - **System Overview**: CPU, memory, disk, network, uptime, host count
+- **Network**: throughput, packet rates, interface errors and drops, TCP
+  retransmit share, conntrack usage, interface inventory
+- **Disk Health**: SMART inventory, temperature, wear, bad sectors, plus
+  filesystem and inode health for every host
+- **Host Processes**: the htop view for one host, per-core CPU, process table,
+  top consumers. Only lists hosts with the opt-in process exporter enabled
 
 **One dashboard per host** in the `Servers` folder, loaded from
 `grafana/dashboards/servers/`: CPU, memory, disk, network, systemd units,
@@ -141,8 +147,9 @@ containers, pending updates and logs, scoped to a single host instead of
 filtered through `$host`. Hosts with an NVIDIA GPU also get GPU utilization,
 VRAM, temperature, power and fan.
 
-**Alert rules** in `grafana/provisioning/alerting/`: 21 committed across
-availability, resources, updates, containers and services, plus a
+**Alert rules** in `grafana/provisioning/alerting/`: 42 committed across
+availability, resources, updates, containers, services, storage, network and
+GPU, plus a
 `rules-availability.yaml` **generated from the inventory** so adding a host
 cannot leave a silent gap in down-detection.
 
@@ -158,9 +165,9 @@ cannot leave a silent gap in down-detection.
 ansible/                       Fleet automation
   playbooks/site.yml             everything, in dependency order
   inventory/hosts.example.yml    template; hosts.local.yml is gitignored
-  roles/                         alloy_collector, gpu_exporter, update_metrics,
-                                 unattended_upgrades, docker_updates,
-                                 grafana_alerting, matrix_webhook
+  roles/                         alloy_collector, gpu_exporter, smart_metrics,
+                                 update_metrics, unattended_upgrades,
+                                 docker_updates, grafana_alerting, matrix_webhook
 alloy/config.alloy             Docker-collector config (native installs use Ansible)
 grafana/dashboards/fleet/      Fleet-wide dashboards (Monitoring folder)
 grafana/dashboards/servers/    Per-host dashboards (Servers folder)

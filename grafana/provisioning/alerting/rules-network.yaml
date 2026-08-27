@@ -1,0 +1,239 @@
+apiVersion: 1
+
+# Network health.
+#
+# EVERY RULE EXCLUDES VIRTUAL INTERFACES, and that exclusion is the whole
+# difference between a useful file and a permanently-firing one. A Proxmox or
+# Docker host carries dozens of veth/tap/fwbr/vmbr devices that are created,
+# torn down and left administratively down as a matter of routine, so an
+# unfiltered `node_network_up == 0` fires forever on healthy hosts. The
+# surviving devices on this fleet are the ones you would actually name:
+# ens18, eth0, eth1, nic0, nic1, tailscale0, tun0, wlan0.
+#
+# There is deliberately no RAID rule here or in rules-storage.yaml:
+# node_md_disks reports zero series fleet-wide, so an mdadm alert would sit on
+# NoData forever and teach you to ignore the file. Add one with the array.
+
+groups:
+  - orgId: 1
+    name: network
+    folder: Fleet
+    interval: 1m
+    rules:
+
+      # ---------------------------------------------------------------
+      # Both directions added explicitly. The tempting shortcut, one selector
+      # {__name__=~"node_network_(receive|transmit)_errs_total"}, DOES NOT
+      # WORK: rate() strips __name__, so the receive and transmit series for a
+      # given host+device collapse to identical labelsets and Prometheus
+      # rejects the whole query with "vector cannot contain metrics with the
+      # same labelset". Verified against the live server, not assumed.
+      # Addition is safe here because node_exporter emits both directions for
+      # every device from the same struct (127 series each, fleet-wide).
+      - uid: fleet-net-interface-errors
+        title: Network Interface Errors
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A physical interface is logging receive or transmit errors.
+          runbook: "ip -s link show <device>. Errors usually mean cabling, a duplex mismatch, or a failing NIC."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                sum by (host, device) (rate(node_network_receive_errs_total{device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}[10m]))
+                +
+                sum by (host, device) (rate(node_network_transmit_errs_total{device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}[10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # Drops are rated below errors on purpose. A low drop rate is normal
+      # under burst on a busy host, so this wants a real rate, not any
+      # non-zero value.
+      - uid: fleet-net-interface-drops
+        title: Network Interface Dropping Packets
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A physical interface is dropping more than 1 packet/s.
+          runbook: "Check ring buffer and queue pressure: ethtool -S <device> | grep -i drop; ip -s link show <device>"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                sum by (host, device) (rate(node_network_receive_drop_total{device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}[10m]))
+                +
+                sum by (host, device) (rate(node_network_transmit_drop_total{device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}[10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [1]}
+
+      # ---------------------------------------------------------------
+      # "Down" alone is not a fault: a spare NIC that has never been plugged in
+      # is legitimately down forever. What matters is an interface that WAS
+      # carrying traffic and is not now.
+      #
+      # `and on (host, device)` is doing real work here and is NOT
+      # interchangeable with `or`: it keeps a left-hand series only where a
+      # matching right-hand series exists, i.e. only where this exact device on
+      # this exact host was up at some point in the last 6h.
+      - uid: fleet-net-link-lost
+        title: Network Link Lost
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: An interface that was up within the last 6h is now down.
+          runbook: "ip link show <device>; check the switch port and cable. A never-connected spare NIC is excluded by design."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 21600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                (
+                  max by (host, device) (node_network_up{
+                    device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}) == 0
+                )
+                and on (host, device) (
+                  max by (host, device) (max_over_time(node_network_up{
+                    device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}[6h])) == 1
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gte, params: [0]}
+
+      # ---------------------------------------------------------------
+      # Conntrack exhaustion drops NEW connections while everything already
+      # established keeps working, which is why it presents as "the network is
+      # fine but nothing new can connect". Matters most on the router.
+      - uid: fleet-net-conntrack-near-limit
+        title: Conntrack Table Near Limit
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: The connection tracking table is over 85% full. New connections will start failing.
+          runbook: "sysctl net.netfilter.nf_conntrack_count net.netfilter.nf_conntrack_max. Raise nf_conntrack_max or find what is opening connections."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host) (
+                  node_nf_conntrack_entries / node_nf_conntrack_entries_limit
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.85]}
+
+      # ---------------------------------------------------------------
+      # A retransmit RATIO, with a traffic floor. Without the floor a host
+      # sending three packets an hour can retransmit one of them and show 33%,
+      # which is noise, not a network fault.
+      - uid: fleet-net-tcp-retransmits
+        title: High TCP Retransmit Rate
+        condition: C
+        for: 20m
+        labels:
+          severity: warning
+        annotations:
+          summary: Over 5% of transmitted TCP segments are retransmissions.
+          runbook: "Suspect the path, not the host: check the link, MTU, and any VPN in between. ss -ti | grep -i retrans"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1200, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                (
+                  rate(node_netstat_Tcp_RetransSegs[10m])
+                  / rate(node_netstat_Tcp_OutSegs[10m])
+                )
+                and on (host) (rate(node_netstat_Tcp_OutSegs[10m]) > 10)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.05]}

@@ -11,6 +11,23 @@ alloy_marker_path: /etc/alloy/.ansible-managed
 alloy_scrape_interval: 15s
 alloy_journal_max_age: 12h
 
+# Per-process metrics (prometheus.exporter.process).
+#
+# OFF BY DEFAULT ON CARDINALITY GROUNDS, not because it is unhelpful. It emits
+# roughly one series per distinct process name per host: measured at ~1000
+# series on a normal box, against a fleet head of ~52k. Turning it on
+# everywhere is a ~20% jump in series and, at 7-day retention on the central
+# LXC's shared root filesystem, a real disk cost on a box that has already hit
+# 100% once.
+#
+# Turn it on where you would actually open a process view -- a workstation, a
+# box running a workload you are tuning, the hypervisor -- and leave it off on
+# single-purpose service containers whose process list never changes:
+#
+#   # inventory/host_vars/<host>.yml
+#   alloy_enable_process: true
+alloy_enable_process: false
+
 # auto | true | false. `auto` stats /var/run/docker.sock, mirroring the
 # conditional in scripts/lxc-install.sh.
 alloy_enable_docker: auto

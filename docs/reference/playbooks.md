@@ -16,7 +16,7 @@ A reference list. For what a playbook or a role *is*, see
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
 | `docker-updates.yml` | `autoupdate` | containers, only with `run_now` | container update schedule |
 | `rotate-collector-password.yml` | `central` | `nginx`, central `alloy` | rotating collector auth |
-| `verify.yml` | `monitored` | **nothing** | read-only health check |
+| `force-updates.yml` | `monitored` | **services, via apt** | installing pending updates NOW; never reboots |
 
 ### Common invocations
 

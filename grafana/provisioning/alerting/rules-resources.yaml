@@ -255,3 +255,97 @@ groups:
               expression: B
               conditions:
                 - evaluator: {type: gt, params: [2]}
+
+      # ---------------------------------------------------------------
+      # A filesystem remounted read-only is what the kernel does when it hits
+      # an I/O or metadata error it cannot ride out. Nothing is "slow" and no
+      # usage threshold trips; writes simply start failing while every
+      # capacity panel stays green. Rated critical because by the time you see
+      # it the applications on that host are already broken.
+      - uid: fleet-filesystem-readonly
+        title: Filesystem Remounted Read-Only
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: A filesystem has been remounted read-only, almost always after an I/O error.
+          runbook: "dmesg -T | grep -iE 'ext4|xfs|i/o error|remount'. Check the underlying disk before remounting rw."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, device, mountpoint) (
+                  node_filesystem_readonly{fstype!~"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\.lxcfs",mountpoint!~"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*"}
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # Inodes exhaust independently of bytes. A filesystem with 60% space
+      # free and no inodes left reports "No space left on device" while every
+      # disk-usage panel and alert stays green, which is why this needs its
+      # own rule rather than being folded into fleet-disk-high.
+      #
+      # The `> 0` guard drops filesystems that report no inode total at all
+      # (several pseudo and network filesystems do), where the ratio would
+      # otherwise be meaningless.
+      - uid: fleet-inodes-high
+        title: Inode Usage High
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A filesystem is over 90% of its inode limit and will fail writes while showing free space.
+          runbook: "Find the directory with the file count, not the size: for d in /*; do echo -n \"$d \"; find $d -xdev 2>/dev/null | wc -l; done | sort -k2 -n | tail"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                (
+                  100 * (1 - (
+                    node_filesystem_files_free{fstype!~"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\.lxcfs",mountpoint!~"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*"}
+                    /
+                    node_filesystem_files{fstype!~"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\.lxcfs",mountpoint!~"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*"}
+                  ))
+                )
+                and on (host, device, mountpoint) (
+                  node_filesystem_files{fstype!~"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\.lxcfs",mountpoint!~"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*"} > 0
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [90]}

@@ -1,0 +1,161 @@
+{
+  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "description": "Per-process detail for a single host, the htop view. Only hosts with alloy_enable_process=true appear in the host picker: the process exporter is opt-in because it costs roughly 1000 series per host, and the host list here is driven by the process metrics themselves so it cannot offer a host that has no data.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+{
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(namedprocess_namegroup_num_procs{host=\"$host\"})", "refId": "A"}],
+      "title": "Processes",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(namedprocess_namegroup_num_threads{host=\"$host\"})", "refId": "A"}],
+      "title": "Threads",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(namedprocess_namegroup_open_filedesc{host=\"$host\"})", "refId": "A"}],
+      "title": "Open FDs",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Distinct process names, which is the unit this exporter groups by. Every PID of the same program collapses into one group, so a restart does not create a new series.",
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(count by (groupname) (namedprocess_namegroup_num_procs{host=\"$host\"}))", "refId": "A"}],
+      "title": "Process Groups",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "One bar per core. An imbalance here, one core pinned while the rest idle, is the signature of a single-threaded process saturating a CPU.",
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "id": 5,
+      "options": {"displayMode": "gradient", "orientation": "horizontal", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "showUnfilled": true},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "100 * (1 - rate(node_cpu_seconds_total{mode=\"idle\",host=\"$host\"}[5m]))", "legendFormat": "{{cpu}}", "refId": "A"}],
+      "title": "CPU by Core",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Stacked and normalised by core count, so the total is host CPU percent. High `iowait` means the disk is the bottleneck; high `system` means kernel work, usually IO or network.",
+      "fieldConfig": {"defaults": {"unit": "percent", "custom": {"stacking": {"mode": "normal", "group": "A"}, "fillOpacity": 40}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "id": 6,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "100 * sum by (mode) (rate(node_cpu_seconds_total{mode!=\"idle\",host=\"$host\"}[5m])) / on() group_left count(count by (cpu) (node_cpu_seconds_total{host=\"$host\"}))", "legendFormat": "{{mode}}", "refId": "A"}
+      ],
+      "title": "CPU by Mode",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Rate of CPU seconds per second: 1.0 means one core fully consumed by that process group.",
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "id": 7,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "topk(10, sum by (groupname) (rate(namedprocess_namegroup_cpu_seconds_total{host=\"$host\"}[5m])))", "legendFormat": "{{groupname}}", "refId": "A"}
+      ],
+      "title": "Top Processes by CPU",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Resident set size, the memory actually held in RAM. Virtual size is deliberately not charted: it counts address space a process reserved but may never touch, and routinely reads in terabytes.",
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "id": 8,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "topk(10, sum by (groupname) (namedprocess_namegroup_memory_bytes{memtype=\"resident\",host=\"$host\"}))", "legendFormat": "{{groupname}}", "refId": "A"}
+      ],
+      "title": "Top Processes by Memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "`available` is the number that matters, not `free`: the kernel deliberately spends idle RAM on cache and hands it back on demand.",
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 21},
+      "id": 9,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_memory_MemTotal_bytes{host=\"$host\"} - node_memory_MemAvailable_bytes{host=\"$host\"}", "legendFormat": "used", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_memory_Cached_bytes{host=\"$host\"} + node_memory_Buffers_bytes{host=\"$host\"}", "legendFormat": "cache + buffers", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_memory_MemAvailable_bytes{host=\"$host\"}", "legendFormat": "available", "refId": "C"}
+      ],
+      "title": "Memory In Use",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "A fork rate that climbs without a matching workload usually means something is respawning in a loop.",
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 21},
+      "id": 10,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(node_context_switches_total{host=\"$host\"}[5m])", "legendFormat": "context switches/s", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(node_forks_total{host=\"$host\"}[5m])", "legendFormat": "forks/s", "refId": "B"}
+      ],
+      "title": "Context Switches and Forks",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Every process group on the host, sorted by CPU. This is the htop view: scan CPU first, then Memory, then Age for something that has been restarting.",
+      "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}}, "overrides": [{"matcher": {"id": "byName", "options": "CPU"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}, {"id": "min", "value": 0}, {"id": "max", "value": 1}]}, {"matcher": {"id": "byName", "options": "Memory"}, "properties": [{"id": "unit", "value": "bytes"}]}, {"matcher": {"id": "byName", "options": "Age"}, "properties": [{"id": "unit", "value": "s"}]}]},
+      "gridPos": {"h": 11, "w": 24, "x": 0, "y": 29},
+      "id": 11,
+      "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "CPU"}]},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by (groupname) (namedprocess_namegroup_num_procs{host=\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by (groupname) (rate(namedprocess_namegroup_cpu_seconds_total{host=\"$host\"}[5m]))", "format": "table", "instant": true, "range": false, "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by (groupname) (namedprocess_namegroup_memory_bytes{memtype=\"resident\",host=\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "C"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by (groupname) (namedprocess_namegroup_num_threads{host=\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "D"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by (groupname) (namedprocess_namegroup_open_filedesc{host=\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "E"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "time() - min by (groupname) (namedprocess_namegroup_oldest_start_time_seconds{host=\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "F"}
+      ],
+      "title": "Process Table",
+      "type": "table",
+      "transformations": [{"id": "merge", "options": {}}, {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"groupname": 0, "Value #A": 1, "Value #B": 2, "Value #C": 3, "Value #D": 4, "Value #E": 5, "Value #F": 6}, "renameByName": {"groupname": "Process", "Value #A": "Count", "Value #B": "CPU", "Value #C": "Memory", "Value #D": "Threads", "Value #E": "FDs", "Value #F": "Age"}}}]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["processes", "host"],
+  "templating": {"list": [{"current": {}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "definition": "label_values(namedprocess_namegroup_num_procs, host)", "hide": 0, "includeAll": false, "multi": false, "name": "host", "options": [], "query": {"query": "label_values(namedprocess_namegroup_num_procs, host)", "refId": "PrometheusVariableQueryEditor-VariableQuery"}, "refresh": 1, "regex": "", "skipUrlSync": false, "type": "query"}]},
+  "time": {"from": "now-3h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Host Processes",
+  "uid": "host-processes",
+  "version": 1,
+  "weekStart": ""
+}

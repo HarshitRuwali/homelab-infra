@@ -102,3 +102,44 @@ groups:
               expression: B
               conditions:
                 - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # A unit that crashes and is restarted by systemd every few seconds
+      # spends most of its life in `active`, so fleet-systemd-unit-failed
+      # samples it as healthy and never fires. The restart COUNTER is the only
+      # honest view of it: the service is flapping, not failed.
+      - uid: fleet-systemd-unit-restart-loop
+        title: Systemd Unit Restart Loop
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: A systemd unit has restarted more than 5 times in 30 minutes.
+          runbook: "systemctl status <unit>; journalctl -u <unit> -n 100 --no-pager. Look for the first error, not the last restart."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, name) (
+                  increase(node_systemd_service_restart_total[30m])
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [5]}
