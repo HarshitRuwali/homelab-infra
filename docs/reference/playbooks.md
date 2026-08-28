@@ -12,6 +12,7 @@ A reference list. For what a playbook or a role *is*, see
 | `onboard.yml` | one host, `--limit` required | `alloy` | adding a new host; installs the collector and proves data landed centrally |
 | `collectors.yml` | `monitored` | `alloy`, `systemd-journald` | Alloy config, container metrics, journal caps |
 | `update-metrics.yml` | `monitored` | nothing meaningful | the apt/reboot exporter |
+| `dashboards.yml` | `central` | only if the provider config changed | Grafana dashboards; prunes ones deleted from git |
 | `central-alerting.yml` | `central` | **`grafana-server`** | alert rules, Matrix relay |
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
 | `docker-updates.yml` | `autoupdate` | containers, only with `run_now` | container update schedule |

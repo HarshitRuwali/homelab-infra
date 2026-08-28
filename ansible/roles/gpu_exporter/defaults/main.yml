@@ -10,6 +10,17 @@ gpu_exporter_version: "1.14.0"
 # alloy_listen_addr, so nothing needs it reachable off the host.
 gpu_exporter_listen_addr: "127.0.0.1:9835"
 
+# Export per-process GPU metrics: which PID is holding how much VRAM.
+#
+# This is the one figure `nvidia-smi` shows at the bottom and `nvtop` shows in
+# its process table, and it is the difference between "the GPU is full" and
+# "THIS job is filling the GPU". Off by default in the exporter, on here.
+#
+# Cardinality is bounded by the number of processes actually holding a CUDA
+# context, which is a handful even on a busy box, not by the process count of
+# the host. It is nothing like the per-process CPU exporter.
+gpu_exporter_collect_processes: true
+
 # sha256 of each release's .deb, copied from the signed checksums.txt at
 # https://github.com/utkuozdemir/nvidia_gpu_exporter/releases. Update
 # alongside gpu_exporter_version.

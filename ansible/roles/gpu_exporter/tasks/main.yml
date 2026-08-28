@@ -91,7 +91,7 @@
           # Alloy scrapes it over loopback, so nothing else needs it exposed.
           [Service]
           ExecStart=
-          ExecStart=/usr/bin/nvidia_gpu_exporter --web.listen-address={{ gpu_exporter_listen_addr }}
+          ExecStart=/usr/bin/nvidia_gpu_exporter --web.listen-address={{ gpu_exporter_listen_addr }}{{ ' --collect.compute-apps' if gpu_exporter_collect_processes | bool else '' }}
         dest: /etc/systemd/system/nvidia_gpu_exporter.service.d/10-listen-address.conf
         owner: root
         group: root

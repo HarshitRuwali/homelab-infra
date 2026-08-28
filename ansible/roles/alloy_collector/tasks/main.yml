@@ -34,7 +34,19 @@
       journal_max_age={{ alloy_journal_max_age }}
 
 # --- Directories ---------------------------------------------------------
-- name: Ensure the Alloy and textfile-collector directories exist
+# /etc/alloy is DELIBERATELY ABSENT from this list. The alloy package's
+# postinst runs `chown root:$ALLOY_GROUP /etc/alloy` and `chmod 770`, so a
+# task forcing root:root 0755 fights the package: every play flipped it to
+# 755 and every package install or upgrade flipped it back, leaving site.yml
+# reporting `changed` on that task forever on alternating runs. A play that is
+# never green is one nobody reads.
+#
+# The package's 770 root:alloy is also the better of the two. It keeps the
+# directory readable by the service user and nobody else, where 0755 made a
+# config directory world-readable for no benefit. The package creates the
+# directory during "Install Alloy" above, so there is nothing left to do here
+# but leave it alone; the config file below is written into it explicitly.
+- name: Ensure the textfile-collector and drop-in directories exist
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
@@ -42,7 +54,6 @@
     group: root
     mode: "0755"
   loop:
-    - /etc/alloy
     - "{{ alloy_textfile_dir }}"
     # Holds the cAdvisor root drop-in below. Created unconditionally so the
     # "remove it again" task has somewhere to look on non-Docker hosts.

@@ -77,6 +77,60 @@ redeploy.
 `uid: system-overview`: per-host resource detail. CPU, memory, root disk,
 network throughput, uptime and host count.
 
+## Network
+
+`uid: network-monitoring`: throughput, packet rates, interface errors and
+drops, TCP retransmit share, conntrack usage, and an interface inventory.
+
+!!! warning "Every panel excludes virtual interfaces"
+    `veth`, `tap`, `fwbr`, `fwln`, `fwpr`, `vmbr`, `docker`, `cni`, `virbr`.
+    On a Docker or Proxmox host those churn constantly and are routinely left
+    administratively down, so an unfiltered view drowns the real NICs and an
+    unfiltered link-down alert fires forever. What survives is the set you
+    would actually name: `ens18`, `eth0`, `eth1`, `nic0`, `nic1`, `tailscale0`,
+    `tun0`, `wlan0`.
+
+## Disk Health
+
+`uid: disk-health`: SMART inventory, temperature, wear, bad sectors over time,
+plus filesystem and inode health.
+
+The SMART half only populates for hosts in the `metal` group; the filesystem
+half covers everything. See [SMART disk health](../reference/metrics.md#smart-disk-health)
+for why virtualised hosts cannot report it.
+
+## Host Processes
+
+`uid: host-processes`: htop as a dashboard. The header line (load, cores,
+uptime, tasks, threads, running, blocked), per-core CPU meters, memory and
+swap meters, and the process list with CPU%, MEM%, RSS, threads, FDs and age.
+
+CPU% is **per-core-equivalent**, matching htop: 100 means one saturated core,
+400 means four. Processes are grouped by command name, so a 32-worker service
+is one row with a large Count rather than 32 near-identical rows.
+
+!!! note "The host picker only lists hosts with the process exporter enabled"
+    It is driven by `label_values(namedprocess_namegroup_num_procs, host)`, so
+    it cannot offer a host that has no data. The exporter is opt-in; see
+    [`alloy_enable_process`](../reference/variables.md#collector).
+
+## GPU
+
+`uid: gpu-monitoring`: nvtop as a dashboard. Gauges for the header numbers,
+the utilisation and VRAM graphs nvtop scrolls, current clocks against maximum,
+active throttle reasons, and the process table showing which PID holds the
+memory.
+
+!!! tip "Read utilisation and memory-bus together"
+    `nvidia_smi_utilization_gpu_ratio` is the fraction of time at least one
+    kernel was resident, **not** how much of the GPU's compute is in use: a
+    tiny kernel pinning one SM reads 100%. High memory-bus utilisation
+    alongside low GPU utilisation means the workload is bandwidth-bound.
+
+!!! info "An empty process table is not a fault"
+    It means no process holds a CUDA context right now. The table needs
+    `--collect.compute-apps`, which `roles/gpu_exporter` enables by default.
+
 ## Servers folder
 
 `grafana/dashboards/servers/<host>.json`, `uid: host-<host>`, one per host in
@@ -130,21 +184,34 @@ cgroup alongside real containers.
 ## Editing
 
 ```bash
-# a fleet dashboard (Monitoring folder):
-ansible monitor-lxc -m copy -a \
-  "src=../grafana/dashboards/fleet/<name>.json \
-   dest=/var/lib/grafana/dashboards/fleet/<name>.json \
-   owner=grafana group=grafana mode=0644"
-
-# a per-host dashboard (Servers folder):
-ansible monitor-lxc -m copy -a \
-  "src=../grafana/dashboards/servers/<host>.json \
-   dest=/var/lib/grafana/dashboards/servers/<host>.json \
-   owner=grafana group=grafana mode=0644"
+cd ansible
+ansible-playbook playbooks/dashboards.yml
 ```
 
-Both destination directories are created by `write_grafana_config()` in
-`scripts/lxc-install.sh`, so they exist on any host that ran the installer.
+That is the whole deploy. It is also part of `site.yml`, so a full run keeps
+Grafana matching git without a separate step.
+
+The role validates each file by parsing it **on the target before it lands**,
+so a truncated or malformed dashboard fails the play instead of being dropped
+silently by the provider with an error nobody reads.
+
+!!! tip "It prunes, so deleting a dashboard from git actually deletes it"
+    `grafana_dashboard_prune` (default `true`) removes files on the box that
+    are no longer committed. Without it the deploy only ever adds: the
+    provider's `disableDeletion: false` means Grafana drops a dashboard when
+    its FILE disappears, so a leftover file keeps resurrecting a dashboard you
+    deleted. Verified by planting an uncommitted dashboard and confirming the
+    next run removed exactly that file and nothing else.
+
+!!! note "This does not restart Grafana; `central-alerting.yml` does"
+    Dashboard JSON is picked up by the file provider within seconds, so
+    pushing a panel edit costs nothing. Only a change to the **provider
+    config** (`grafana/provisioning/dashboards/dashboards.yml`, which sets the
+    folder names and paths) triggers a restart, because those are read at
+    startup.
+
+    Alert rules are the opposite: `central-alerting.yml` always restarts
+    Grafana, which briefly stops alert evaluation.
 
 The file provider reloads within seconds; no Grafana restart needed, unlike
 alerting.

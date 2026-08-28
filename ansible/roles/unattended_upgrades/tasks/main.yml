@@ -72,6 +72,13 @@
   ansible.builtin.command: apt-config dump
   register: uu_apt_config
   changed_when: false
+  # Read-only, and it MUST run under --check. A skipped command registers a
+  # stub with an empty stdout, so the auto-reboot assert below would evaluate
+  # `'...' in ''`, fail, and abort a dry run on every patched host. Letting it
+  # run means --check genuinely verifies the never-reboot guarantee against
+  # what is on disk right now, rather than skipping the one safety property
+  # this role exists to enforce.
+  check_mode: false
 
 - name: Assert that auto-reboot is disabled
   ansible.builtin.assert:
@@ -89,6 +96,11 @@
   changed_when: false
   failed_when: false
   when: uu_enable_installs | default(true)
+  # `--dry-run` installs nothing, so this is safe to run in check mode, and
+  # running it is the point: the two asserts below are the gate that catches a
+  # broken config before 03:00. Skipping them under --check would make the
+  # dry run report success on a host whose next real run would fail.
+  check_mode: false
 
 - name: Assert the dry run did not blow up
   ansible.builtin.assert:

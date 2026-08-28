@@ -101,10 +101,17 @@
   delay: 3
   until: mw_smoke is succeeded
 
+# `| default(...)` on mw_smoke.status is load-bearing. The uri smoke test above
+# is skipped under --check, so the registered variable is a dict with no
+# `status` key, and referencing it unguarded aborted the whole play with
+# "object of type 'dict' has no attribute 'status'". That broke
+# `site.yml --check` on the central node, which the docs present as the safe
+# way to preview a fleet-wide run.
 - name: Report
   ansible.builtin.debug:
     msg: >-
       matrix-webhook is listening on
       {{ matrix_webhook_listen_host }}:{{ matrix_webhook_listen_port }}
-      (returned {{ mw_smoke.status }} to an empty request, as expected).
+      (returned {{ mw_smoke.status | default('not probed, check mode') }} to an
+      empty request, as expected).
       Send a real test message with the curl in docs/fleet-ansible.md.

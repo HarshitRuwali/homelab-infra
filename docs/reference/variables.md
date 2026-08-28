@@ -85,7 +85,18 @@ For how variable precedence works at all, see
 |---|---|---|
 | `gpu_exporter_version` | `1.14.0` | pinned; no apt repo exists for this exporter, so this is what stands in for `alloy_package_state: present` |
 | `gpu_exporter_listen_addr` | `127.0.0.1:9835` | loopback only; Alloy scrapes it locally |
+| `gpu_exporter_collect_processes` | `true` | per-process VRAM, the nvtop process table |
 | `gpu_exporter_checksums` | see file | sha256 per arch, from the release's signed `checksums.txt`; bump alongside the version |
+
+!!! tip "`gpu_exporter_collect_processes` is what makes the GPU process table work"
+    It passes `--collect.compute-apps`, which the exporter leaves off by
+    default. Without it you can see that the GPU is full but not *what* is
+    filling it, which is the one question the panel exists to answer.
+
+    Cardinality is bounded by the number of processes holding a CUDA context,
+    a handful even on a busy box, so this is nothing like the per-process CPU
+    exporter. An empty table means nothing holds a context right now, not that
+    collection is broken.
 
 Installed only where `nvidia-smi` is found on the host (autodetected, same
 `auto` idiom as `alloy_enable_docker`), and purged again if it disappears.
@@ -128,6 +139,21 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | `update_metrics_oncalendar` | `*:0/15` | every 15 minutes |
 | `update_metrics_randomized_delay` | `300` | `600` on the Pis |
 | `update_metrics_use_needrestart` | `true` | installed in non-interactive mode |
+
+## Dashboards
+
+`roles/grafana_dashboards/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `grafana_dashboard_root` | `/var/lib/grafana/dashboards` | parent of the two provider dirs |
+| `grafana_dashboard_dirs` | `[fleet, servers]` | **must stay disjoint**; Grafana scans provider paths recursively |
+| `grafana_dashboard_prune` | `true` | remove dashboards no longer committed |
+
+!!! warning "Turning off `grafana_dashboard_prune` makes the deploy add-only"
+    The provider runs with `disableDeletion: false`, so Grafana removes a
+    dashboard from its database when the file disappears. Leave a stale file
+    behind and it keeps resurrecting a dashboard you deleted from git.
 
 ## Alerting
 

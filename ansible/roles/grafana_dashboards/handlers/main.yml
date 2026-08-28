@@ -1,0 +1,11 @@
+---
+# Only the PROVIDER config needs this. Dashboard JSON is picked up by the file
+# provider within seconds without a restart, which is why the copy tasks below
+# deliberately do not notify it: restarting Grafana blinds the fleet's
+# alerting for the duration, and doing that for a panel tweak is not a trade
+# worth making.
+- name: Restart grafana-server
+  ansible.builtin.systemd:
+    name: grafana-server
+    state: restarted
+    daemon_reload: true

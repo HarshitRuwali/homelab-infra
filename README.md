@@ -126,7 +126,7 @@ See [Security notes](docs/security.md).
 
 ## What is provisioned
 
-**6 fleet dashboards** in the `Monitoring` folder, loaded from
+**7 fleet dashboards** in the `Monitoring` folder, loaded from
 `grafana/dashboards/fleet/`:
 
 - **VM Fleet Overview**: fleet freshness, pending updates, which hosts need a
@@ -138,8 +138,10 @@ See [Security notes](docs/security.md).
   retransmit share, conntrack usage, interface inventory
 - **Disk Health**: SMART inventory, temperature, wear, bad sectors, plus
   filesystem and inode health for every host
-- **Host Processes**: the htop view for one host, per-core CPU, process table,
-  top consumers. Only lists hosts with the opt-in process exporter enabled
+- **Host Processes**: htop as a dashboard, per-core CPU meters, memory and swap
+  meters, the process list. Only lists hosts with the opt-in process exporter
+- **GPU**: nvtop as a dashboard, utilisation and VRAM graphs, clocks, throttle
+  reasons, and which process is holding the VRAM
 
 **One dashboard per host** in the `Servers` folder, loaded from
 `grafana/dashboards/servers/`: CPU, memory, disk, network, systemd units,
