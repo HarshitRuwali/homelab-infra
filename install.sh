@@ -65,7 +65,7 @@ install -d -m 0755 "$PREFIX"
 rm -rf "${PREFIX:?}/bin" "${PREFIX:?}/docker" "${PREFIX:?}/aws" "${PREFIX:?}/docs" "${PREFIX:?}/systemd"
 cp -r "$SRC/bin" "$SRC/docker" "$SRC/aws" "$SRC/docs" "$SRC/systemd" "$PREFIX/"
 chmod 0755 "$PREFIX"/bin/s3-backup*
-for b in s3-backup s3-backup-status s3-backup-discover s3-backup-restore-drill s3-backup-setup-aws; do
+for b in s3-backup s3-backup-status s3-backup-discover s3-backup-restore s3-backup-restore-drill s3-backup-setup-aws; do
   ln -sf "$PREFIX/bin/$b" "/usr/local/bin/$b"
 done
 

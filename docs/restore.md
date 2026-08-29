@@ -12,12 +12,16 @@ and read [Secrets](secrets.md) now, while you still have a working system.
 
 ## What you need per scenario
 
-| Scenario | What you need |
-|---|---|
-| One deleted photo | AWS console only |
-| One deleted Nextcloud file | restic password |
-| The HDD died | both |
-| The whole server died | both, plus a fresh Docker host |
+| Scenario | What you need | Command |
+|---|---|---|
+| One deleted photo | AWS console only | (browser) |
+| One deleted Nextcloud file | restic password | `s3-backup-restore files --include ...` |
+| The HDD died | both | `s3-backup-restore immich\|nextcloud\|db` |
+| The whole server died | both, plus a fresh Docker host | as above, after reinstalling |
+
+`s3-backup-restore` never writes over live data unless you pass `--in-place`,
+and refuses even then while the service containers are running. Start with
+`s3-backup-restore list`.
 
 ---
 
@@ -39,32 +43,28 @@ Files removed from the HDD in the last 90 days are under
 ## B. Recover a single Nextcloud file
 
 ```bash
-# What is in the repository, and when
-s3-backup snapshots
-
-docker run --rm -it \
-  -e RESTIC_REPOSITORY -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION \
-  -e RESTIC_PASSWORD_FILE=/run/secrets/pw \
-  -v /etc/s3-backup/restic-password:/run/secrets/pw:ro \
-  -v /var/cache/restic:/root/.cache/restic \
-  -v /tmp/restore:/restore \
-  s3-backup-runner:1.0.0 \
-  restic restore <snapshot-id> \
-    --include '*/files/Documents/thatfile.odt' \
-    --target /restore
+s3-backup-restore list                       # what snapshots exist, and when
+s3-backup-restore files --include '*/files/Documents/thatfile.odt'
 ```
 
-Copy the file back into place, `chown` it to the web server user, then:
+It restores into a fresh timestamped directory under
+`/var/lib/s3-backup/restore` and prints what it recovered. Nothing live is
+touched, so this is safe to run on a working system.
+
+Add `--snapshot ID` to read an older snapshot than the latest, and `--target
+DIR` to choose where it lands.
+
+Copy the file back yourself, deliberately, then let Nextcloud notice it:
 
 ```bash
+sudo cp <restored-file> /path/in/nextcloud/data/alice/files/Documents/
+sudo chown 33:33 /path/in/nextcloud/data/alice/files/Documents/thatfile.odt
 docker exec -u www-data nextcloud php occ files:scan --path="alice/files/Documents"
 ```
 
-`restic mount` is often easier for browsing, it exposes every snapshot as a
-FUSE filesystem. It needs `--cap-add SYS_ADMIN --device /dev/fuse` on the
-`docker run`.
-
----
+`files` deliberately has no `--in-place`: a restore pattern can match anything,
+and silently overwriting arbitrary live paths is not a thing this should do
+for you.
 
 ## C. The HDD died, full restore
 
@@ -80,101 +80,63 @@ sudo mount /dev/sdX1 /mnt/hdd
 mountpoint /mnt/hdd    # must succeed before anything else
 ```
 
-Stop both stacks before restoring into their data directories.
-
-### C2. Immich originals
-
-```bash
-docker run --rm \
-  -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY \
-  -e RCLONE_CONFIG_S3_TYPE=s3 -e RCLONE_CONFIG_S3_PROVIDER=AWS \
-  -e RCLONE_CONFIG_S3_ENV_AUTH=true -e RCLONE_CONFIG_S3_REGION=ap-south-1 \
-  -v /mnt/hdd/immich:/mnt/hdd/immich \
-  s3-backup-runner:1.0.0 \
-  rclone copy s3:my-homelab-backup/immich /mnt/hdd/immich \
-    --transfers 16 --fast-list --progress
-```
-
-`copy`, not `sync` - never point a `sync` at a half-restored directory.
-
-Then fix ownership to whatever your Immich compose file runs as:
+**Stop both stacks before restoring.** `--in-place` refuses to run while the
+service containers are up, because restoring underneath a running service
+produces a corrupt mixture of old and new:
 
 ```bash
-sudo chown -R 1000:1000 /mnt/hdd/immich
+cd /path/to/immich && docker compose down
+cd /path/to/nextcloud && docker compose down
 ```
 
-### C3. Immich database
+### C2. Files
 
 ```bash
-# 1. Get the dump back
-mkdir -p /tmp/dbrestore
-docker run --rm \
-  -e RESTIC_REPOSITORY -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION \
-  -e RESTIC_PASSWORD_FILE=/run/secrets/pw \
-  -v /etc/s3-backup/restic-password:/run/secrets/pw:ro \
-  -v /tmp/dbrestore:/restore \
-  s3-backup-runner:1.0.0 \
-  restic restore latest --include '*/immich-db-*.sql.gz' --target /restore
-
-# 2. Wipe the old database volume and start ONLY Postgres
-cd /path/to/immich
-docker compose down -v
-docker compose pull
-docker compose create
-docker start immich_postgres
-sleep 15
-
-# 3. Load it
-gunzip -c /tmp/dbrestore/var/lib/s3-backup/staging/immich-db-*.sql.gz \
-  | sed "s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g" \
-  | docker exec -i immich_postgres psql --username=postgres --dbname=postgres
-
-# 4. Bring Immich up
-docker compose up -d
+sudo s3-backup-restore immich --in-place
+sudo s3-backup-restore nextcloud --in-place
 ```
 
-Two details that will bite you if skipped:
+Each asks you to type `RESTORE` before overwriting live paths; `--yes` skips
+that when scripting. Without `--in-place` they restore into
+`/var/lib/s3-backup/restore/<timestamp>-<service>/` instead, which is the safer
+choice if you want to inspect before committing.
+
+Immich uses `rclone copy`, never `sync`, so a half-restored target is never
+truncated to match the mirror.
+
+Fix ownership afterwards, which the command prints for you:
+
+```bash
+sudo chown -R 1000:1000 /mnt/hdd/immich        # match your Immich compose
+sudo chown -R 33:33 /mnt/hdd/nextcloud/data    # 33 = www-data
+```
+
+### C3. Databases
+
+```bash
+sudo s3-backup-restore db immich
+sudo s3-backup-restore db nextcloud
+```
+
+This restores the newest dump, verifies it (gzip integrity **and** the
+completion trailer, which is what catches a dump truncated mid-write), and
+prints the exact load commands for your containers and file paths.
+
+**Loading is deliberately not automated.** For Immich it requires destroying
+the Postgres volume first, and a script that gets that wrong is unrecoverable.
+Run the printed commands yourself. Two details they include, both of which
+will bite you if skipped:
 
 - **`docker compose down -v` is required.** Restoring a `pg_dumpall` over an
   existing Immich database leaves a mix of old and new rows.
-- **The `sed` is not optional.** It rewrites the dump's `search_path` reset so
-  the vector extension resolves during restore. Without it the load fails
-  partway through with confusing type errors.
+- **The `sed` rewriting `search_path` is not optional.** Without it the load
+  fails partway through with confusing type errors, because the vector
+  extension does not resolve.
 
 The database image must be the **same version** you dumped from. Restoring a
-Postgres 14 dump into 16 is a separate migration, not a restore.
+Postgres 14 dump into 16 is a migration, not a restore.
 
-### C4. Nextcloud files
-
-```bash
-docker run --rm \
-  -e RESTIC_REPOSITORY -e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION \
-  -e RESTIC_PASSWORD_FILE=/run/secrets/pw \
-  -v /etc/s3-backup/restic-password:/run/secrets/pw:ro \
-  -v /mnt/hdd:/mnt/hdd \
-  -v /var/cache/restic:/root/.cache/restic \
-  s3-backup-runner:1.0.0 \
-  restic restore latest --include '/mnt/hdd/nextcloud' --target /
-
-sudo chown -R 33:33 /mnt/hdd/nextcloud   # 33 = www-data on the official image
-```
-
-`--target /` is correct: snapshots store absolute host paths, so this puts
-everything back exactly where it came from.
-
-### C5. Nextcloud database
-
-```bash
-# MySQL/MariaDB
-docker compose up -d nextcloud-db
-sleep 20
-docker exec -i nextcloud-db mysql -u root -p"$PW" \
-  -e "DROP DATABASE IF EXISTS nextcloud; CREATE DATABASE nextcloud
-      CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
-gunzip -c nextcloud-db-*.sql.gz | docker exec -i nextcloud-db mysql -u root -p"$PW"
-```
-
-### C6. Bring Nextcloud back and reconcile
+### C4. Bring Nextcloud back and reconcile
 
 ```bash
 docker compose up -d
@@ -186,20 +148,18 @@ docker exec -u www-data nextcloud php occ maintenance:data-fingerprint
 ```
 
 - `files:scan --all` closes the consistency window described in
-  [architecture](architecture.md#consistency) - it reconciles what is on disk
+  [architecture](architecture.md#consistency): it reconciles what is on disk
   with what the database believes.
-- `data-fingerprint` tells every synced client that the server was restored
-  from backup, so they re-check rather than pushing local deletions up.
-- Previews are excluded from the backup and will regenerate on demand.
+- `data-fingerprint` tells every synced client the server was restored from
+  backup, so they re-check rather than pushing local deletions up.
+- Previews are excluded from the backup and regenerate on demand.
 
-### C7. Re-arm the backup
+### C5. Re-arm the backup
 
 ```bash
 sudo s3-backup install-canaries   # the canaries were on the dead drive
 sudo s3-backup preflight
 ```
-
----
 
 ## D. The whole server died
 

@@ -14,6 +14,10 @@
 | `s3-backup --version` | Which build is deployed, and whether `/opt/s3-backup` was edited since. |
 | `s3-backup-discover` | Print a config draft from the running containers. |
 | `s3-backup-setup-aws` | Create/repair the bucket, IAM users, secret and keys, and write them into `backup.env`. Dry run unless `--apply`. |
+| `s3-backup-restore list` | What snapshots and mirror contents exist. |
+| `s3-backup-restore files --include P` | Selective file recovery into a staging directory. |
+| `s3-backup-restore immich\|nextcloud` | Restore that service's files. `--in-place` to overwrite live paths. |
+| `s3-backup-restore db immich\|nextcloud` | Restore and verify a database dump, then print the load commands. |
 | `s3-backup-restore-drill [--deep]` | Prove the backups restore. |
 
 ## Monitoring

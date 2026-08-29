@@ -206,6 +206,78 @@ echo "== locking =="
 check 'grep -q "another s3-backup run holds" "$T/lock.log"' "a second concurrent run is refused"
 
 echo
+echo "############ s3-backup-restore ############"
+REST="$REPO/bin/s3-backup-restore"
+RESTORE_ROOT_T="$T/restore"
+rst() { RESTORE_ROOT="$RESTORE_ROOT_T" "$REST" --config "$T/backup.env" "$@" >"$T/rst.log" 2>&1; }
+
+echo
+echo "== safety: refuses to overwrite live data while services are running =="
+rst nextcloud --in-place --yes
+check '[[ $? -ne 0 ]]' "--in-place refused while Nextcloud containers are running"
+check 'grep -q "still running" "$T/rst.log"' "  ...naming the containers that must be stopped"
+
+rst immich --in-place --yes
+check '[[ $? -ne 0 ]]' "--in-place refused while the Immich DB container is running"
+
+FAKE_CONTAINERS_RUNNING=false rst nextcloud --in-place
+check '[[ $? -ne 0 ]]' "--in-place without --yes refuses when stdin is not a terminal"
+check 'grep -q "needs --yes" "$T/rst.log"' "  ...and says so rather than hanging on a prompt"
+
+echo
+echo "== safety: unsupported combinations are rejected, not half-done =="
+rst files --include '*/x' --in-place
+check '[[ $? -ne 0 ]]' "files --in-place is refused"
+rst db immich --in-place
+check '[[ $? -ne 0 ]]' "db --in-place is refused"
+rst files
+check '[[ $? -ne 0 ]]' "files without --include is refused"
+check 'grep -q "needs --include" "$T/rst.log"' "  ...explaining what is missing"
+rst db
+check '[[ $? -ne 0 ]]' "db without a service name is refused"
+
+echo
+echo "== restores default to a fresh directory, never over live data =="
+rm -rf "$RESTORE_ROOT_T"
+rst db immich
+check '[[ $? -eq 0 ]]' "db immich succeeds"
+check 'ls "$RESTORE_ROOT_T"/*-db-immich/var/lib/s3-backup/staging/immich-db-*.sql.gz >/dev/null 2>&1' \
+      "  ...into a timestamped directory under RESTORE_ROOT"
+check 'grep -q "verified immich-db" "$T/rst.log"' "  ...having verified the dump it restored"
+check 'grep -q "docker compose down -v" "$T/rst.log"' \
+      "  ...and printed the load procedure, including the required volume wipe"
+check 'grep -q "set_config" "$T/rst.log"' "  ...including the search_path sed Immich needs"
+
+rst db nextcloud
+check 'grep -q "DROP DATABASE IF EXISTS nextcloud" "$T/rst.log"' \
+      "db nextcloud prints an engine-appropriate load procedure"
+
+echo
+echo "== a corrupt or truncated dump is caught, not handed back as good =="
+FAKE_RESTORE_CORRUPT=1 rst db immich
+check '[[ $? -ne 0 ]]' "a dump failing gzip integrity aborts the restore"
+check 'grep -q "gzip integrity" "$T/rst.log"' "  ...saying which check failed"
+
+FAKE_RESTORE_TRUNCATED=1 rst db immich
+check '[[ $? -ne 0 ]]' "a valid-gzip but truncated dump is also rejected"
+check 'grep -q "no completion trailer" "$T/rst.log"' \
+      "  ...caught by the completion trailer, which gzip alone would miss"
+
+echo
+echo "== dry run writes nothing =="
+rm -rf "$RESTORE_ROOT_T"
+rst immich --dry-run
+check '[[ $? -eq 0 ]]' "immich --dry-run succeeds"
+check 'grep -q -- "--dry-run" "$FAKE_DOCKER_LOG"' "  ...and propagates --dry-run to rclone"
+
+echo
+echo "== list reports what is recoverable =="
+rst list
+check '[[ $? -eq 0 ]]' "list succeeds"
+check 'grep -q "restic snapshots" "$T/rst.log"' "  ...showing restic snapshots"
+check 'grep -q "Immich mirror" "$T/rst.log"' "  ...and the Immich mirror"
+
+echo
 echo "############ Immich only (no Nextcloud) ############"
 # Reproduces the real-server failure: s3-backup-discover finds no Nextcloud,
 # writes NEXTCLOUD_DB_ENGINE="UNKNOWN", and every command then refused to run

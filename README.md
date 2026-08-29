@@ -45,6 +45,7 @@ bin/
   s3-backup-setup-aws        creates bucket, IAM users, secret and keys; writes the config
   s3-backup-discover         reads your containers and prints a backup.env draft
   s3-backup-status           timer state, last run, snapshots, mirror size
+  s3-backup-restore          get data back: files, Immich originals, Nextcloud, DB dumps
   s3-backup-restore-drill    restores from S3 into throwaway DBs and queries them
   lib/                       common, secrets, preflight, dumps, restic-repo, immich-sync, metrics
 config/backup.env.example    every option, documented
@@ -95,6 +96,22 @@ installer's output and `docs/setup.md` agree on the order of the steps.
 - **The restore is tested, monthly, automatically** -
   `s3-backup-restore-drill --deep` loads the dumps into scratch containers
   built from the production images and checks that the tables have rows.
+
+## Restoring
+
+```bash
+s3-backup-restore list                                  # what exists
+s3-backup-restore files --include '*/Documents/x.odt'   # one file back
+s3-backup-restore immich --in-place                     # full recovery
+s3-backup-restore db immich                             # fetch + verify a dump
+```
+
+Restores default to a fresh directory under `/var/lib/s3-backup/restore`, so
+they never overwrite live data by accident. `--in-place` does, and refuses
+while the service containers are running. Loading a database dump stays manual
+on purpose: for Immich it requires destroying the Postgres volume first, so the
+command restores and verifies the dump and prints the exact commands rather
+than running them. Full procedures in [docs/restore.md](docs/restore.md).
 
 ## The two things that will actually lose your data
 

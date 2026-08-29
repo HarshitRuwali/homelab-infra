@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+#
+# s3-backup-restore - get data back out of S3.
+#
+#   s3-backup-restore list                        what snapshots exist
+#   s3-backup-restore files --include PATTERN     selective file restore (restic)
+#   s3-backup-restore nextcloud                   Nextcloud data + config (restic)
+#   s3-backup-restore immich                      Immich originals (rclone mirror)
+#   s3-backup-restore db immich|nextcloud         fetch and verify a database dump
+#
+# Options:
+#   -t, --target DIR    where to restore. Default: a fresh timestamped
+#                       directory under /var/lib/s3-backup/restore, so a
+#                       restore never overwrites live data by accident.
+#       --in-place      restore over the live paths instead. Refuses unless
+#                       the service's containers are stopped. immich and
+#                       nextcloud only.
+#   -s, --snapshot ID   restic snapshot to read. Default: latest.
+#   -y, --yes           skip the confirmation prompt for --in-place.
+#   -n, --dry-run       show what would be restored, write nothing.
+#   -c, --config FILE   use FILE instead of /etc/s3-backup/backup.env
+#
+# Loading a database dump back into a running service is deliberately NOT
+# automated: for Immich it requires destroying the Postgres volume first, and
+# getting that wrong is unrecoverable. `db` restores and verifies the dump,
+# then prints the exact commands for your setup. See docs/restore.md.
+#
+set -euo pipefail
+
+LIB_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib" && pwd)"
+# shellcheck source=lib/common.sh
+source "$LIB_DIR/common.sh"
+source "$LIB_DIR/secrets.sh"
+source "$LIB_DIR/restic-repo.sh"
+source "$LIB_DIR/immich-sync.sh"
+
+TARGET=""; IN_PLACE=0; SNAPSHOT="latest"; ASSUME_YES=0; DRY_RUN=""
+INCLUDE=""; SUBJECT=""
+
+usage() { awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit "${1:-0}"; }
+
+CMD=""
+while (( $# )); do
+  case "$1" in
+    list|files|immich|nextcloud|db) [[ -z "$CMD" ]] && CMD="$1" || SUBJECT="$1"; shift ;;
+    -t|--target)   TARGET="$2"; shift 2 ;;
+    --in-place)    IN_PLACE=1; shift ;;
+    -s|--snapshot) SNAPSHOT="$2"; shift 2 ;;
+    --include)     INCLUDE="$2"; shift 2 ;;
+    -y|--yes)      ASSUME_YES=1; shift ;;
+    -n|--dry-run)  DRY_RUN=1; shift ;;
+    -c|--config)   CONFIG_FILE="$2"; shift 2 ;;
+    -h|--help)     usage 0 ;;
+    *) err "unknown argument: $1"; usage 1 ;;
+  esac
+done
+[[ -n "$CMD" ]] || usage 1
+
+load_config
+trap shred_runtime_secrets EXIT
+resolve_secrets
+
+RESTORE_ROOT="${RESTORE_ROOT:-/var/lib/s3-backup/restore}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+
+# ---------------------------------------------------------------------------
+
+# Restoring over live data while the service is writing to it produces a
+# corrupt mixture of old and new. Refuse rather than warn.
+require_stopped() {
+  local svc="$1" c running=() candidates=()
+  case "$svc" in
+    immich)    candidates=("$IMMICH_DB_CONTAINER") ;;
+    nextcloud) candidates=("$NEXTCLOUD_APP_CONTAINER" "$NEXTCLOUD_DB_CONTAINER") ;;
+  esac
+  for c in "${candidates[@]}"; do
+    container_running "$c" && running+=("$c")
+  done
+  (( ${#running[@]} == 0 )) && return 0
+  err "--in-place refused: these containers are still running: ${running[*]}"
+  err "Stop the stack first (docker compose down), then re-run."
+  die "refusing to restore over live data"
+}
+
+confirm_in_place() {
+  local what="$1"
+  (( ASSUME_YES )) && return 0
+  [[ -t 0 ]] || die "--in-place needs --yes when stdin is not a terminal"
+  warn "About to overwrite LIVE data: $what"
+  printf 'Type the word RESTORE to continue: ' >&2
+  local answer; read -r answer
+  [[ "$answer" == "RESTORE" ]] || die "aborted"
+}
+
+# Where this restore writes, and the mount that makes it writable.
+resolve_target() {
+  local default_sub="$1"
+  if (( IN_PLACE )); then
+    TARGET="/"
+  elif [[ -z "$TARGET" ]]; then
+    TARGET="${RESTORE_ROOT}/${STAMP}-${default_sub}"
+  fi
+  (( IN_PLACE )) || mkdir -p "$TARGET"
+}
+
+# ---------------------------------------------------------------------------
+
+cmd_list() {
+  info "restic snapshots in ${RESTIC_REPOSITORY}"
+  RESTIC_MOUNTS=()
+  restic_run snapshots --host "$(hostname -s)" || die "cannot read the repository"
+
+  if [[ "$IMMICH_ENABLED" == "1" ]]; then
+    echo
+    info "Immich mirror in S3"
+    IMMICH_MOUNTS=()
+    local b c; read -r b c <<<"$(immich_remote_size)"
+    printf '  %s across %s objects at s3://%s/%s\n' "$(human "$b")" "$c" "$S3_BUCKET" "$IMMICH_PREFIX"
+    rclone_run lsd "s3:${S3_BUCKET}/${IMMICH_PREFIX}" 2>/dev/null | sed 's/^/  /' || true
+  fi
+}
+
+cmd_files() {
+  [[ -n "$INCLUDE" ]] || die "files needs --include PATTERN (for example --include '*/files/Documents/*')"
+  (( IN_PLACE )) && die "--in-place is not supported for 'files': restore to a directory, then copy back deliberately"
+  resolve_target files
+
+  info "restoring files matching '$INCLUDE' from snapshot $SNAPSHOT"
+  info "  into $TARGET"
+  RESTIC_MOUNTS=(-v "${TARGET}:${TARGET}")
+  restic_run restore "$SNAPSHOT" --host "$(hostname -s)" \
+    --include "$INCLUDE" --target "$TARGET" ${DRY_RUN:+--dry-run} \
+    || die "restic restore failed"
+  [[ -n "$DRY_RUN" ]] && return 0
+  info "restored:"
+  find "$TARGET" -type f | head -50 | sed 's/^/  /'
+  local n; n="$(find "$TARGET" -type f | wc -l)"
+  (( n > 50 )) && info "  ... and $(( n - 50 )) more"
+  (( n > 0 )) || warn "nothing matched '$INCLUDE' in snapshot $SNAPSHOT"
+}
+
+cmd_nextcloud() {
+  [[ "$NEXTCLOUD_ENABLED" == "1" ]] || die "NEXTCLOUD_ENABLED=0 in $CONFIG_FILE"
+  local paths=("$NEXTCLOUD_DATA_DIR")
+  [[ -n "${NEXTCLOUD_CONFIG_DIR:-}" ]] && paths+=("$NEXTCLOUD_CONFIG_DIR")
+
+  local p
+  resolve_target nextcloud      # sets TARGET to "/" when --in-place
+  if (( IN_PLACE )); then
+    require_stopped nextcloud
+    confirm_in_place "${paths[*]}"
+    # Mount each live path rw at its own location; restic writes absolute
+    # snapshot paths, so --target / lands them back where they came from.
+    RESTIC_MOUNTS=()
+    for p in "${paths[@]}"; do RESTIC_MOUNTS+=(-v "${p}:${p}"); done
+  else
+    RESTIC_MOUNTS=(-v "${TARGET}:${TARGET}")
+  fi
+
+  info "restoring Nextcloud data and config from snapshot $SNAPSHOT into $TARGET"
+  local includes=() p
+  for p in "${paths[@]}"; do includes+=(--include "$p"); done
+  restic_run restore "$SNAPSHOT" --host "$(hostname -s)" \
+    "${includes[@]}" --target "$TARGET" ${DRY_RUN:+--dry-run} \
+    || die "restic restore failed"
+
+  [[ -n "$DRY_RUN" ]] && return 0
+  cat <<EOF
+
+Next, for a real recovery:
+  sudo chown -R 33:33 ${NEXTCLOUD_DATA_DIR}      # 33 = www-data on the official image
+  docker compose up -d
+  docker exec -u ${NEXTCLOUD_OCC_USER} ${NEXTCLOUD_APP_CONTAINER} php ${NEXTCLOUD_OCC_PATH} maintenance:mode --off
+  docker exec -u ${NEXTCLOUD_OCC_USER} ${NEXTCLOUD_APP_CONTAINER} php ${NEXTCLOUD_OCC_PATH} files:scan --all
+  docker exec -u ${NEXTCLOUD_OCC_USER} ${NEXTCLOUD_APP_CONTAINER} php ${NEXTCLOUD_OCC_PATH} maintenance:data-fingerprint
+
+The database is restored separately: s3-backup-restore db nextcloud
+EOF
+}
+
+cmd_immich() {
+  [[ "$IMMICH_ENABLED" == "1" ]] || die "IMMICH_ENABLED=0 in $CONFIG_FILE"
+
+  local dest
+  if (( IN_PLACE )); then
+    require_stopped immich
+    confirm_in_place "$IMMICH_UPLOAD_LOCATION"
+    dest="$IMMICH_UPLOAD_LOCATION"
+  else
+    resolve_target immich
+    dest="$TARGET"
+  fi
+  [[ -d "$dest" ]] || mkdir -p "$dest"
+  IMMICH_MOUNTS=(-v "${dest}:${dest}")
+
+  # copy, never sync: sync would delete anything already in a half-restored
+  # target that is not in the mirror.
+  info "restoring Immich originals into $dest"
+  rclone_run copy "s3:${S3_BUCKET}/${IMMICH_PREFIX}" "$dest" \
+    --transfers "$RCLONE_TRANSFERS" --checkers "$RCLONE_CHECKERS" \
+    --fast-list --stats 30s --stats-one-line --log-level INFO \
+    ${DRY_RUN:+--dry-run} \
+    || die "rclone copy failed"
+
+  [[ -n "$DRY_RUN" ]] && return 0
+  cat <<EOF
+
+Next, for a real recovery:
+  sudo chown -R 1000:1000 ${dest}     # match whatever your Immich compose runs as
+  docker compose up -d
+
+The database is restored separately: s3-backup-restore db immich
+EOF
+}
+
+cmd_db() {
+  local svc="${SUBJECT:-}"
+  case "$svc" in
+    immich|nextcloud) ;;
+    *) die "db needs a service: s3-backup-restore db immich|nextcloud" ;;
+  esac
+  (( IN_PLACE )) && die "--in-place is not supported for 'db'; see the printed procedure"
+  resolve_target "db-$svc"
+
+  info "restoring the newest ${svc} dump from snapshot $SNAPSHOT into $TARGET"
+  RESTIC_MOUNTS=(-v "${TARGET}:${TARGET}")
+  restic_run restore "$SNAPSHOT" --host "$(hostname -s)" \
+    --include "${STAGING_DIR}/${svc}-db-*.sql.gz" --target "$TARGET" ${DRY_RUN:+--dry-run} \
+    || die "restic restore failed"
+  [[ -n "$DRY_RUN" ]] && return 0
+
+  local dump
+  dump="$(find "$TARGET" -name "${svc}-db-*.sql.gz" | sort | tail -1)"
+  [[ -n "$dump" ]] || die "no ${svc} dump found in snapshot $SNAPSHOT"
+
+  gzip -t "$dump" || die "restored dump fails its gzip integrity check: $dump"
+  zcat "$dump" | tail -5 | grep -qiE 'dump complete|Dump completed on' \
+    || die "restored dump has no completion trailer; it was truncated: $dump"
+  info "verified $(basename "$dump") ($(human "$(stat -c %s "$dump")"))"
+
+  if [[ "$svc" == "immich" ]]; then
+    cat <<EOF
+
+To load it. The volume wipe is required: restoring over an existing database
+leaves a mix of old and new rows.
+
+  cd /path/to/immich
+  docker compose down -v
+  docker compose pull && docker compose create
+  docker start ${IMMICH_DB_CONTAINER}
+  sleep 15
+  gunzip -c ${dump} \\
+    | sed "s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g" \\
+    | docker exec -i ${IMMICH_DB_CONTAINER} psql --username=postgres --dbname=postgres
+  docker compose up -d
+
+The sed is not optional: it rewrites the dump's search_path reset so the
+vector extension resolves during restore.
+EOF
+  elif [[ "$NEXTCLOUD_DB_ENGINE" == "mysql" ]]; then
+    cat <<EOF
+
+To load it:
+
+  docker compose up -d ${NEXTCLOUD_DB_CONTAINER}
+  sleep 20
+  docker exec -i ${NEXTCLOUD_DB_CONTAINER} sh -c 'mysql -u root -p"\$MYSQL_ROOT_PASSWORD" -e "DROP DATABASE IF EXISTS nextcloud; CREATE DATABASE nextcloud CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"'
+  gunzip -c ${dump} | docker exec -i ${NEXTCLOUD_DB_CONTAINER} sh -c 'mysql -u root -p"\$MYSQL_ROOT_PASSWORD"'
+EOF
+  else
+    cat <<EOF
+
+To load it:
+
+  docker compose up -d ${NEXTCLOUD_DB_CONTAINER}
+  sleep 20
+  gunzip -c ${dump} | docker exec -i ${NEXTCLOUD_DB_CONTAINER} sh -c 'PGPASSWORD="\$POSTGRES_PASSWORD" psql -U "\$POSTGRES_USER" -d "\$POSTGRES_DB"'
+EOF
+  fi
+}
+
+# ---------------------------------------------------------------------------
+
+[[ -n "$DRY_RUN" ]] && warn "DRY RUN - nothing will be written"
+
+case "$CMD" in
+  list)      cmd_list ;;
+  files)     cmd_files ;;
+  nextcloud) cmd_nextcloud ;;
+  immich)    cmd_immich ;;
+  db)        cmd_db ;;
+esac
+
+[[ "$CMD" == "list" || -n "$DRY_RUN" ]] || info "restore complete"

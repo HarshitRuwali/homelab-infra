@@ -194,7 +194,43 @@ case "$cmd" in
         check)     echo "no errors were found" ;;
         snapshots) echo "[]" ;;
         stats)     echo "Total Size: 1.234 GiB" ;;
-        restore)   echo "restored" ;;
+        restore)
+          # Materialise a plausible dump into --target so the caller's
+          # verification path is genuinely exercised.
+          tgt=""; inc=""
+          while (( $# )); do
+            case "$1" in --target) tgt="$2"; shift 2 ;; --include) inc="$2"; shift 2 ;; *) shift ;; esac
+          done
+          if [[ -n "$tgt" && "$inc" == *.sql.gz ]]; then
+            svc=immich; [[ "$inc" == *nextcloud* ]] && svc=nextcloud
+            kind=postgres; [[ "$svc" == nextcloud ]] && kind=mysql
+            d="${tgt%/}/var/lib/s3-backup/staging"
+            mkdir -p "$d"
+            if [[ -n "${FAKE_RESTORE_CORRUPT:-}" ]]; then
+              # A dump that is not valid gzip at all, to exercise the caller's
+              # integrity check rather than its happy path.
+              echo "this is not gzip" > "${d}/${svc}-db-20260101T000000Z.sql.gz"
+              echo "restored"; exit 0
+            fi
+            if [[ -n "${FAKE_RESTORE_TRUNCATED:-}" ]]; then
+              # Valid gzip, but cut off before the completion trailer: the
+              # failure mode that silently produces an unusable backup.
+              { echo "-- fake ${svc} dump"; echo "INSERT INTO t VALUES (1, 'x');"; } \
+                | gzip -6 > "${d}/${svc}-db-20260101T000000Z.sql.gz"
+              echo "restored"; exit 0
+            fi
+            { echo "-- fake ${svc} dump"
+              for i in $(seq 1 200); do
+                echo "INSERT INTO t VALUES ($i, '$(head -c 96 /dev/urandom | base64 -w0)');"
+              done
+              if [[ "$kind" == postgres ]]; then echo "-- PostgreSQL database cluster dump complete"
+              else echo "-- Dump completed on $(date)"; fi
+            } | gzip -6 > "${d}/${svc}-db-20260101T000000Z.sql.gz"
+          elif [[ -n "$tgt" && -n "$inc" ]]; then
+            mkdir -p "${tgt%/}/restored"
+            echo "content" > "${tgt%/}/restored/file.txt"
+          fi
+          echo "restored" ;;
         *)         echo "fake restic: $sub" ;;
       esac
       exit 0

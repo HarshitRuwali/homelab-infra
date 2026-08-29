@@ -257,6 +257,37 @@ Canonical briefing. Facts only.
   elsewhere in bin/lib/*.sh and bin/s3-backup*; none found. These were the
   only two occurrences.
 
+## [PROGRESS - restore capability]
+
+- 2026-08-29T07:20Z [USER] Asked for restore capability. Gap: the repo could
+  back up and could VERIFY restores (s3-backup-restore-drill, which restores
+  into throwaway containers and discards the result), but performing a real
+  restore meant hand-running the long `docker run` commands in docs/restore.md.
+- 2026-08-29T07:30Z [CODE] Added `bin/s3-backup-restore` with subcommands
+  list / files / immich / nextcloud / db. Safety model, chosen deliberately:
+  restores default to a fresh timestamped dir under /var/lib/s3-backup/restore
+  and never touch live data; `--in-place` is opt-in, refuses while the
+  service's containers are running (restoring under a live service yields a
+  corrupt old/new mixture), and requires a typed RESTORE confirmation or
+  --yes. `files` and `db` have no --in-place at all.
+- 2026-08-29T07:32Z [ASSUMPTION] Loading a DB dump into a live service stays
+  MANUAL. Immich's documented procedure requires `docker compose down -v`
+  first, and the search_path sed; a script that gets either wrong is
+  unrecoverable. `db` restores, verifies (gzip integrity AND completion
+  trailer) and prints the exact commands with real container names and paths
+  substituted. Stated as a deliberate boundary in --help and docs/restore.md.
+- 2026-08-29T07:35Z [CODE] Immich restore uses `rclone copy`, never `sync`: a
+  sync into a half-restored target would delete anything not in the mirror.
+- 2026-08-29T07:40Z [TOOL] Verified against REAL docker, not just the mock,
+  because the mock cannot catch malformed `docker run` invocations (see the
+  "invalid reference format" entry). All three mount-array paths (db, files,
+  immich) reach real restic/rclone against real S3 and fail only on fake
+  credentials; zero "invalid reference format". Mutation-tested: removing the
+  running-container guard -> 3 failures, removing the gzip check -> 1.
+- 2026-08-29T07:45Z [CODE] docs/restore.md rewritten around the command
+  (scenarios B and C no longer hand-run docker); README and operations.md
+  reconciled. Suite: 146/19/10/19, shellcheck clean.
+
 ## [OUTCOMES]
 
 - 2026-08-23T09:35Z [TOOL] Added `tests/docs-consistency-test.sh` (8 checks:
