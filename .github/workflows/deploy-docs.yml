@@ -64,7 +64,13 @@ jobs:
       - name: Build docs
         run: mkdocs build --strict
 
+      # Skipped on pull requests: nothing in the PR path consumes its outputs
+      # (`site_url` is hardcoded in mkdocs.yml), and it fails with "Get Pages
+      # site failed" on any repository where Pages has not been enabled yet.
+      # Without this guard a PR that only touches Markdown goes red after
+      # `mkdocs build --strict` has already passed.
       - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
 
       - name: Upload GitHub Pages artifact
