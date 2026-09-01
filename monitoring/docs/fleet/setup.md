@@ -33,8 +33,8 @@ the LAN with every guest.
 ## Clone and create the inventory
 
 ```bash
-git clone git@github.com:HarshitRuwali/monitorting-stack.git
-cd monitorting-stack/ansible
+git clone git@github.com:HarshitRuwali/homelab-infra.git
+cd homelab-infra/ansible
 cp inventory/hosts.example.yml inventory/hosts.local.yml
 ```
 

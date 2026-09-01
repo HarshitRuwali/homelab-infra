@@ -8,6 +8,7 @@ docs, and tooling inside its subdirectory.
 | `memory/` | `HarshitRuwali/open-memory-stack` | Memory service, API service, and MCP server |
 | `s3-backup/` | `HarshitRuwali/s3-backup-automation` | S3/Glacier backup and restore automation |
 | `monitoring/` | `HarshitRuwali/monitorting-stack` | Prometheus, Loki, Grafana, and Alloy collector |
+| `ansible/` | `HarshitRuwali/monitorting-stack` | Fleet automation: playbooks, roles, and inventory |
 
 ## History
 

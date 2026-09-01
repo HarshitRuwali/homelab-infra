@@ -9,7 +9,7 @@
 
 - name: Install the committed alerting provisioning files
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../../grafana/provisioning/alerting/{{ item }}"
+    src: "{{ playbook_dir }}/../../monitoring/grafana/provisioning/alerting/{{ item }}"
     dest: "{{ grafana_alerting_dir }}/{{ item }}"
     owner: root
     group: grafana

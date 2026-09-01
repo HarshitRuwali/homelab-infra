@@ -21,7 +21,7 @@
 
 - name: Install the dashboard provider config
   ansible.builtin.copy:
-    src: "{{ playbook_dir }}/../../grafana/provisioning/dashboards/dashboards.yml"
+    src: "{{ playbook_dir }}/../../monitoring/grafana/provisioning/dashboards/dashboards.yml"
     dest: "{{ grafana_provisioning_dashboards_dir }}/dashboards.yml"
     owner: root
     group: grafana
@@ -32,7 +32,7 @@
 
 - name: Find the dashboards committed to the repo
   ansible.builtin.find:
-    paths: "{{ playbook_dir }}/../../grafana/dashboards/{{ item }}"
+    paths: "{{ playbook_dir }}/../../monitoring/grafana/dashboards/{{ item }}"
     patterns: "*.json"
   loop: "{{ grafana_dashboard_dirs }}"
   register: gd_local

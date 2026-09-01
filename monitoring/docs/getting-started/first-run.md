@@ -14,7 +14,7 @@ You need, on the machine you will run from:
 - [x] An SSH key that reaches the fleet
 
 ```bash
-cd ~/Developer/monitorting-stack/ansible
+cd ~/Developer/homelab-infra/ansible
 ```
 
 !!! danger "Always `cd ansible` first"
