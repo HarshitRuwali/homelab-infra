@@ -5,14 +5,15 @@ site_description: >-
 site_author: Harshit Ruwali
 
 # Required for a correct sitemap.xml and canonical <link> tags. GitHub Pages
-# serves a project repo under /<repo>/, so the trailing path matters: without
+# serves a project repo under /<repo>/, and this site is published into a
+# subdirectory of it, so the trailing path matters: without
 # it every canonical URL points at the domain root and the sitemap is wrong.
 # Change this if you move the site behind your own domain.
-site_url: https://harshitruwali.github.io/open-memory-stack/
+site_url: https://harshitruwali.github.io/homelab-infra/memory/
 
-repo_url: https://github.com/HarshitRuwali/open-memory-stack
-repo_name: HarshitRuwali/open-memory-stack
-edit_uri: edit/master/docs/
+repo_url: https://github.com/HarshitRuwali/homelab-infra
+repo_name: HarshitRuwali/homelab-infra
+edit_uri: edit/master/memory/docs/
 
 # Serve locally without installing anything globally:
 #   uvx --with mkdocs-material mkdocs serve
@@ -96,7 +97,7 @@ extra_css:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/HarshitRuwali/open-memory-stack
+      link: https://github.com/HarshitRuwali/homelab-infra
 
 nav:
   - Home: index.md

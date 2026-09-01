@@ -22,7 +22,7 @@ Exit codes: `0` success, `1` failure, and a timeout is reported distinctly
 ## Cron
 
 ```cron
-0 1 * * * /path/to/open-memory-stack/scripts/ingest_daily.sh
+0 1 * * * /path/to/homelab-infra/memory/scripts/ingest_daily.sh
 ```
 
 No `cd` is needed — the script locates itself. Redirecting output is optional
@@ -42,7 +42,7 @@ Description=Open Memory Stack daily ingestion
 
 [Service]
 Type=oneshot
-ExecStart=/path/to/open-memory-stack/scripts/ingest_daily.sh
+ExecStart=/path/to/homelab-infra/memory/scripts/ingest_daily.sh
 ```
 
 ```ini

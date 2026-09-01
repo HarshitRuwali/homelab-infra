@@ -50,7 +50,7 @@ brew install ansible                            # macOS
 # Debian/Ubuntu: python3 -m venv ~/.venvs/ansible
 #                ~/.venvs/ansible/bin/pip install ansible
 
-cd ansible
+cd ansible                                      # from the repository root
 cp inventory/hosts.example.yml inventory/hosts.local.yml   # then edit it
 ansible-playbook playbooks/preflight.yml        # read-only checks
 ansible-playbook playbooks/site.yml             # everything, idempotent
@@ -163,8 +163,12 @@ cannot leave a silent gap in down-detection.
 
 ## Repo layout
 
+Paths below are relative to this directory, `monitoring/`. Fleet automation
+lives one level up at `ansible/` in the repository root, shared with the other
+stacks; every `cd ansible` in these docs means from the repository root.
+
 ```text
-ansible/                       Fleet automation
+../ansible/                    Fleet automation (repository root, not this stack)
   playbooks/site.yml             everything, in dependency order
   inventory/hosts.example.yml    template; hosts.local.yml is gitignored
   roles/                         alloy_collector, gpu_exporter, smart_metrics,
@@ -180,12 +184,12 @@ scripts/lxc-update.sh          Direct LXC update and config sync
 scripts/monitoring.sh          Docker Compose lifecycle
 docker-compose.yml             Central stack
 docker-compose.collector.yml   Collector-only stack
-docs/                          MkDocs source (mkdocs.yml at the repo root)
+docs/                          MkDocs source (mkdocs.yml in this directory)
 docs/requirements.txt          Pinned MkDocs toolchain
 ```
 
 > [!CAUTION]
-> `ansible/inventory/hosts.local.yml` is gitignored and must stay that way.
+> `ansible/inventory/hosts.local.yml`, at the repository root, is gitignored and must stay that way.
 > This repository is public, and an inventory is a complete map of the estate:
 > ingest endpoint, internal addressing, valid usernames, and which box to hit
 > to blind the monitoring. `group_vars/all/vault.yml` is committed but

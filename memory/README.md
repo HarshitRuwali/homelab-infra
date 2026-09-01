@@ -4,7 +4,7 @@ Self-hosted semantic memory for AI applications and coding agents. PostgreSQL
 for structured metadata, Qdrant for vector search, and a FastAPI service as the
 only boundary anything else talks to.
 
-**📖 Documentation: <https://harshitruwali.github.io/open-memory-stack/>**
+**📖 Documentation: <https://harshitruwali.github.io/homelab-infra/memory/>**
 
 ## Why
 
@@ -28,7 +28,7 @@ You also need an embedding model reachable at `AI_VM_HOST:EMBED_PORT` exposing
 llama.cpp's native `POST /embedding` — the stack embeds nothing itself. Without
 one, `/health` is green but every write returns 502.
 
-Full walkthrough: [Getting started](https://harshitruwali.github.io/open-memory-stack/getting-started/).
+Full walkthrough: [Getting started](https://harshitruwali.github.io/homelab-infra/memory/getting-started/).
 
 ## What's here
 
@@ -49,7 +49,7 @@ POST   /embed           POST /memory/search   DELETE /memory/delete
 POST   /llm/infer
 ```
 
-Details in the [API reference](https://harshitruwali.github.io/open-memory-stack/api/).
+Details in the [API reference](https://harshitruwali.github.io/homelab-infra/memory/api/).
 
 ## Multi-agent scoping
 
@@ -58,7 +58,7 @@ two agents storing the same `file_path` do not clobber each other. Requests that
 omit a scope get the sentinel `("legacy", "default")` and keep the original
 pre-scope chunk IDs, so nothing had to be re-embedded when scoping was added.
 
-See [Memory scoping](https://harshitruwali.github.io/open-memory-stack/architecture/scoping/).
+See [Memory scoping](https://harshitruwali.github.io/homelab-infra/memory/architecture/scoping/).
 
 ## Development
 

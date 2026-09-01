@@ -1,0 +1,127 @@
+name: Deploy docs
+
+# Builds both MkDocs sites in this repository and publishes them to the single
+# GitHub Pages site, each under its own subdirectory:
+#
+#   /homelab-infra/             landing page, docs-landing/index.html
+#   /homelab-infra/memory/      built from memory/mkdocs.yml
+#   /homelab-infra/monitoring/  built from monitoring/mkdocs.yml
+#
+# A repository gets exactly one Pages site, which is why the two stacks share
+# this workflow instead of keeping the separate ones they had as standalone
+# repositories. Both `site_url` values point at the subdirectory above, so
+# canonical links and sitemap.xml stay correct.
+#
+# Docs only: it builds Markdown into static HTML and uploads it. It never
+# starts a stack, never runs a playbook, never reaches a datastore or a model
+# host, and uses no repository secret.
+#
+# PREREQUISITE, one time, cannot be automated:
+#   Settings -> Pages -> Source: GitHub Actions
+# Creating a Pages site is an admin-level API call and GITHUB_TOKEN cannot make
+# it, regardless of the `pages: write` permission below. `configure-pages` with
+# `enablement: true` does not work around this either: the create call comes
+# back "Resource not accessible by integration". Only a PAT would do it, and
+# this workflow deliberately uses no secret. Until the setting is flipped by
+# hand, `build` fails at "Configure GitHub Pages" with "Get Pages site failed".
+
+on:
+  pull_request:
+    paths:
+      - memory/docs/**
+      - memory/mkdocs.yml
+      - monitoring/docs/**
+      - monitoring/mkdocs.yml
+      - docs-landing/**
+      - .github/workflows/deploy-docs.yml
+  push:
+    branches:
+      - master
+    paths:
+      - memory/docs/**
+      - memory/mkdocs.yml
+      - monitoring/docs/**
+      - monitoring/mkdocs.yml
+      - docs-landing/**
+      - .github/workflows/deploy-docs.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build MkDocs sites
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            memory/docs/requirements.txt
+            monitoring/docs/requirements.txt
+
+      # Both files pin the identical set (mkdocs 1.6.1, mkdocs-material 9.7.7,
+      # pymdown-extensions 11.0.1, markdown 3.10.3), so one environment serves
+      # both builds. pip resolves them together and fails loudly if the two
+      # files ever drift into a genuine conflict, which is the wanted signal.
+      - name: Install docs dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r memory/docs/requirements.txt \
+                                -r monitoring/docs/requirements.txt
+
+      # --strict turns broken internal links and pages missing from the nav
+      # into build failures rather than warnings nobody reads.
+      #
+      # -d is resolved relative to the config file, so ../site/<name> lands
+      # both builds in one tree at the repository root for a single upload.
+      - name: Build the memory docs
+        run: mkdocs build --strict -f memory/mkdocs.yml -d ../site/memory
+
+      - name: Build the monitoring docs
+        run: mkdocs build --strict -f monitoring/mkdocs.yml -d ../site/monitoring
+
+      # Plain static file, no MkDocs build: it only has to link onward to the
+      # two sites, and giving it a third theme install would be waste.
+      - name: Add the landing page
+        run: cp docs-landing/index.html site/index.html
+
+      # Skipped on pull requests: nothing in the PR path consumes its outputs
+      # (both `site_url` values are hardcoded in the mkdocs.yml files), and it
+      # fails with "Get Pages site failed" on any repository where Pages has
+      # not been enabled yet. Without this guard a PR that only touches
+      # Markdown goes red after `mkdocs build --strict` has already passed.
+      - name: Configure GitHub Pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
+
+      - name: Upload GitHub Pages artifact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy artifact
+        id: deployment
+        uses: actions/deploy-pages@v4

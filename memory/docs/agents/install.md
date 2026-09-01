@@ -56,7 +56,7 @@ interchangeable — the three blocks below differ by more than indentation.
       --env OPEN_MEMORY_API_URL=http://localhost:8080 \
       --env OPEN_MEMORY_AGENT_ID=claude-code \
       --env OPEN_MEMORY_PROJECT=open-memory-stack \
-      -- uv run --directory /path/to/open-memory-stack/mcp-server open-memory-mcp
+      -- uv run --directory /path/to/homelab-infra/memory/mcp-server open-memory-mcp
     ```
 
     Or by hand, in `~/.claude.json` (user scope) or `.mcp.json` at the project
@@ -71,7 +71,7 @@ interchangeable — the three blocks below differ by more than indentation.
           "args": [
             "run",
             "--directory",
-            "/path/to/open-memory-stack/mcp-server",
+            "/path/to/homelab-infra/memory/mcp-server",
             "open-memory-mcp"
           ],
           "env": {
@@ -108,7 +108,7 @@ interchangeable — the three blocks below differ by more than indentation.
             "uv",
             "run",
             "--directory",
-            "/path/to/open-memory-stack/mcp-server",
+            "/path/to/homelab-infra/memory/mcp-server",
             "open-memory-mcp"
           ],
           "enabled": true,
@@ -129,7 +129,7 @@ interchangeable — the three blocks below differ by more than indentation.
     ```toml
     [mcp_servers.open-memory]
     command = "uv"
-    args = ["run", "--directory", "/path/to/open-memory-stack/mcp-server", "open-memory-mcp"]
+    args = ["run", "--directory", "/path/to/homelab-infra/memory/mcp-server", "open-memory-mcp"]
 
     [mcp_servers.open-memory.env]
     OPEN_MEMORY_API_URL = "http://localhost:8080"
@@ -142,7 +142,7 @@ module directly:
 
 ```json
 {
-  "command": "/path/to/open-memory-stack/mcp-server/.venv/bin/python",
+  "command": "/path/to/homelab-infra/memory/mcp-server/.venv/bin/python",
   "args": ["-m", "open_memory_mcp.server"]
 }
 ```

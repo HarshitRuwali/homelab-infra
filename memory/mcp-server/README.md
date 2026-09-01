@@ -8,7 +8,7 @@ It is a thin HTTP client — it holds no state and talks only to the FastAPI
 service over `OPEN_MEMORY_API_URL`.
 
 Full documentation:
-<https://harshitruwali.github.io/open-memory-stack/agents/>
+<https://harshitruwali.github.io/homelab-infra/memory/agents/>
 
 > **Note:** `.env.example` documents the environment variables but is **not
 > loaded** by the server. Pass them through the MCP client's `env` block.
@@ -48,7 +48,7 @@ claude mcp add open-memory \
   --env OPEN_MEMORY_API_URL=http://localhost:8080 \
   --env OPEN_MEMORY_AGENT_ID=claude-code \
   --env OPEN_MEMORY_PROJECT=open-memory-stack \
-  -- uv run --directory /path/to/open-memory-stack/mcp-server open-memory-mcp
+  -- uv run --directory /path/to/homelab-infra/memory/mcp-server open-memory-mcp
 ```
 
 Or write it by hand. In `~/.claude.json` (user scope) or `.mcp.json` at the
@@ -63,7 +63,7 @@ project root (shared scope):
       "args": [
         "run",
         "--directory",
-        "/path/to/open-memory-stack/mcp-server",
+        "/path/to/homelab-infra/memory/mcp-server",
         "open-memory-mcp"
       ],
       "env": {
@@ -83,7 +83,7 @@ Without `uv`, point `command` at the venv interpreter instead:
   "mcpServers": {
     "open-memory": {
       "type": "stdio",
-      "command": "/path/to/open-memory-stack/mcp-server/.venv/bin/python",
+      "command": "/path/to/homelab-infra/memory/mcp-server/.venv/bin/python",
       "args": ["-m", "open_memory_mcp.server"],
       "env": {
         "OPEN_MEMORY_API_URL": "http://localhost:8080",
@@ -113,7 +113,7 @@ single argv array, and the server must be explicitly `enabled`:
         "uv",
         "run",
         "--directory",
-        "/path/to/open-memory-stack/mcp-server",
+        "/path/to/homelab-infra/memory/mcp-server",
         "open-memory-mcp"
       ],
       "enabled": true,
@@ -134,7 +134,7 @@ Codex reads `~/.codex/config.toml`:
 ```toml
 [mcp_servers.open-memory]
 command = "uv"
-args = ["run", "--directory", "/path/to/open-memory-stack/mcp-server", "open-memory-mcp"]
+args = ["run", "--directory", "/path/to/homelab-infra/memory/mcp-server", "open-memory-mcp"]
 
 [mcp_servers.open-memory.env]
 OPEN_MEMORY_API_URL = "http://localhost:8080"

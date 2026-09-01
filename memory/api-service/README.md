@@ -3,7 +3,7 @@
 Memory CRUD, semantic search, and embedding / LLM proxying for the
 [Open Memory Stack](../README.md).
 
-Full documentation: <https://harshitruwali.github.io/open-memory-stack/>
+Full documentation: <https://harshitruwali.github.io/homelab-infra/memory/>
 
 ## Local development
 
@@ -47,7 +47,7 @@ pre-multi-agent chunk ID byte-identical, so Qdrant points stay bound to their
 Postgres rows and nothing needed re-embedding. Do not "simplify" it.
 
 Details, including the additive migration and the Qdrant payload backfill:
-[Memory scoping](https://harshitruwali.github.io/open-memory-stack/architecture/scoping/).
+[Memory scoping](https://harshitruwali.github.io/homelab-infra/memory/architecture/scoping/).
 
 ### `VECTOR_DIM` must match the live collection
 
@@ -61,7 +61,7 @@ reports `configured_vector_dim` against `collection_vector_dim`, and
 > this directory's `.env` is an API pointed at datastores that already exist
 > elsewhere. Do not copy values between them.
 
-See [Vector dimensions](https://harshitruwali.github.io/open-memory-stack/operations/vector-dimensions/).
+See [Vector dimensions](https://harshitruwali.github.io/homelab-infra/memory/operations/vector-dimensions/).
 
 ## Migrations
 
@@ -70,4 +70,4 @@ database migrates itself. Run it by hand only for local development.
 
 `0002`'s downgrade is lossy when two scopes share a `file_path` and refuses to
 run without `ALLOW_LOSSY_DOWNGRADE=1`. See
-[Migrations](https://harshitruwali.github.io/open-memory-stack/operations/migrations/).
+[Migrations](https://harshitruwali.github.io/homelab-infra/memory/operations/migrations/).
