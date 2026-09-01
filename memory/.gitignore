@@ -1,0 +1,38 @@
+# Secrets and local state
+.env
+.envrc
+
+# Python
+__pycache__/
+*.py[codz]
+*.so
+.venv/
+.eggs/
+*.egg-info/
+dist/
+build/
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# MkDocs output
+/site/
+
+# Runtime data
+logs/
+memory-service/data/
+api-service/logs/
+
+# Tailscale certs (private keys)
+*.ts.net.crt
+*.ts.net.key
+
+# OS
+.DS_Store
+Thumbs.db
+
+.agent/
+

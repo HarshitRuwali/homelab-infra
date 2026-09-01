@@ -1,0 +1,62 @@
+/* Diagram and nav polish on top of mkdocs-material.
+ *
+ * Mermaid renders fine out of the box, but Material's stock diagram palette is
+ * neutral grey and ignores the teal scheme the rest of the site uses, so a
+ * flowchart reads as undifferentiated boxes. Material exposes the diagram
+ * internals as --md-mermaid-* custom properties; setting them per colour
+ * scheme is the supported way to restyle diagrams. Do not restyle by targeting
+ * Mermaid's generated SVG classes directly except where noted below: those
+ * class names are not stable across Mermaid releases.
+ */
+
+:root {
+  /* Match body copy rather than Mermaid's default sans stack. */
+  --md-mermaid-font-family: var(--md-text-font-family), -apple-system, sans-serif;
+}
+
+[data-md-color-scheme="default"] {
+  --md-mermaid-node-bg-color: #e0f2f1;    /* teal 50  */
+  --md-mermaid-node-fg-color: #004d40;    /* teal 900 */
+  --md-mermaid-edge-color: #26a69a;       /* teal 400 */
+  --md-mermaid-label-bg-color: var(--md-default-bg-color);
+  --md-mermaid-label-fg-color: #00695c;   /* teal 800 */
+}
+
+[data-md-color-scheme="slate"] {
+  /* Translucent so the node sits on the page background instead of punching a
+   * lighter rectangle into it, which is what a solid fill looks like on slate. */
+  --md-mermaid-node-bg-color: hsla(174, 45%, 32%, 0.35);
+  --md-mermaid-node-fg-color: #b2dfdb;    /* teal 100 */
+  --md-mermaid-edge-color: #4db6ac;       /* teal 300 */
+  --md-mermaid-label-bg-color: var(--md-default-bg-color);
+  --md-mermaid-label-fg-color: #80cbc4;   /* teal 200 */
+}
+
+/* Give diagrams room; they sit flush against body copy by default. */
+.mermaid {
+  margin: 1.8em auto;
+}
+
+/* Subgraph containers. Material hard-codes the cluster fill in its own
+ * stylesheet with !important, so overriding it needs the same weight. `rx` is
+ * an SVG geometry attribute that CSS can set, which is how the corners round.
+ * .cluster is the one Mermaid class stable enough to rely on here. */
+.mermaid .cluster rect {
+  fill: var(--md-code-bg-color) !important;
+  stroke: var(--md-mermaid-edge-color) !important;
+  stroke-width: 1px !important;
+  rx: 6px;
+}
+
+/* The subgraph's own title, which otherwise inherits node colouring and
+ * competes with the node labels inside it. */
+.mermaid .cluster-label .nodeLabel {
+  font-weight: 600;
+  fill: var(--md-mermaid-label-fg-color);
+}
+
+/* The roadmap page carries wide pre-formatted ASCII diagrams from before this
+ * site existed. Let them scroll in place rather than stretching the page. */
+.md-typeset pre > code {
+  overflow-x: auto;
+}
