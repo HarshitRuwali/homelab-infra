@@ -1,0 +1,320 @@
+apiVersion: 1
+
+# Physical disk health, from roles/smart_metrics.
+#
+# EVERY RULE HERE USES noDataState: OK, AND THAT IS NOT LAZINESS. Only hosts in
+# the `metal` group can produce these series at all: an LXC has no /dev nodes,
+# a KVM guest's virtual disk reports no SMART capability, and an SD card does
+# not implement SMART. "No data" is therefore the correct, permanent, healthy
+# state for ten of the eleven monitored hosts, and anything else would page
+# forever. The exporter going silent on a host that DOES have disks is caught
+# by `fleet-smart-collector-stale` below instead, which is the honest way to
+# detect that.
+#
+# Thresholds are deliberately asymmetric between the two failure modes:
+# a spinning disk dies by growing bad sectors, an SSD dies by wearing out.
+
+groups:
+  - orgId: 1
+    name: storage
+    folder: Fleet
+    interval: 5m
+    rules:
+
+      # ---------------------------------------------------------------
+      - uid: fleet-smart-health-failed
+        title: SMART Overall Health FAILED
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: A disk's own SMART self-assessment has failed. Replace it.
+          runbook: "ssh <host> 'smartctl -a <device>'. Back up now; this is the drive telling you it is done."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: min by (host, device, model, serial) (fleet_smart_device_health_ok)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+
+      # ---------------------------------------------------------------
+      # Pending sectors are sectors the drive could not READ and has not yet
+      # been able to relocate. Rated critical, above reallocated sectors,
+      # because the data in them is already unreadable rather than merely
+      # moved.
+      - uid: fleet-smart-pending-sectors
+        title: Disk Has Unreadable Pending Sectors
+        condition: C
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: A disk has sectors it cannot read and has not remapped.
+          runbook: "Back up this disk before doing anything else, then: smartctl -t long <device>"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max by (host, device, model, serial) (fleet_smart_pending_sectors)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # The classic leading indicator of a dying spinning disk. Any non-zero
+      # value is worth knowing about; a value that keeps climbing means order
+      # a replacement.
+      - uid: fleet-smart-reallocated-sectors
+        title: Disk Has Reallocated Sectors
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: A disk has remapped bad sectors. Watch whether the count grows.
+          runbook: "smartctl -A <device>. A stable count is tolerable; a rising one is a replacement."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max by (host, device, model, serial) (fleet_smart_reallocated_sectors)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # DELIBERATELY AN INCREASE, NOT AN ABSOLUTE THRESHOLD. CRC errors are a
+      # cumulative lifetime counter of SATA link faults, almost always a cable
+      # or backplane rather than the platters, and the count never resets. The
+      # HDD in this estate already carries 23 from some past event. `> 0` would
+      # therefore fire forever and be permanently ignored, which is the exact
+      # failure this repo's alerting pass was cleaning up. What matters is new
+      # errors appearing, meaning the link is degrading NOW.
+      - uid: fleet-smart-crc-errors-rising
+        title: Disk Link CRC Errors Rising
+        condition: C
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: New SATA link CRC errors in the last 24h. Suspect the cable, not the disk.
+          runbook: "Reseat or replace the SATA data cable. Confirm with: smartctl -A <device> | grep CRC"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 86400, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max by (host, device, model, serial) (increase(fleet_smart_crc_errors[24h]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-smart-nvme-wearout
+        title: NVMe Wear Approaching End of Life
+        condition: C
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: An NVMe drive has used over 85% of its rated write endurance.
+          runbook: "smartctl -A <device> | grep 'Percentage Used'. Plan a replacement; this is wear, not failure."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max by (host, device, model, serial) (fleet_smart_nvme_percentage_used_ratio)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.85]}
+
+      # ---------------------------------------------------------------
+      # Spare blocks are what an SSD uses to retire failing ones. Running out
+      # is the point at which it goes read-only without further warning, so
+      # this is critical where wear-out is only a warning.
+      - uid: fleet-smart-nvme-spare-low
+        title: NVMe Spare Blocks Nearly Exhausted
+        condition: C
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: An NVMe drive has under 10% spare blocks left.
+          runbook: "Replace this drive. At zero spare it will go read-only with no further warning."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: min by (host, device, model, serial) (fleet_smart_nvme_available_spare_ratio)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [0.10]}
+
+      # ---------------------------------------------------------------
+      # One threshold for both media types. 60 C is comfortably above a
+      # healthy idle for either (this estate idles at 33 C spinning, 35 C
+      # NVMe) but below the ~70 C where a consumer NVMe starts throttling.
+      - uid: fleet-smart-temperature-high
+        title: Disk Temperature High
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: A disk has been over 60 C for half an hour. Check airflow.
+          runbook: "Check chassis fans and dust. Sustained heat shortens disk life more than load does."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max by (host, device, model, serial) (fleet_smart_temperature_celsius)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [60]}
+
+      # ---------------------------------------------------------------
+      # The counterpart to noDataState: OK everywhere above. Because absent
+      # SMART series are normal fleet-wide, a host whose collector DIES would
+      # otherwise go quiet indistinguishably from a host that never had disks.
+      # This fires only where the timestamp series exists, i.e. only where
+      # collection has previously succeeded, so it cannot fire on the ten
+      # hosts that legitimately have nothing to report.
+      - uid: fleet-smart-collector-stale
+        title: SMART Collector Stale
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: Disk health has not been refreshed for over an hour on a host that has disks.
+          runbook: "systemctl status fleet-smart-metrics.timer; journalctl -u fleet-smart-metrics.service -n 50"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 7200, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: time() - max by (host) (fleet_smart_collection_timestamp_seconds)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [3600]}

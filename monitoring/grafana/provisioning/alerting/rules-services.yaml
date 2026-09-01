@@ -1,0 +1,145 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: services
+    folder: Fleet
+    interval: 1m
+    rules:
+
+      # ---------------------------------------------------------------
+      - uid: fleet-systemd-unit-failed
+        title: Systemd Unit Failed
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: A systemd unit is in the failed state.
+          runbook: "systemctl --failed; journalctl -u <unit> -n 100"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # `by (host, name)` keeps the unit name in the alert instance so
+              # the Matrix message says WHICH unit, not just which host.
+              #
+              # The exclusions are units that fail permanently and harmlessly.
+              # A unit that is failed and will stay failed produces one alert
+              # instance per evaluation forever; it is pure noise, and it
+              # trains you to ignore the rule that would have caught a real
+              # failure. Two were doing exactly that here:
+              #
+              #   openipmi.service                  on the central LXC. There
+              #     is no IPMI hardware inside a container, so it can only ever
+              #     fail. Same for anything else hardware-probing in a guest.
+              #   NetworkManager-wait-online.service on rpi4b. Times out at
+              #     boot when an interface comes up late; the network is fine
+              #     afterwards and the unit stays `failed` until reboot.
+              #
+              # Add to this list rather than silencing the rule: a Grafana
+              # silence expires and has to be renewed by hand, whereas an
+              # exclusion here is version-controlled and self-documenting.
+              expr: |
+                max by (host, name) (
+                  node_systemd_unit_state{state="failed",name!~"(systemd-.*|user@.*|.*-cleanup|openipmi|NetworkManager-wait-online|e2scrub_reap|apt-daily.*|man-db|logrotate)\\.service"} == 1
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-unattended-upgrades-errors
+        title: Unattended Upgrades Errors
+        condition: C
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: unattended-upgrades logged errors in the last hour.
+          runbook: 'Loki: {unit="unattended-upgrades.service"} |~ "(?i)(traceback|error)"'
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            # This one queries Loki, not Prometheus. Grafana-managed alerting
+            # handles a Loki datasource with the same A/B/C shape. Only
+            # possible because Unattended-Upgrade::SyslogEnable "true" puts
+            # every action in the journal, which Alloy already ships.
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum by (host) (
+                  count_over_time({unit="unattended-upgrades.service"} |~ `(?i)(traceback|^E: |error|could not|failed to)` [1h])
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # A unit that crashes and is restarted by systemd every few seconds
+      # spends most of its life in `active`, so fleet-systemd-unit-failed
+      # samples it as healthy and never fires. The restart COUNTER is the only
+      # honest view of it: the service is flapping, not failed.
+      - uid: fleet-systemd-unit-restart-loop
+        title: Systemd Unit Restart Loop
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: A systemd unit has restarted more than 5 times in 30 minutes.
+          runbook: "systemctl status <unit>; journalctl -u <unit> -n 100 --no-pager. Look for the first error, not the last restart."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, name) (
+                  increase(node_systemd_service_restart_total[30m])
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [5]}

@@ -1,0 +1,16 @@
+---
+# Deploy the committed Grafana dashboards to the central stack.
+#
+#   ansible-playbook playbooks/dashboards.yml
+#
+# Safe to run at any time: dashboard JSON is picked up by Grafana's file
+# provider within seconds, so this does NOT restart anything unless the
+# provider config itself changed. That makes it the cheap, boring way to push
+# a panel edit, as opposed to central-alerting.yml which always restarts
+# Grafana and briefly stops alert evaluation.
+
+- name: Deploy Grafana dashboards
+  hosts: central
+  become: true
+  roles:
+    - grafana_dashboards

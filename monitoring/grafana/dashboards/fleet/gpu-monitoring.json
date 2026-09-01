@@ -1,0 +1,185 @@
+{
+  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "description": "nvtop, as a dashboard. Gauges for the header numbers, the two utilisation and VRAM graphs nvtop scrolls, the process table showing which PID holds the memory, plus clocks and throttle reasons. The host picker is driven by GPU metrics, so it only offers hosts that actually have a GPU.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+{
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "The headline number nvtop shows. This is the fraction of time at least one kernel was resident, NOT how much of the GPU's compute is used: a tiny kernel pinning one SM reads 100%.",
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}, "overrides": []},
+      "gridPos": {"h": 6, "w": 4, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_utilization_gpu_ratio{host=\"$host\"} * 100", "legendFormat": "{{uuid}}", "refId": "A"}],
+      "title": "GPU Utilisation",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Alert fires above 95%: allocations start failing while utilisation and temperature still look healthy.",
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}, "overrides": []},
+      "gridPos": {"h": 6, "w": 4, "x": 4, "y": 0},
+      "id": 2,
+      "options": {"showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_memory_used_bytes{host=\"$host\"} / nvidia_smi_memory_total_bytes{host=\"$host\"} * 100", "legendFormat": "{{uuid}}", "refId": "A"}],
+      "title": "VRAM Used",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Yellow at 80 C, red at 87 C where NVIDIA parts begin hardware throttling.",
+      "fieldConfig": {"defaults": {"unit": "celsius", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 80}, {"color": "red", "value": 87}]}}, "overrides": []},
+      "gridPos": {"h": 6, "w": 4, "x": 8, "y": 0},
+      "id": 3,
+      "options": {"showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_temperature_gpu{host=\"$host\"}", "legendFormat": "{{uuid}}", "refId": "A"}],
+      "title": "Temperature",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Draw as a percentage of the enforced limit. At 100% the card is power-capped and clocks will drop; the Throttle Reasons panel below confirms it.",
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}, "overrides": []},
+      "gridPos": {"h": 6, "w": 4, "x": 12, "y": 0},
+      "id": 4,
+      "options": {"showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_power_draw_watts{host=\"$host\"} / nvidia_smi_power_limit_watts{host=\"$host\"} * 100", "legendFormat": "{{uuid}}", "refId": "A"}],
+      "title": "Power vs Limit",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Zero on an idle card is normal, not a fault: modern cards park the fan. Zero while hot is what the alert catches.",
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}, {"color": "green", "value": 30}, {"color": "yellow", "value": 80}]}}, "overrides": []},
+      "gridPos": {"h": 6, "w": 4, "x": 16, "y": 0},
+      "id": 5,
+      "options": {"showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_fan_speed_ratio{host=\"$host\"} * 100", "legendFormat": "{{uuid}}", "refId": "A"}],
+      "title": "Fan",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Time the memory bus was busy. High memory-bus with low GPU utilisation means the workload is bandwidth-bound, not compute-bound.",
+      "fieldConfig": {"defaults": {"unit": "percent", "min": 0, "max": 100, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 70}, {"color": "red", "value": 90}]}}, "overrides": []},
+      "gridPos": {"h": 6, "w": 4, "x": 20, "y": 0},
+      "id": 6,
+      "options": {"showThresholdLabels": false, "showThresholdMarkers": true, "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_utilization_memory_ratio{host=\"$host\"} * 100", "legendFormat": "{{uuid}}", "refId": "A"}],
+      "title": "Memory Bus",
+      "type": "gauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "nvtop's top graph. Encoder and decoder are separate fixed-function blocks: transcoding can peg them while GPU utilisation stays near zero.",
+      "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0, "custom": {"fillOpacity": 10}}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 6},
+      "id": 7,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_utilization_gpu_ratio{host=\"$host\"} * 100", "legendFormat": "GPU", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_utilization_memory_ratio{host=\"$host\"} * 100", "legendFormat": "Memory bus", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_utilization_encoder_ratio{host=\"$host\"} * 100", "legendFormat": "Encoder", "refId": "C"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_utilization_decoder_ratio{host=\"$host\"} * 100", "legendFormat": "Decoder", "refId": "D"}
+      ],
+      "title": "Utilisation",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "nvtop's second graph. `total` is drawn as the ceiling so headroom is visible at a glance; `reserved` is driver overhead you never get to allocate.",
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"fillOpacity": 10}}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 6},
+      "id": 8,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_memory_used_bytes{host=\"$host\"}", "legendFormat": "used", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_memory_reserved_bytes{host=\"$host\"}", "legendFormat": "reserved by driver", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_memory_total_bytes{host=\"$host\"}", "legendFormat": "total", "refId": "C"}
+      ],
+      "title": "VRAM",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Which process is holding the VRAM: nvtop's bottom pane, and the difference between 'the GPU is full' and 'THIS job is filling it'.\n\nRequires --collect.compute-apps on the exporter, which roles/gpu_exporter enables. Empty means no process holds a CUDA context right now, not that collection is broken.",
+      "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}}, "overrides": [{"matcher": {"id": "byName", "options": "VRAM"}, "properties": [{"id": "unit", "value": "bytes"}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}, {"id": "min", "value": 0}]}]},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 15},
+      "id": 9,
+      "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "VRAM"}]},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "nvidia_smi_compute_app_used_memory_bytes{host=\"$host\"}", "format": "table", "instant": true, "range": false, "refId": "A"}
+      ],
+      "title": "GPU Processes",
+      "type": "table",
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "instance": true, "job": true, "role": true, "uuid": true}, "indexByName": {"host": 0, "pid": 1, "process_name": 2, "Value": 3}, "renameByName": {"host": "Host", "pid": "PID", "process_name": "Process", "Value": "VRAM"}}}]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Current clocks against the SM maximum. A sustained gap between SM and SM max, with a throttle reason active below, is the card being held back rather than idle.",
+      "fieldConfig": {"defaults": {"unit": "hertz"}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 23},
+      "id": 10,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_clocks_current_sm_clock_hz{host=\"$host\"}", "legendFormat": "SM", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_clocks_current_graphics_clock_hz{host=\"$host\"}", "legendFormat": "graphics", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_clocks_current_memory_clock_hz{host=\"$host\"}", "legendFormat": "memory", "refId": "C"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_clocks_max_sm_clock_hz{host=\"$host\"}", "legendFormat": "SM max", "refId": "D"}
+      ],
+      "title": "Clocks",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "1 means that reason is actively holding clocks down right now. `SW power cap` is routine on a card at its limit; `HW thermal` or `HW slowdown` is the card protecting itself and warrants looking at airflow.",
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"fillOpacity": 30}}, "overrides": []},
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 23},
+      "id": 11,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_clocks_event_reasons_hw_thermal_slowdown{host=\"$host\"}", "legendFormat": "HW thermal", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_clocks_event_reasons_hw_power_brake_slowdown{host=\"$host\"}", "legendFormat": "HW power brake", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_clocks_event_reasons_sw_power_cap{host=\"$host\"}", "legendFormat": "SW power cap", "refId": "C"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_clocks_event_reasons_sw_thermal_slowdown{host=\"$host\"}", "legendFormat": "SW thermal", "refId": "D"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "nvidia_smi_clocks_event_reasons_hw_slowdown{host=\"$host\"}", "legendFormat": "HW slowdown", "refId": "E"}
+      ],
+      "title": "Throttle Reasons",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Static capabilities. A PCIe link width below the card's maximum usually means it is seated in a shorter electrical slot, which caps host-to-device transfer bandwidth.",
+      "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}}, "overrides": [{"matcher": {"id": "byName", "options": "VRAM"}, "properties": [{"id": "unit", "value": "bytes"}]}, {"matcher": {"id": "byName", "options": "Power Limit"}, "properties": [{"id": "unit", "value": "watt"}]}, {"matcher": {"id": "byName", "options": "Max Power"}, "properties": [{"id": "unit", "value": "watt"}]}, {"matcher": {"id": "byName", "options": "Max SM Clock"}, "properties": [{"id": "unit", "value": "hertz"}]}]},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 32},
+      "id": 12,
+      "options": {"showHeader": true},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "nvidia_smi_memory_total_bytes{host=\"$host\"}", "format": "table", "instant": true, "range": false, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "nvidia_smi_power_limit_watts{host=\"$host\"}", "format": "table", "instant": true, "range": false, "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "nvidia_smi_power_max_limit_watts{host=\"$host\"}", "format": "table", "instant": true, "range": false, "refId": "C"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "nvidia_smi_clocks_max_sm_clock_hz{host=\"$host\"}", "format": "table", "instant": true, "range": false, "refId": "D"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "nvidia_smi_pcie_link_width_current{host=\"$host\"}", "format": "table", "instant": true, "range": false, "refId": "E"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "nvidia_smi_pcie_link_gen_current{host=\"$host\"}", "format": "table", "instant": true, "range": false, "refId": "F"}
+      ],
+      "title": "GPU Inventory",
+      "type": "table",
+      "transformations": [{"id": "merge", "options": {}}, {"id": "organize", "options": {"excludeByName": {"Time": true, "instance": true, "job": true, "role": true}, "indexByName": {"host": 0, "uuid": 1, "Value #A": 2, "Value #B": 3, "Value #C": 4, "Value #D": 5, "Value #E": 6, "Value #F": 7}, "renameByName": {"host": "Host", "uuid": "UUID", "Value #A": "VRAM", "Value #B": "Power Limit", "Value #C": "Max Power", "Value #D": "Max SM Clock", "Value #E": "PCIe Width", "Value #F": "PCIe Gen"}}}]
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["gpu", "nvidia", "host"],
+  "templating": {"list": [{"current": {}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "definition": "label_values(nvidia_smi_utilization_gpu_ratio, host)", "hide": 0, "includeAll": false, "multi": false, "name": "host", "options": [], "query": {"query": "label_values(nvidia_smi_utilization_gpu_ratio, host)", "refId": "PrometheusVariableQueryEditor-VariableQuery"}, "refresh": 1, "regex": "", "skipUrlSync": false, "type": "query"}]},
+  "time": {"from": "now-1h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "GPU",
+  "uid": "gpu-monitoring",
+  "version": 1,
+  "weekStart": ""
+}

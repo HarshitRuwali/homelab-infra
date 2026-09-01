@@ -1,0 +1,35 @@
+apiVersion: 1
+
+# THE TWO PROVIDER PATHS MUST NOT NEST. Grafana's file reader walks each
+# `path` RECURSIVELY, so a provider pointed at /var/lib/grafana/dashboards
+# would also claim everything under servers/. Two providers provisioning the
+# same dashboard UID makes those dashboards flip between folders and logs
+# duplicate-provisioning errors on every scan.
+#
+# That is why the fleet dashboards live in their own fleet/ subdirectory
+# rather than at the root of the dashboards tree: it makes the two paths
+# disjoint siblings, which is the only arrangement Grafana handles cleanly.
+providers:
+  - name: 'Monitoring'
+    orgId: 1
+    folder: 'Monitoring'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards/fleet
+      foldersFromFilesStructure: false
+
+  # One dedicated dashboard per host, uid `host-<name>`, so a link never
+  # breaks even if the display title changes. Kept as its own provider/folder
+  # rather than dropped into Monitoring: these are per-host detail views,
+  # not fleet-wide ones, and mixing the two makes the folder hard to scan.
+  - name: 'Servers'
+    orgId: 1
+    folder: 'Servers'
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /var/lib/grafana/dashboards/servers
+      foldersFromFilesStructure: false

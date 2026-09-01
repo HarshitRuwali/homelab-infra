@@ -1,0 +1,101 @@
+---
+- name: Ensure the Grafana alerting provisioning directory exists
+  ansible.builtin.file:
+    path: "{{ grafana_alerting_dir }}"
+    state: directory
+    owner: root
+    group: grafana
+    mode: "0750"
+
+- name: Install the committed alerting provisioning files
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../grafana/provisioning/alerting/{{ item }}"
+    dest: "{{ grafana_alerting_dir }}/{{ item }}"
+    owner: root
+    group: grafana
+    mode: "0640"
+  loop: "{{ grafana_alerting_static_files }}"
+  notify: Restart grafana-server
+
+- name: Render the inventory-derived availability rules
+  ansible.builtin.template:
+    src: rules-availability.yaml.j2
+    dest: "{{ grafana_alerting_dir }}/rules-availability.yaml"
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: Restart grafana-server
+
+# The contact point references these with $__env{}. Grafana resolves them at
+# provisioning time from its own environment, so they must be in the unit's
+# EnvironmentFile, not just the shell.
+- name: Inject the Matrix relay secrets into Grafana's environment
+  ansible.builtin.lineinfile:
+    path: "{{ grafana_env_file }}"
+    regexp: "^{{ item.key }}="
+    line: '{{ item.key }}="{{ item.value }}"'
+    owner: root
+    group: root
+    mode: "0600"
+    create: true
+  loop:
+    - key: MATRIX_WEBHOOK_API_KEY
+      value: "{{ vault_matrix_webhook_api_key }}"
+    - key: MATRIX_ALERT_ROOM_ID
+      value: "{{ vault_matrix_alert_room_id }}"
+  no_log: true
+  notify: Restart grafana-server
+
+# Grafana reads provisioning ONLY at startup. Copying files without a restart
+# is a silent no-op, so flush before verifying.
+- name: Flush handlers so Grafana reloads provisioning
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the Grafana API
+  ansible.builtin.uri:
+    url: "{{ grafana_api_url }}/api/health"
+    status_code: [200]
+  register: ga_health
+  retries: 20
+  delay: 3
+  until: ga_health is succeeded
+  when: not ansible_check_mode
+
+- name: Read back the provisioned alert rules
+  ansible.builtin.uri:
+    url: "{{ grafana_api_url }}/api/v1/provisioning/alert-rules"
+    user: "{{ grafana_admin_user }}"
+    password: "{{ vault_grafana_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: ga_rules
+  no_log: true
+  when: not ansible_check_mode
+
+# One probe per provisioning file that ships rules. Grafana aborts alerting
+# provisioning for ALL files when any one of them fails to parse, and it does
+# so without failing startup, so a typo in a single file silently leaves the
+# whole fleet unalerted. Checking one uid per file turns that into a red play.
+- name: Assert the expected rules are live
+  ansible.builtin.assert:
+    that:
+      - "'fleet-host-down' in (ga_rules.json | map(attribute='uid') | list)"          # rules-availability (templated)
+      - "'fleet-disk-high' in (ga_rules.json | map(attribute='uid') | list)"          # rules-resources
+      - "'fleet-dpkg-wedged' in (ga_rules.json | map(attribute='uid') | list)"        # rules-updates
+      - "'fleet-systemd-unit-failed' in (ga_rules.json | map(attribute='uid') | list)"  # rules-services
+      - "'fleet-container-restart-loop' in (ga_rules.json | map(attribute='uid') | list)"  # rules-containers
+      # One probe per rules file, so a file that silently fails to load is
+      # caught here rather than discovered when it does not fire.
+      - "'fleet-smart-health-failed' in (ga_rules.json | map(attribute='uid') | list)"    # rules-storage
+      - "'fleet-net-link-lost' in (ga_rules.json | map(attribute='uid') | list)"          # rules-network
+      - "'fleet-gpu-exporter-down' in (ga_rules.json | map(attribute='uid') | list)"      # rules-gpu
+    fail_msg: >-
+      Alerting provisioning did not load. Check:
+      journalctl -u grafana-server -n 100 | grep -i provision
+    success_msg: "{{ ga_rules.json | length }} alert rules provisioned."
+  # Under --check the readback above is skipped, so ga_rules is a dict with no
+  # `json` key and resolving success_msg aborts the play with "object of type
+  # 'dict' has no attribute 'json'". There is nothing to assert in check mode
+  # anyway: no file was written, so the running Grafana still has the OLD
+  # rules and a readback would be answering the wrong question.
+  when: not ansible_check_mode

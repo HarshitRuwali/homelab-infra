@@ -1,0 +1,10 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Run fleet-smart-metrics
+  ansible.builtin.systemd:
+    name: fleet-smart-metrics.service
+    state: started
+  when: not ansible_check_mode

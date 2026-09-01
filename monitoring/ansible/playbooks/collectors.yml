@@ -1,0 +1,20 @@
+---
+# Install the Alloy collector on every monitored host.
+#
+# Roll out in blast-radius order, canary first:
+#   ansible-playbook playbooks/collectors.yml --limit ubuntu-dev
+#   ansible-playbook playbooks/collectors.yml --limit 'ubuntu-ai,cloud-services,rpi5'
+#   ansible-playbook playbooks/collectors.yml --limit rpi4b
+#   ansible-playbook playbooks/collectors.yml --limit lan_guests
+#   ansible-playbook playbooks/collectors.yml --limit tailscale-router
+#   ansible-playbook playbooks/collectors.yml --limit monitor-lxc   # LAST
+
+- name: Deploy the Alloy collector
+  hosts: monitored
+  become: true
+  serial: "{{ collector_serial | default('100%') }}"
+  roles:
+    # gpu_exporter first: it sets gpu_exporter_available, which
+    # config.alloy.j2 reads to decide whether to scrape it.
+    - gpu_exporter
+    - alloy_collector

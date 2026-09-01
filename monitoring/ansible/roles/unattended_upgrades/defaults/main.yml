@@ -1,0 +1,39 @@
+---
+# false = apply ALL updates, not just the security pocket. Services will be
+# restarted by their maintainer scripts as part of normal upgrades; machines
+# still never reboot (see uu_automatic_reboot).
+uu_apply_security_only: false
+
+# HARD REQUIREMENT from the fleet policy. Nothing overrides this, and the
+# role asserts it at the end of every run. Kernel updates therefore accumulate
+# until a human reboots, which is why fleet-reboot-required-too-long exists.
+uu_automatic_reboot: false
+
+uu_remove_unused_kernels: true
+
+# Empty by policy: nothing is held back anywhere.
+#
+# Be aware of what that means in practice. These upgrades restart SERVICES
+# (not machines) via their maintainer scripts:
+#   docker-ce / containerd.io -> bounces every container on the host
+#   tailscale                 -> restarts tailscaled; on a subnet router or
+#                                exit node that briefly drops routes
+#   pve-*                     -> restarts pveproxy/pvedaemon
+#   grafana/loki/prometheus   -> brief gap in the monitoring itself
+#
+# The ONLY exception is the `pi_debian` group, which still holds the Pi
+# kernel and bootloader. Those packages are unversioned and overwrite
+# /boot/firmware and /lib/modules/$(uname -r) in place, so applying them
+# under a never-reboot policy leaves the running kernel with no modules on
+# disk. See group_vars/pi_debian/main.yml.
+uu_package_blacklist: []
+
+uu_upgrade_oncalendar: "*-*-* 03:00"
+uu_upgrade_randomized_delay: 3600
+
+# Days between full `apt-get clean` runs. Under `o=*` the cache accumulates
+# every package downloaded every night, and autoclean does not remove them
+# because they are all still current. 7 keeps a week of .debs, which is enough
+# to reinstall something without a round trip and small enough that a 2 GB
+# rootfs guest does not fill up. Small-disk hosts override this lower.
+uu_clean_interval_days: 7

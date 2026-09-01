@@ -1,0 +1,39 @@
+[Unit]
+Description=Write fleet update metrics for the node_exporter textfile collector
+Documentation=https://github.com/HarshitRuwali/monitorting-stack
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ update_metrics_script }}
+
+# apt-get --just-print on an SD-card Pi is not free. Keep it off the
+# critical path for IO and CPU.
+Nice=19
+IOSchedulingClass=idle
+TimeoutStartSec=180
+
+# Runs as root because it needs apt-get, needrestart, and stat on
+# /run/reboot-required. Constrain what that root can touch.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths={{ update_metrics_dir }}
+
+# Run once at boot, in addition to the timer.
+#
+# The timer already has OnBootSec=3min, but RandomizedDelaySec applies to the
+# boot trigger as well as the calendar one, so on a Pi the post-boot refresh
+# lands 3-13 minutes after the machine comes up. In that window
+# node_reboot_required is still 1 from before the reboot, which reads as "I
+# rebooted and it did not clear" on the dashboard. That is the single most
+# confusing thing this exporter can do, because the whole point of the metric
+# is to tell you whether you still owe the machine a restart.
+#
+# Enabling the service directly gets a run without the jitter. The jitter is
+# there to stop a dozen hosts hitting apt on the same 15-minute tick, and boot
+# is not that case: this fleet never auto-reboots, so every boot is deliberate
+# and one machine at a time.
+[Install]
+WantedBy=multi-user.target

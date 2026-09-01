@@ -1,0 +1,20 @@
+---
+# Grafana has no native Matrix contact point, so this relay bridges the gap:
+# Grafana posts a webhook to loopback, the relay logs into Matrix as a bot and
+# forwards into the alert room.
+#
+# Native systemd + venv rather than Docker: the central LXC does not
+# necessarily have a Docker daemon, and adding one just for this is overkill.
+matrix_webhook_user: matrix-webhook
+matrix_webhook_home: /opt/matrix-webhook
+matrix_webhook_venv: /opt/matrix-webhook/venv
+matrix_webhook_env_dir: /etc/matrix-webhook
+
+# Loopback only. This is NEVER exposed through nginx.
+matrix_webhook_listen_host: 127.0.0.1
+matrix_webhook_listen_port: 4785
+
+matrix_webhook_url: "{{ vault_matrix_homeserver_url }}"
+matrix_webhook_id: "{{ vault_matrix_bot_mxid }}"
+matrix_webhook_pw: "{{ vault_matrix_bot_password }}"
+matrix_webhook_api_key: "{{ vault_matrix_webhook_api_key }}"

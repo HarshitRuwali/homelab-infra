@@ -1,0 +1,58 @@
+---
+# `present`, never `latest`: Ansible must not silently upgrade Alloy on every
+# run. Bump deliberately with -e alloy_package_state=latest.
+alloy_package_state: present
+
+alloy_config_path: /etc/alloy/config.alloy
+alloy_env_path: /etc/default/alloy
+alloy_listen_addr: 127.0.0.1:12345
+alloy_marker_path: /etc/alloy/.ansible-managed
+
+alloy_scrape_interval: 15s
+alloy_journal_max_age: 12h
+
+# Per-process metrics (prometheus.exporter.process).
+#
+# OFF BY DEFAULT ON CARDINALITY GROUNDS, not because it is unhelpful. It emits
+# roughly one series per distinct process name per host: measured at ~1000
+# series on a normal box, against a fleet head of ~52k. Turning it on
+# everywhere is a ~20% jump in series and, at 7-day retention on the central
+# LXC's shared root filesystem, a real disk cost on a box that has already hit
+# 100% once.
+#
+# Turn it on where you would actually open a process view -- a workstation, a
+# box running a workload you are tuning, the hypervisor -- and leave it off on
+# single-purpose service containers whose process list never changes:
+#
+#   # inventory/host_vars/<host>.yml
+#   alloy_enable_process: true
+alloy_enable_process: false
+
+# auto | true | false. `auto` stats /var/run/docker.sock, mirroring the
+# conditional in scripts/lxc-install.sh.
+alloy_enable_docker: auto
+
+# NOTE ON BACKSLASHES: these strings land inside double quotes in the
+# generated .alloy file, and Alloy uses Go string escaping there. A lone `\.`
+# is an "unknown escape sequence" and `alloy fmt` rejects the whole config.
+# Write `\\.` so the file contains `\\.`, which Alloy unescapes to the `\.`
+# the regex engine wants. Keep these single-quoted in YAML.
+alloy_fs_mount_points_exclude: '^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)'
+alloy_fs_types_exclude: '^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|fuse\\.lxcfs|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$'
+alloy_systemd_unit_exclude: '.+\\.(automount|device|mount|scope|slice)'
+
+# The central node pushes over loopback and lets nginx own auth.
+collector_basic_auth_required: true
+
+# Cap on the on-disk journal, written to /etc/systemd/journald.conf.d.
+#
+# This belongs to the collector role rather than to a generic "base" role
+# because shipping the journal is what makes capping it safe: Alloy forwards
+# every line to Loki within seconds, so the local journal only has to cover
+# the gap between a write and its shipment, plus enough history to make
+# `journalctl` useful over SSH. Central retention is what you actually query.
+#
+# Empty string leaves journald's own default (10% of the filesystem) alone.
+# Set it per host or per group where 10% is too much: see
+# host_vars/tailscale-router.yml, which caps it on a 2.0 GB rootfs.
+journald_system_max_use: ""

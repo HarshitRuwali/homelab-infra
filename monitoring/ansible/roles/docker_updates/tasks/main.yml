@@ -1,0 +1,147 @@
+---
+# Capability gate, NOT a policy gate.
+#
+# The distinction matters and is the same one made in the unattended_upgrades
+# role. WHETHER a host is auto-updated is decided solely by its membership of
+# the `autoupdate` group in the inventory, because a policy conditional buried
+# in a role is one typo away from patching something it should not. What this
+# check decides is only whether the host is even capable of running the role,
+# and a host with no Docker socket plainly is not.
+- name: Check for a Docker socket
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: docker_update_sock
+
+- name: Skip hosts without Docker
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: no /var/run/docker.sock, container updates not applicable"
+  when: not docker_update_sock.stat.exists
+
+- name: Configure container updates
+  when: docker_update_sock.stat.exists
+  block:
+
+    # `docker compose` (v2, a CLI plugin) not `docker-compose` (v1, a separate
+    # Python program). The script's argument shape is v2-only, and v1 has been
+    # end-of-life since 2023. Failing loudly here beats failing at 04:00.
+    - name: Verify Docker Compose v2 is available
+      ansible.builtin.command: docker compose version --short
+      register: docker_update_compose_version
+      changed_when: false
+      failed_when: docker_update_compose_version.rc != 0
+
+    - name: Report the Compose version in use
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: docker compose {{ docker_update_compose_version.stdout | trim }}"
+
+    # Shares the textfile directory with the update_metrics role so both sets
+    # of numbers arrive through the same node_exporter collector and land on
+    # the same dashboards with the same `host` label.
+    - name: Ensure the textfile collector directory exists
+      ansible.builtin.file:
+        path: "{{ update_metrics_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the container update script
+      ansible.builtin.template:
+        src: fleet-docker-update.sh.j2
+        dest: "{{ docker_update_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+        validate: bash -n %s
+      notify: Reload systemd
+
+    - name: Install the container update systemd service
+      ansible.builtin.template:
+        src: fleet-docker-update.service.j2
+        dest: /etc/systemd/system/fleet-docker-update.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Install the container update systemd timer
+      ansible.builtin.template:
+        src: fleet-docker-update.timer.j2
+        dest: /etc/systemd/system/fleet-docker-update.timer
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Flush handlers so systemd sees the new units
+      ansible.builtin.meta: flush_handlers
+
+    # Enabled and started, but NOT run. Deliberately: the first real run pulls
+    # gigabytes and restarts live services, so it happens in the scheduled
+    # window or when a human asks for it, never as a side effect of a config
+    # play. Trigger it now with:
+    #   ansible-playbook playbooks/docker-updates.yml -e docker_update_run_now=true
+    - name: Enable and start the container update timer
+      ansible.builtin.systemd:
+        name: fleet-docker-update.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # noqa command-instead-of-module: the systemd module can change a unit's
+    # state but cannot READ the next scheduled activation. This is a read.
+    - name: Show when the next container update will run
+      ansible.builtin.command: systemctl list-timers fleet-docker-update.timer --no-pager  # noqa: command-instead-of-module
+      register: docker_update_next
+      changed_when: false
+
+    - name: Report the schedule
+      ansible.builtin.debug:
+        msg: "{{ docker_update_next.stdout_lines[1] | default('timer scheduled') }}"
+
+    # --- Opt-in immediate run ------------------------------------------
+    - name: Run the container update now
+      when: docker_update_run_now | default(false) | bool
+      block:
+        - name: Trigger fleet-docker-update.service
+          ansible.builtin.systemd:
+            name: fleet-docker-update.service
+            state: started
+
+        # `state: started` on a oneshot returns once the job is ENQUEUED, not
+        # when it finishes, and this one can legitimately run for many minutes
+        # while it pulls. Poll for the unit to go inactive instead.
+        # noqa command-instead-of-module: same reason, this reads SubState.
+        # The systemd module has no equivalent query.
+        - name: Wait for the update to finish
+          ansible.builtin.command: systemctl show fleet-docker-update.service -p SubState --value  # noqa: command-instead-of-module
+          register: docker_update_substate
+          until: docker_update_substate.stdout | trim == "dead"
+          retries: 120
+          delay: 15
+          changed_when: false
+
+        - name: Read back the result
+          ansible.builtin.slurp:
+            src: "{{ update_metrics_dir }}/{{ docker_update_metrics_file }}"
+          register: docker_update_result
+
+        - name: Report what changed
+          ansible.builtin.debug:
+            msg: "{{ docker_update_summary }}"
+          vars:
+            docker_update_reported: >-
+              ^fleet_docker_(projects_updated|containers_recreated|containers_restarting|update_failed|image_bytes_reclaimed)
+            docker_update_summary: >-
+              {{ (docker_update_result.content | b64decode).split('\n')
+                 | select('match', docker_update_reported ~ ' ') | list }}
+
+        - name: Fail if the update left containers broken
+          ansible.builtin.assert:
+            that:
+              - "'fleet_docker_update_failed 0' in (docker_update_result.content | b64decode)"
+              - "'fleet_docker_containers_restarting 0' in (docker_update_result.content | b64decode)"
+            fail_msg: >-
+              Container update reported a failure on {{ inventory_hostname }}.
+              Check: journalctl -u fleet-docker-update.service -n 100
+            success_msg: "Container update completed cleanly."

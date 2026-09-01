@@ -1,0 +1,45 @@
+---
+# PLATFORM-level settings for bare-metal x86 hosts. Today that is t7920, the
+# Proxmox hypervisor, and everything here is true because it is a real machine
+# running PVE, not because of anything installed on it.
+
+# --- The reason this group exists ----------------------------------------
+# The only host in the estate with physical disks and the /dev nodes to read
+# them. See roles/smart_metrics/defaults/main.yml for why this is switched on
+# by inventory membership rather than autodetected.
+smart_metrics_enabled: true
+
+# --- Cardinality ----------------------------------------------------------
+# This is the genuine article, not the lookalike. PVE enumerates a transient
+# systemd unit for every guest it starts (lxc@103, qemu@110, plus their scopes
+# and slices); left alone the systemd collector alone emits thousands of
+# series from this one host, and unlike tailscale-router these are real.
+#
+# The identical-looking block in host_vars/tailscale-router.yml is NOT
+# duplication to be factored out: that host is an LXC that merely reports a
+# -pve kernel and has no /etc/pve. Keep them separate so changing one cannot
+# silently change the other.
+alloy_systemd_unit_exclude: '.+\\.(automount|device|mount|scope|slice|socket|swap|path)|(lxc|qemu|pve-container|user|session|run-r|systemd-fsck|systemd-cryptsetup|blockdev)@.+'
+
+# /etc/pve is a FUSE mount that ALWAYS reports 100% full, and lxcfs binds
+# mirror every guest's filesystem into the host's view. Without these the disk
+# alerts fire permanently, and the guest mirrors would double-count every
+# container's usage against the hypervisor.
+alloy_fs_mount_points_exclude: '^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+|var/lib/lxcfs|etc/pve|rpool(/.*)?)($|/)'
+
+# A hypervisor journal is enormous. Backfilling 12h of it on first Alloy start
+# is the fastest way to hit Loki's ingest limits, and this host has more to
+# say than any other in the fleet.
+alloy_journal_max_age: 1h
+
+# PVE runs its own containers through its own tooling, not Docker.
+alloy_enable_docker: false
+
+# --- Patching -------------------------------------------------------------
+# t7920 is NOT in `autoupdate`, so unattended_upgrades never runs here and
+# these are belt-and-braces for anyone who adds it later without reading the
+# inventory comment.
+#
+# Losing the kernel this box booted from is not worth a disk saving, and on a
+# hypervisor a failed boot takes every guest with it.
+uu_remove_unused_kernels: false

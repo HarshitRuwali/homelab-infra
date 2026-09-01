@@ -1,0 +1,212 @@
+apiVersion: 1
+
+# GPU health, from roles/gpu_exporter (nvidia_gpu_exporter on loopback,
+# scraped by Alloy as job="nvidia-gpu").
+#
+# noDataState: OK throughout, for the same reason as rules-storage.yaml: only
+# hosts with an NVIDIA device run the exporter at all, so absent series are
+# the correct permanent state for the rest of the fleet. The one rule that
+# must NOT rely on absence is the liveness check below, which keys on
+# up{job="nvidia-gpu"} instead. That series keeps being pushed as 0 when the
+# exporter dies, so a dead exporter is visible rather than merely silent.
+
+groups:
+  - orgId: 1
+    name: gpu
+    folder: Fleet
+    interval: 1m
+    rules:
+
+      # ---------------------------------------------------------------
+      # 87 C is where consumer and workstation NVIDIA parts begin hardware
+      # throttling. Below that the card is hot but doing its job; above it you
+      # are losing performance and cooking the board.
+      - uid: fleet-gpu-temperature-critical
+        title: GPU Temperature Critical
+        condition: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: A GPU has been at or above 87 C for ten minutes and is likely throttling.
+          runbook: "nvidia-smi -q -d TEMPERATURE,PERFORMANCE. Check chassis airflow and that the fan is spinning."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max by (host, uuid) (nvidia_smi_temperature_gpu)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gte, params: [87]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-gpu-temperature-high
+        title: GPU Temperature High
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: A GPU has been above 80 C for half an hour.
+          runbook: "Early warning ahead of throttling. Check airflow and dust before it reaches 87 C."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max by (host, uuid) (nvidia_smi_temperature_gpu)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [80]}
+
+      # ---------------------------------------------------------------
+      # VRAM exhaustion is the failure that actually stops work on this box:
+      # an allocation fails and the job dies, while utilisation and
+      # temperature both look perfectly healthy.
+      - uid: fleet-gpu-vram-exhausted
+        title: GPU VRAM Nearly Exhausted
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A GPU has under 5% VRAM free. New allocations are about to fail.
+          runbook: "nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv shows which process holds it."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, uuid) (
+                  nvidia_smi_memory_used_bytes / nvidia_smi_memory_total_bytes
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.95]}
+
+      # ---------------------------------------------------------------
+      # A fan reading zero while the card is genuinely hot is a failed fan or
+      # a failed reading; either way the card is heading for a thermal event.
+      # The temperature guard is essential, since an idle card parking its fan
+      # at 0 is normal and must not page anyone.
+      - uid: fleet-gpu-fan-stopped
+        title: GPU Fan Stopped While Hot
+        condition: C
+        for: 15m
+        labels:
+          severity: critical
+        annotations:
+          summary: A GPU is above 70 C with its fan reporting zero.
+          runbook: "Physically confirm the fan spins. nvidia-smi -q -d TEMPERATURE. A stopped fan on a loaded card is a hardware failure."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                (max by (host, uuid) (nvidia_smi_fan_speed_ratio) == 0)
+                and on (host, uuid) (max by (host, uuid) (nvidia_smi_temperature_gpu) > 70)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gte, params: [0]}
+
+      # ---------------------------------------------------------------
+      # THE LIVENESS RULE. Deliberately keyed on up{job="nvidia-gpu"} rather
+      # than on the absence of nvidia_smi_* series.
+      #
+      # Alloy scrapes the exporter locally and pushes the result, so when the
+      # exporter dies Alloy pushes up=0 and this fires. Had it instead been
+      # written as "nvidia_smi_* is absent", it would depend on a series that
+      # by definition stops existing at exactly the moment it needs to
+      # evaluate, and would never fire at all. That is the same push-model
+      # trap documented in architecture/push-model.md.
+      - uid: fleet-gpu-exporter-down
+        title: GPU Exporter Down
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: The GPU exporter is not responding on a host that has a GPU.
+          runbook: "systemctl status nvidia_gpu_exporter; curl -s localhost:9835/metrics | head. Check nvidia-smi still works: a driver reload drops it."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: min by (host) (up{job="nvidia-gpu"})
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}

@@ -1,0 +1,134 @@
+---
+# Read-only. Run this before anything else and before every rollout phase.
+# It changes nothing and answers "can Ansible actually drive this fleet".
+#
+# Because it is the thing you run when something is already wrong, no single
+# host may be able to abort it. Every check below either answers its question
+# or reports that it could not, and the play still reaches the report.
+
+- name: Preflight checks
+  hosts: monitored
+  gather_facts: true
+  become: false
+  tasks:
+    - name: Confirm SSH and Python work
+      ansible.builtin.ping:
+
+    # How this login reaches root decides how every check below has to run.
+    #
+    # The LXC guests (plex, memory, monitor-lxc) log in as root on minimal
+    # Debian images that ship no sudo at all, so `sudo -n true` there exits
+    # 127, "command not found". Read literally that is "sudo failed", which is
+    # what made the report say NEEDS PASSWORD for three hosts that are already
+    # root and sent you to fix a sudoers file that does not exist on a machine
+    # that never needed one. Ask the question that actually matters instead:
+    # can this play reach root, yes or no.
+    #
+    # Nothing is lost by not testing sudo on a root login: ansible-core skips
+    # become entirely when the remote user already IS the become user, so a
+    # missing sudo binary never comes up. `collectors.yml` has run against
+    # these hosts with `become: true` on exactly that basis.
+    - name: Record whether the connecting user is already root
+      ansible.builtin.set_fact:
+        pf_is_root: "{{ ansible_facts['user_id'] == 'root' }}"
+
+    - name: Confirm passwordless sudo
+      ansible.builtin.command: sudo -n true
+      register: pf_sudo
+      changed_when: false
+      failed_when: false
+      when: not pf_is_root
+
+    - name: Resolve whether this host can reach root at all
+      ansible.builtin.set_fact:
+        pf_root_access: "{{ pf_is_root or (pf_sudo.rc | default(1)) == 0 }}"
+
+    # --- Checks that need root ------------------------------------------
+    # /etc/alloy is 0770 root:alloy on at least one host, and that host is the
+    # one lan_guest that logs in as an ordinary user rather than root. An
+    # unprivileged stat there cannot even traverse the directory, so the
+    # module failed outright with "Permission denied" and took the whole play
+    # down on that host before it could report anything at all. Escalate where
+    # escalation is available; where it is not, say so in the report instead
+    # of failing.
+    #
+    # get_checksum: false keeps these to a bare stat(). Nothing here wants the
+    # file contents, and checksumming means an actual read, which is a second
+    # way to get a permission error out of a question about existence.
+    - name: Check for an existing Alloy install
+      ansible.builtin.stat:
+        path: /etc/alloy/config.alloy
+        get_checksum: false
+      become: "{{ pf_root_access and not pf_is_root }}"
+      register: pf_alloy
+      failed_when: false
+
+    - name: Check whether Ansible already owns the Alloy config
+      ansible.builtin.stat:
+        path: /etc/alloy/.ansible-managed
+        get_checksum: false
+      become: "{{ pf_root_access and not pf_is_root }}"
+      register: pf_marker
+      failed_when: false
+
+    # --- Checks that do not ----------------------------------------------
+    # /run and /var/run are world-traversable, so these answer honestly for
+    # any login and need no escalation.
+    - name: Check for a Docker socket
+      ansible.builtin.stat:
+        path: /var/run/docker.sock
+        get_checksum: false
+      register: pf_docker
+
+    - name: Check whether a reboot is already pending
+      ansible.builtin.stat:
+        path: /run/reboot-required
+        get_checksum: false
+      register: pf_reboot
+
+    # noqa command-instead-of-module: the apt module reports whether a named
+    # package is installed. It cannot simulate a dist-upgrade and count what
+    # WOULD be installed, which is the whole question here.
+    - name: Count pending package upgrades
+      ansible.builtin.shell:
+        # pipefail matters: without it the exit status is grep's, so an
+        # apt-get failure is invisible and this silently reports 0 pending.
+        cmd: |
+          set -o pipefail
+          apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c '^Inst ' || true
+        executable: /bin/bash
+      register: pf_pending
+      changed_when: false
+
+    - name: Report
+      vars:
+        # "could not look" and "looked, not there" are different answers.
+        # Collapsing them into `absent` is how you conclude Alloy is missing
+        # from a host that has been shipping metrics for weeks.
+        pf_alloy_state: >-
+          {{ 'UNREADABLE' if pf_alloy.stat is not defined
+             else ('present' if pf_alloy.stat.exists else 'absent') }}
+        pf_marker_state: >-
+          {{ 'UNREADABLE' if pf_marker.stat is not defined
+             else pf_marker.stat.exists }}
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}
+          os={{ ansible_facts['distribution'] }} {{ ansible_facts['distribution_version'] }}
+          arch={{ ansible_facts['architecture'] }}
+          root={{ 'login' if pf_is_root else ('sudo' if pf_root_access else 'NONE') }}
+          alloy={{ pf_alloy_state }}
+          ansible_managed={{ pf_marker_state }}
+          docker={{ pf_docker.stat.exists }}
+          reboot_pending={{ pf_reboot.stat.exists }}
+          pending_pkgs={{ pf_pending.stdout | trim }}
+
+    - name: Warn where Ansible cannot reach root
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} logs in as
+          {{ ansible_facts['user_id'] }} and cannot escalate. Every playbook
+          in this repo runs with become. Either add a NOPASSWD sudoers line,
+          or set ansible_become_password in
+          inventory/host_vars/{{ inventory_hostname }}.yml from the vault.
+      when: not pf_root_access

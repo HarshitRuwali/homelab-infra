@@ -1,0 +1,18 @@
+---
+# Deploy the apt/reboot textfile exporter to every monitored host.
+#
+# This is also what surfaces the packages that unattended-upgrades is
+# deliberately NOT installing (blacklisted ones, e.g. the monitoring stack on
+# the central node), so a blacklist never becomes a silent blind spot.
+
+- name: Deploy the update-metrics exporter
+  hosts: monitored
+  become: true
+  roles:
+    - update_metrics
+    # Both write .prom files into the same textfile collector directory, so
+    # they belong to the same play. smart_metrics is inert unless
+    # smart_metrics_enabled is set, which only group_vars/metal does; on every
+    # other host this role removes any leftovers and moves on. See the role
+    # defaults for why that is inventory-gated rather than autodetected.
+    - smart_metrics

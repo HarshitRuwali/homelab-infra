@@ -1,0 +1,34 @@
+services:
+  collector:
+    image: grafana/alloy:latest
+    container_name: monitoring-collector
+    privileged: true
+    pid: host
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      MONITOR_HOSTNAME: ${MONITOR_HOSTNAME:?set MONITOR_HOSTNAME to this VM name}
+      MONITOR_ROLE: ${MONITOR_ROLE:-vm}
+      PROMETHEUS_REMOTE_WRITE_URL: ${PROMETHEUS_REMOTE_WRITE_URL:-http://${MONITORING_SERVER:?set MONITORING_SERVER to the central server IP or DNS}:9090/api/v1/write}
+      LOKI_WRITE_URL: ${LOKI_WRITE_URL:-http://${MONITORING_SERVER:?set MONITORING_SERVER to the central server IP or DNS}:3100/loki/api/v1/push}
+      COLLECTOR_BASIC_AUTH_USER: ${COLLECTOR_BASIC_AUTH_USER:-collector}
+      COLLECTOR_BASIC_AUTH_PASSWORD: ${COLLECTOR_BASIC_AUTH_PASSWORD:?set COLLECTOR_BASIC_AUTH_PASSWORD to the central collector password}
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      - /:/rootfs:ro
+      - /proc:/host/proc:ro
+      - /sys:/sys:ro
+      - /var/run:/var/run:rw
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+    restart: unless-stopped
+volumes:
+  alloy-data:
+    name: monitoring-alloy-data
+    external: true

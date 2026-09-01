@@ -1,0 +1,19 @@
+apiVersion: 1
+
+# `host` is promoted to a first-class field because every metric and log line
+# in this fleet carries it via Alloy's external_labels. An alert that does not
+# say which machine it is about is close to useless.
+templates:
+  - orgId: 1
+    name: fleet.message
+    template: |
+      {{ define "fleet.message" }}
+      Status: {{ .Status }} | Severity: {{ .CommonLabels.severity }}
+      {{ range .Alerts }}
+      * {{ .Labels.alertname }} on {{ .Labels.host }}{{ with .Labels.mountpoint }} (mount {{ . }}){{ end }}{{ with .Labels.name }} (unit {{ . }}){{ end }}
+        {{ .Annotations.summary }}
+        value: {{ range $ref, $v := .Values }}{{ $ref }}={{ $v }} {{ end }}
+        {{ with .Annotations.runbook }}fix: {{ . }}
+        {{ end }}{{ with .SilenceURL }}silence: {{ . }}{{ end }}
+      {{ end }}
+      {{ end }}

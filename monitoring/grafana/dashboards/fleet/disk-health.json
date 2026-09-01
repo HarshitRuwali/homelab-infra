@@ -1,0 +1,163 @@
+{
+  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "description": "Physical disk health and filesystem health. The SMART panels only populate for hosts in the `metal` group: an LXC guest sees the disks in /sys but has no /dev nodes, a KVM guest's virtual disk reports no SMART capability, and an SD card does not implement SMART. The filesystem panels cover every host.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+{
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Worst SMART self-assessment across every physical drive. Blank on a selection with no bare-metal host: only `metal` hosts can read SMART, because LXC guests have no /dev nodes and KVM disks report no SMART capability.",
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "mappings": [{"type": "value", "options": {"0": {"text": "FAILED", "color": "red"}, "1": {"text": "OK", "color": "green"}}}]}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "min(fleet_smart_device_health_ok{host=~\"$host\"})", "refId": "A"}],
+      "title": "SMART Health",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Reallocated + pending + offline-uncorrectable. Pending is the urgent component: that data is already unreadable, not merely moved.",
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(fleet_smart_reallocated_sectors{host=~\"$host\"}) + sum(fleet_smart_pending_sectors{host=~\"$host\"}) + sum(fleet_smart_offline_uncorrectable{host=~\"$host\"})", "refId": "A"}],
+      "title": "Bad Sectors",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 85}, {"color": "red", "value": 95}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(fleet_smart_nvme_percentage_used_ratio{host=~\"$host\"}) * 100", "refId": "A"}],
+      "title": "NVMe Life Used",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "A filesystem the kernel remounted read-only after an I/O error. Nothing looks slow and no capacity threshold trips; writes just fail. Covers every host, SMART or not.",
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(node_filesystem_readonly{fstype!~\"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\\\.lxcfs\",mountpoint!~\"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*\",host=~\"$host\"} == 1) or vector(0)", "refId": "A"}],
+      "title": "Read-Only Filesystems",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "One row per physical drive. Life Used is NVMe-only and blank for spinning disks, which have no equivalent wear figure.",
+      "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}}, "overrides": [{"matcher": {"id": "byName", "options": "Health"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-background"}}, {"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "FAILED", "color": "red"}, "1": {"text": "OK", "color": "green"}}}]}]}, {"matcher": {"id": "byName", "options": "Temp"}, "properties": [{"id": "unit", "value": "celsius"}]}, {"matcher": {"id": "byName", "options": "Hours"}, "properties": [{"id": "unit", "value": "h"}]}, {"matcher": {"id": "byName", "options": "Life Used"}, "properties": [{"id": "unit", "value": "percent"}]}, {"matcher": {"id": "byName", "options": "Bad Sectors"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-background"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}]}]},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 5},
+      "id": 5,
+      "options": {"showHeader": true},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max by (host, device, model, serial) (fleet_smart_device_health_ok{host=~\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max by (host, device, model, serial) (fleet_smart_temperature_celsius{host=~\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max by (host, device, model, serial) (fleet_smart_power_on_hours{host=~\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "C"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max by (host, device, model, serial) (fleet_smart_reallocated_sectors{host=~\"$host\"} + fleet_smart_pending_sectors{host=~\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "D"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max by (host, device, model, serial) (fleet_smart_nvme_percentage_used_ratio{host=~\"$host\"} * 100)", "format": "table", "instant": true, "range": false, "refId": "E"}
+      ],
+      "title": "SMART Device Inventory",
+      "type": "table",
+      "transformations": [{"id": "merge", "options": {}}, {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"host": 0, "device": 1, "model": 2, "serial": 3, "Value #A": 4, "Value #B": 5, "Value #C": 6, "Value #D": 7, "Value #E": 8}, "renameByName": {"Value #A": "Health", "Value #B": "Temp", "Value #C": "Hours", "Value #D": "Bad Sectors", "Value #E": "Life Used", "host": "Host", "device": "Device", "model": "Model", "serial": "Serial"}}}]
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Alert fires above 60 C sustained for 30 minutes.",
+      "fieldConfig": {"defaults": {"unit": "celsius"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "id": 6,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_smart_temperature_celsius{host=~\"$host\"}", "legendFormat": "{{host}} {{device}}", "refId": "A"}
+      ],
+      "title": "Disk Temperature",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Watch the SLOPE. A stable non-zero count is a scar from a past event; a rising one means order a replacement.",
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "id": 7,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_smart_reallocated_sectors{host=~\"$host\"}", "legendFormat": "{{device}} reallocated", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_smart_pending_sectors{host=~\"$host\"}", "legendFormat": "{{device}} pending", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_smart_offline_uncorrectable{host=~\"$host\"}", "legendFormat": "{{device}} uncorrectable", "refId": "C"}
+      ],
+      "title": "Bad Sectors Over Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "A cumulative lifetime counter that never resets, so a flat non-zero line is history, not a fault. It usually indicates a cable rather than the platters. The alert keys on increase over 24h for exactly this reason.",
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 21},
+      "id": 8,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_smart_crc_errors{host=~\"$host\"}", "legendFormat": "{{host}} {{device}}", "refId": "A"}
+      ],
+      "title": "SATA Link CRC Errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Spare remaining is the one that predicts failure: at zero the drive goes read-only with no further warning. Life used is only wear against warranty.",
+      "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 21},
+      "id": 9,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_smart_nvme_percentage_used_ratio{host=~\"$host\"} * 100", "legendFormat": "{{device}} life used", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_smart_nvme_available_spare_ratio{host=~\"$host\"} * 100", "legendFormat": "{{device}} spare left", "refId": "B"}
+      ],
+      "title": "NVMe Endurance",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 29},
+      "id": 10,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "100 * (1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\\\.lxcfs\",mountpoint!~\"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*\",host=~\"$host\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\\\.lxcfs\",mountpoint!~\"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*\",host=~\"$host\"}))", "legendFormat": "{{host}} {{mountpoint}}", "refId": "A"}
+      ],
+      "title": "Filesystem Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Inodes exhaust independently of bytes. A filesystem with plenty of free space and no inodes left fails writes while every capacity panel stays green, which is why this has its own alert.",
+      "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 29},
+      "id": 11,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "100 * (1 - (node_filesystem_files_free{fstype!~\"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\\\.lxcfs\",mountpoint!~\"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*\",host=~\"$host\"} / node_filesystem_files{fstype!~\"tmpfs|overlay|squashfs|ramfs|autofs|nsfs|fuse\\\\.lxcfs\",mountpoint!~\"/(run|dev|sys|proc|var/lib/lxcfs|etc/pve)($|/).*\",host=~\"$host\"}))", "legendFormat": "{{host}} {{mountpoint}}", "refId": "A"}
+      ],
+      "title": "Inode Usage",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["disk", "smart", "fleet"],
+  "templating": {"list": [{"current": {"selected": true, "text": "All", "value": "$__all"}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "definition": "label_values(node_uname_info, host)", "hide": 0, "includeAll": true, "multi": true, "name": "host", "options": [], "query": {"query": "label_values(node_uname_info, host)", "refId": "PrometheusVariableQueryEditor-VariableQuery"}, "refresh": 1, "regex": "", "skipUrlSync": false, "type": "query"}]},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Disk Health",
+  "uid": "disk-health",
+  "version": 1,
+  "weekStart": ""
+}

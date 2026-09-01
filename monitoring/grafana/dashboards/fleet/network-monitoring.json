@@ -1,0 +1,184 @@
+{
+  "annotations": {"list": [{"builtIn": 1, "datasource": {"type": "grafana", "uid": "-- Grafana --"}, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard"}]},
+  "description": "Fleet network health. Every panel excludes virtual interfaces (veth, tap, fwbr, vmbr, docker, cni): on a Docker or Proxmox host those churn constantly and would drown the real NICs.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+{
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "Bps", "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(node_network_receive_bytes_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m]))", "refId": "A"}],
+      "title": "Fleet Throughput In",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "Bps", "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m]))", "refId": "A"}],
+      "title": "Fleet Throughput Out",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Physical interfaces reporting down. Virtual devices (veth, tap, fwbr, vmbr, docker) are excluded: they churn constantly on Docker and PVE hosts and would make this permanently non-zero.",
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(node_network_up{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"} == 0) or vector(0)", "refId": "A"}],
+      "title": "Interfaces Down",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "pps", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(node_network_receive_errs_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m])) + sum(rate(node_network_transmit_errs_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m])) + sum(rate(node_network_receive_drop_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m])) + sum(rate(node_network_transmit_drop_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m]))", "refId": "A"}],
+      "title": "Error+Drop Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Transmit is negated so send and receive read as a mirrored pair rather than overlapping.",
+      "fieldConfig": {"defaults": {"unit": "Bps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "id": 5,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (host) (rate(node_network_receive_bytes_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m]))", "legendFormat": "{{host}} rx", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "-sum by (host) (rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m]))", "legendFormat": "{{host}} tx", "refId": "B"}
+      ],
+      "title": "Throughput by Host",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "pps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "id": 6,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (host) (rate(node_network_receive_packets_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m]))", "legendFormat": "{{host}} rx", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "-sum by (host) (rate(node_network_transmit_packets_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m]))", "legendFormat": "{{host}} tx", "refId": "B"}
+      ],
+      "title": "Packet Rate by Host",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Errors usually mean cabling, a duplex mismatch or a failing NIC. Alert: fleet-net-interface-errors at any sustained non-zero rate.",
+      "fieldConfig": {"defaults": {"unit": "pps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "id": 7,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (host, device) (rate(node_network_receive_errs_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m])) + sum by (host, device) (rate(node_network_transmit_errs_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m]))", "legendFormat": "{{host}} {{device}}", "refId": "A"}
+      ],
+      "title": "Interface Errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "A low drop rate under burst is normal; a sustained one means queue or ring-buffer pressure. Alert fires above 1 pkt/s.",
+      "fieldConfig": {"defaults": {"unit": "pps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "id": 8,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (host, device) (rate(node_network_receive_drop_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m])) + sum by (host, device) (rate(node_network_transmit_drop_total{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"}[5m]))", "legendFormat": "{{host}} {{device}}", "refId": "A"}
+      ],
+      "title": "Interface Drops",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Retransmissions as a share of segments sent. A ratio, not a count, because a host sending almost nothing can retransmit one segment and look catastrophic. The alert additionally requires >10 seg/s before it will fire.",
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 21},
+      "id": 9,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "100 * (rate(node_netstat_Tcp_RetransSegs{host=~\"$host\"}[5m]) / rate(node_netstat_Tcp_OutSegs{host=~\"$host\"}[5m]))", "legendFormat": "{{host}}", "refId": "A"}
+      ],
+      "title": "TCP Retransmit Share",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Exhaustion drops NEW connections while established ones keep working, so it presents as 'the network is fine but nothing new can connect'. Alert at 85%.",
+      "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 21},
+      "id": 10,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "100 * (node_nf_conntrack_entries{host=~\"$host\"} / node_nf_conntrack_entries_limit{host=~\"$host\"})", "legendFormat": "{{host}}", "refId": "A"}
+      ],
+      "title": "Conntrack Table Usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 29},
+      "id": 11,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_sockstat_TCP_inuse{host=~\"$host\"}", "legendFormat": "{{host}} TCP", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_sockstat_UDP_inuse{host=~\"$host\"}", "legendFormat": "{{host}} UDP", "refId": "B"}
+      ],
+      "title": "Sockets In Use",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "Bps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 29},
+      "id": 12,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (host, name) (rate(container_network_receive_bytes_total{host=~\"$host\",name!=\"\"}[5m]))", "legendFormat": "{{host}} {{name}} rx", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "-sum by (host, name) (rate(container_network_transmit_bytes_total{host=~\"$host\",name!=\"\"}[5m]))", "legendFormat": "{{host}} {{name}} tx", "refId": "B"}
+      ],
+      "title": "Per-Container Network I/O",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Every physical interface in the fleet. Speed is blank on virtual NICs and on tailscale0/tun0, which have no link speed to report; that is expected, not a fault.",
+      "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}}, "overrides": [{"matcher": {"id": "byName", "options": "Up"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-background"}}, {"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "up", "color": "green"}}}]}]}, {"matcher": {"id": "byName", "options": "Speed"}, "properties": [{"id": "unit", "value": "Bps"}]}, {"matcher": {"id": "byName", "options": "MTU"}, "properties": [{"id": "unit", "value": "bytes"}]}]},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 37},
+      "id": 13,
+      "options": {"showHeader": true},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max by (host, device) (node_network_up{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max by (host, device) (node_network_speed_bytes{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max by (host, device) (node_network_mtu_bytes{device!~\"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*\",host=~\"$host\"})", "format": "table", "instant": true, "range": false, "refId": "C"}
+      ],
+      "title": "Interface Inventory",
+      "type": "table",
+      "transformations": [{"id": "merge", "options": {}}, {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"host": 0, "device": 1, "Value #A": 2, "Value #B": 3, "Value #C": 4}, "renameByName": {"Value #A": "Up", "Value #B": "Speed", "Value #C": "MTU", "host": "Host", "device": "Device"}}}]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["network", "fleet"],
+  "templating": {"list": [{"current": {"selected": true, "text": "All", "value": "$__all"}, "datasource": {"type": "prometheus", "uid": "prometheus"}, "definition": "label_values(node_uname_info, host)", "hide": 0, "includeAll": true, "multi": true, "name": "host", "options": [], "query": {"query": "label_values(node_uname_info, host)", "refId": "PrometheusVariableQueryEditor-VariableQuery"}, "refresh": 1, "regex": "", "skipUrlSync": false, "type": "query"}]},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Network",
+  "uid": "network-monitoring",
+  "version": 1,
+  "weekStart": ""
+}

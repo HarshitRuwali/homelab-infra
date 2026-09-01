@@ -1,0 +1,191 @@
+---
+# Install every pending package update NOW, and never reboot.
+#
+#   ansible-playbook playbooks/force-updates.yml                  # whole fleet
+#   ansible-playbook playbooks/force-updates.yml --limit rpi5     # one host
+#   ansible-playbook playbooks/force-updates.yml --check          # see what would move
+#
+# REBOOTING IS YOURS. Nothing here restarts a machine, by design: this fleet
+# has no automatic reboot anywhere and that guarantee is worth more than the
+# convenience. The final play prints exactly which hosts are waiting, so run
+# it, read the summary, then reboot them yourself one at a time.
+#
+# WHY NOT `unattended-upgrade -v`, which is the obvious thing:
+#   - it applies the ORIGIN POLICY, so it installs the subset
+#     roles/unattended_upgrades configured, not everything pending. Asking to
+#     "install updates" and getting a filtered subset is a trap.
+#   - it is not installed on hosts outside `autoupdate` (the hypervisor has no
+#     such binary), so it cannot patch the very hosts you must patch by hand.
+# This uses apt directly, which is what actually clears the pending count the
+# dashboards show.
+#
+# SCOPE IS `monitored`, NOT `autoupdate`. Hosts excluded from automatic
+# patching are excluded precisely because a human should choose the moment,
+# and this playbook IS that human choosing. t7920 is the hypervisor: patching
+# it restarts pveproxy/pvedaemon under running guests, so give it its own
+# --limit run when the guests can take it, rather than sweeping it up in a
+# fleet-wide pass.
+
+- name: Install pending package updates
+  hosts: monitored
+  become: true
+
+  # One host at a time. A bad upgrade then costs you one machine instead of
+  # the fleet, and it keeps the central stack, the exit node and the
+  # hypervisor from all going down together. Override deliberately:
+  #   -e force_update_serial=25%
+  serial: "{{ force_update_serial | default(1) }}"
+
+  # Never abandon a half-patched fleet silently: stop the rollout as soon as
+  # one host fails so you can look at it, rather than marching on.
+  max_fail_percentage: 0
+
+  vars:
+    # `dist` (apt full-upgrade) rather than `safe`. `safe` refuses any upgrade
+    # that would install a new dependency or remove a package, which on Debian
+    # is exactly how kernel and systemd transitions get held back, leaving
+    # apt_upgrades_pending stuck at a non-zero number that never clears and
+    # making this playbook look broken. Set force_update_type=safe if you want
+    # the conservative pass.
+    force_update_type: "{{ force_upgrade_type | default('dist') }}"
+
+    # Honour the per-group package blacklist during the run. The only fleet
+    # user today is pi_debian, holding raspberrypi-kernel and
+    # raspberrypi-bootloader, and the reason is sharp: those packages are
+    # UNVERSIONED, so they overwrite /boot/firmware and /lib/modules/$(uname -r)
+    # in place instead of installing alongside. Between that upgrade and a
+    # reboot the running kernel has no modules on disk, so anything not already
+    # loaded fails. Set false only if you will reboot that host immediately.
+    force_update_respect_blacklist: true
+
+  tasks:
+    - name: Refuse to run against a wedged dpkg
+      # An interrupted dpkg leaves the database half-configured, and apt will
+      # fail partway through leaving MORE mess. Detect it up front rather than
+      # discovering it after touching half the fleet.
+      ansible.builtin.command: dpkg --audit
+      register: force_update_audit
+      # Read-only, and must run under --check too: a skipped shell task
+      # registers a stub, so the report below would reference an
+      # undefined stdout and fail the very dry run you use to preview.
+      check_mode: false
+      changed_when: false
+      failed_when: force_update_audit.stdout | trim | length > 0
+
+    - name: Refresh the package lists
+      ansible.builtin.apt:
+        update_cache: true
+      changed_when: false
+
+    - name: Record what is pending before the upgrade
+      ansible.builtin.shell: |
+        set -o pipefail
+        apt-get --just-print upgrade 2>/dev/null | grep -c '^Inst ' || true
+      args: {executable: /bin/bash}
+      register: force_update_before
+      # Read-only, and must run under --check too: a skipped shell task
+      # registers a stub, so the report below would reference an
+      # undefined stdout and fail the very dry run you use to preview.
+      check_mode: false
+      changed_when: false
+
+    - name: Apply the upgrade, holding blacklisted packages for the duration
+      block:
+        - name: Hold the blacklisted packages
+          # apt-mark, not the unattended-upgrades blacklist: that config is
+          # only consulted by unattended-upgrades, and this play deliberately
+          # does not use it. Without this the Pi kernels would upgrade here.
+          ansible.builtin.command: "apt-mark hold {{ item }}"
+          loop: "{{ uu_package_blacklist | default([]) }}"
+          when:
+            - force_update_respect_blacklist | bool
+            - uu_package_blacklist | default([]) | length > 0
+          changed_when: false
+          # A blacklist entry may be a regex (linux-image-rpi-.*) or a package
+          # that is not installed on this host; neither is a reason to stop.
+          failed_when: false
+
+        - name: Upgrade all packages
+          ansible.builtin.apt:
+            upgrade: "{{ force_update_type }}"
+            # autoremove is NOT set. On this fleet it would drop old kernels,
+            # and group_vars/central and group_vars/metal both refuse that
+            # explicitly: losing the kernel a box booted from is not worth the
+            # disk saving. Reclaim space with the disk runbook instead.
+            autoremove: false
+          register: force_update_result
+
+      always:
+        - name: Release the holds
+          # In `always` so a failed or interrupted upgrade cannot leave a host
+          # permanently pinned, which would silently stop it patching forever.
+          ansible.builtin.command: "apt-mark unhold {{ item }}"
+          loop: "{{ uu_package_blacklist | default([]) }}"
+          when:
+            - force_update_respect_blacklist | bool
+            - uu_package_blacklist | default([]) | length > 0
+          changed_when: false
+          failed_when: false
+
+    - name: Count what is still pending afterwards
+      ansible.builtin.shell: |
+        set -o pipefail
+        apt-get --just-print upgrade 2>/dev/null | grep -c '^Inst ' || true
+      args: {executable: /bin/bash}
+      register: force_update_after
+      # Read-only, and must run under --check too: a skipped shell task
+      # registers a stub, so the report below would reference an
+      # undefined stdout and fail the very dry run you use to preview.
+      check_mode: false
+      changed_when: false
+
+    - name: Refresh the exporter so the dashboards stop lying
+      # Without this, apt_upgrades_pending keeps showing the pre-upgrade number
+      # until the 15-minute timer fires, and the obvious reading of that is
+      # "the playbook did nothing".
+      ansible.builtin.systemd:
+        name: fleet-update-metrics.service
+        state: started
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Check whether this host now needs a reboot
+      ansible.builtin.stat:
+        path: /run/reboot-required
+      register: force_update_reboot
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}:
+          {{ force_update_before.stdout | trim }} pending ->
+          {{ force_update_after.stdout | trim }} remaining.
+          {{ 'REBOOT REQUIRED' if force_update_reboot.stat.exists else 'no reboot needed' }}
+
+# ---------------------------------------------------------------------------
+# The whole point of the run: one list, at the end, of what to restart.
+# A separate play so it prints once after every host is done, rather than
+# being buried per-host in the output above.
+# ---------------------------------------------------------------------------
+- name: Summarise what needs rebooting
+  hosts: monitored
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Re-check reboot state
+      ansible.builtin.stat:
+        path: /run/reboot-required
+      register: force_update_final_reboot
+
+    - name: Print the reboot list once
+      run_once: true
+      vars:
+        reboot_hosts: >-
+          {{ ansible_play_hosts | map('extract', hostvars)
+             | selectattr('force_update_final_reboot.stat.exists')
+             | map(attribute='inventory_hostname') | list }}
+      ansible.builtin.debug:
+        msg: >-
+          {{ ('REBOOT THESE, ONE AT A TIME: ' ~ (reboot_hosts | join(', ')))
+             if (reboot_hosts | length) > 0
+             else 'No host needs a reboot.' }}

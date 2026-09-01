@@ -1,0 +1,41 @@
+---
+# Everything, in dependency order. Safe to re-run: a clean fleet is changed=0.
+#
+#   ansible-playbook playbooks/site.yml
+#   ansible-playbook playbooks/site.yml --limit rpi5
+#   ansible-playbook playbooks/site.yml --check --diff
+#
+# WHAT THIS DOES NOT DO: it does not install package or image updates. It
+# configures the machinery that applies them on a schedule (03:00 apt, 04:00
+# containers). To force either one now, see the commands in
+# docs/fleet-ansible.md; both restart services and deserve to be deliberate.
+#
+# ORDER IS LOAD-BEARING:
+#   1. collectors first, so telemetry exists before anything starts changing
+#      packages. If an update breaks a host, you want the metrics that show it.
+#   2. update-metrics next, so apt and reboot state is visible.
+#   3. dashboards before alerting. Both touch the central stack, and
+#      central-alerting.yml restarts Grafana; running dashboards first means
+#      that single restart also picks up any provider change, instead of
+#      needing a second one.
+#   4. alerting before patching, so the first thing you learn about a bad
+#      upgrade is a Matrix message rather than a dead host.
+#   5. patching last.
+
+- name: Deploy the Alloy collector
+  ansible.builtin.import_playbook: collectors.yml
+
+- name: Deploy the apt and reboot metrics exporter
+  ansible.builtin.import_playbook: update-metrics.yml
+
+- name: Deploy the Grafana dashboards
+  ansible.builtin.import_playbook: dashboards.yml
+
+- name: Provision central alerting and the Matrix relay
+  ansible.builtin.import_playbook: central-alerting.yml
+
+- name: Configure unattended package upgrades
+  ansible.builtin.import_playbook: unattended-upgrades.yml
+
+- name: Configure Docker container and image updates
+  ansible.builtin.import_playbook: docker-updates.yml

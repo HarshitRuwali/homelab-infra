@@ -1,0 +1,245 @@
+---
+- name: Configure the Grafana APT repository
+  ansible.builtin.include_tasks: repo.yml
+
+- name: Install Alloy
+  ansible.builtin.apt:
+    name: alloy
+    state: "{{ alloy_package_state }}"
+    update_cache: true
+    cache_valid_time: 3600
+
+# --- Docker autodetection ------------------------------------------------
+# Mirrors the `[[ -S /var/run/docker.sock ]]` conditional in
+# scripts/lxc-install.sh so the two paths agree on what a host looks like.
+- name: Check for a Docker socket
+  ansible.builtin.stat:
+    path: /var/run/docker.sock
+  register: alloy_docker_sock
+
+- name: Resolve the alloy_enable_docker `auto` sentinel
+  ansible.builtin.set_fact:
+    alloy_docker_effective: >-
+      {{
+        alloy_docker_sock.stat.exists
+        if (alloy_enable_docker | string) == 'auto'
+        else (alloy_enable_docker | bool)
+      }}
+
+- name: Report the resolved collector shape
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: role={{ monitor_role }}
+      docker={{ alloy_docker_effective }}
+      journal_max_age={{ alloy_journal_max_age }}
+
+# --- Directories ---------------------------------------------------------
+# /etc/alloy is DELIBERATELY ABSENT from this list. The alloy package's
+# postinst runs `chown root:$ALLOY_GROUP /etc/alloy` and `chmod 770`, so a
+# task forcing root:root 0755 fights the package: every play flipped it to
+# 755 and every package install or upgrade flipped it back, leaving site.yml
+# reporting `changed` on that task forever on alternating runs. A play that is
+# never green is one nobody reads.
+#
+# The package's 770 root:alloy is also the better of the two. It keeps the
+# directory readable by the service user and nobody else, where 0755 made a
+# config directory world-readable for no benefit. The package creates the
+# directory during "Install Alloy" above, so there is nothing left to do here
+# but leave it alone; the config file below is written into it explicitly.
+- name: Ensure the textfile-collector and drop-in directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ alloy_textfile_dir }}"
+    # Holds the cAdvisor root drop-in below. Created unconditionally so the
+    # "remove it again" task has somewhere to look on non-Docker hosts.
+    - /etc/systemd/system/alloy.service.d
+
+# --- Permissions ---------------------------------------------------------
+# Alloy runs unprivileged. It needs systemd-journal to read the journal, adm
+# for /var/log, and docker for the socket. Group changes only take effect on
+# process restart, hence the notify.
+- name: Grant the alloy user the groups it needs
+  ansible.builtin.user:
+    name: alloy
+    groups: "{{ alloy_required_groups | join(',') }}"
+    append: true
+  vars:
+    alloy_required_groups: >-
+      {{
+        ['systemd-journal', 'adm']
+        + (['docker'] if alloy_docker_effective else [])
+      }}
+  notify: Restart alloy
+
+# --- cAdvisor privileges -------------------------------------------------
+# Group membership alone is NOT enough to collect per-container metrics.
+#
+# `docker` group gets Alloy /var/run/docker.sock, which is why container LOGS
+# (loki.source.docker) worked from day one. But cAdvisor also opens
+# /run/containerd/containerd.sock to resolve the overlayfs storage driver, and
+# that socket is root:root 0660 with no group we can join. The failure is
+# per-container and non-fatal, so the exporter kept running and kept
+# publishing exactly one useless series, the root cgroup id="/":
+#
+#   level=error msg="Failed to create existing container:
+#   /system.slice/docker-<id>.scope: unable to create containerd client for
+#   overlayfs storage driver: containerd: cannot unix dial containerd api
+#   service: dial unix /run/containerd/containerd.sock: permission denied"
+#
+# Net effect: `container_cpu_usage_seconds_total{name!=""}` was empty fleet
+# wide, so every container panel rendered "No data" while looking configured.
+#
+# Two ways out. Chowning the containerd socket means editing
+# /etc/containerd/config.toml and restarting containerd, which restarts every
+# container on the host. Running the collector as root does not touch the
+# container runtime at all. Upstream cAdvisor documents root as its
+# requirement, so this is the supported shape rather than a workaround.
+#
+# Scoped deliberately: only hosts that actually run Docker get the drop-in,
+# and it is removed again if Docker goes away, so a host reverts to the
+# unprivileged default on its own.
+- name: Run Alloy as root on Docker hosts so cAdvisor can reach containerd
+  ansible.builtin.copy:
+    content: |
+      # Managed by ansible/roles/alloy_collector.
+      #
+      # cAdvisor needs root to read /run/containerd/containerd.sock,
+      # /var/lib/docker and the per-container cgroup trees. Without this the
+      # exporter only ever reports the root cgroup.
+      #
+      # To revert: delete this file, `systemctl daemon-reload`, restart alloy,
+      # and expect per-container metrics to stop.
+      [Service]
+      User=root
+      Group=root
+    dest: /etc/systemd/system/alloy.service.d/10-cadvisor-root.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: alloy_docker_effective | bool
+  register: alloy_cadvisor_dropin
+  notify: Restart alloy
+
+- name: Remove the cAdvisor root drop-in on non-Docker hosts
+  ansible.builtin.file:
+    path: /etc/systemd/system/alloy.service.d/10-cadvisor-root.conf
+    state: absent
+  when: not (alloy_docker_effective | bool)
+  notify: Restart alloy
+
+# Alloy's WAL and storage path are created by the packaged unit as the alloy
+# user. Once the unit runs as root, root-owned WAL segments appear alongside
+# them. Root can still write those, so nothing breaks now; the hazard is only
+# on the way back, if the drop-in is ever removed and the unprivileged user
+# inherits files it cannot open.
+#
+# Deliberately conditioned on the drop-in having just changed rather than
+# running every time. `recurse: true` re-chowns whatever root wrote since the
+# last run, so an unconditional version reports `changed` on every single play
+# forever, and an Ansible run that is never green is one nobody reads.
+- name: Reclaim the Alloy storage path for the alloy user
+  ansible.builtin.file:
+    path: /var/lib/alloy
+    state: directory
+    owner: alloy
+    group: alloy
+    recurse: true
+  when: alloy_cadvisor_dropin is defined and alloy_cadvisor_dropin.changed
+
+# --- Config --------------------------------------------------------------
+# `validate` runs `alloy fmt` against the candidate file BEFORE it is moved
+# into place. A syntax error therefore fails the play instead of leaving a
+# crash-looping unit, which matters most on tailscale-router (exit node) and
+# the central LXC.
+- name: Write the Alloy configuration
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_path }}"
+    owner: alloy
+    group: alloy
+    mode: "0644"
+    validate: /usr/bin/alloy fmt %s
+    backup: true
+  notify: Restart alloy
+
+- name: Write the Alloy environment file
+  ansible.builtin.template:
+    src: alloy.env.j2
+    dest: "{{ alloy_env_path }}"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  notify: Restart alloy
+
+# --- Ownership marker ----------------------------------------------------
+# scripts/lxc-install.sh checks for this file and skips write_alloy_config()
+# when it exists, so `lxc-update.sh central` can no longer silently revert
+# this config back to its embedded heredoc.
+- name: Mark the Alloy config as Ansible-managed
+  ansible.builtin.copy:
+    content: |
+      Managed by ansible/roles/alloy_collector. Do not edit /etc/alloy/config.alloy
+      by hand and do not let scripts/lxc-install.sh regenerate it.
+      To change it: ansible-playbook playbooks/collectors.yml --limit {{ inventory_hostname }}
+    dest: "{{ alloy_marker_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+# --- Journal retention ---------------------------------------------------
+# Only applied where a group explicitly sets a cap; elsewhere journald keeps
+# its own default and this is a no-op. See defaults/main.yml for why capping
+# is safe once Alloy is shipping.
+- name: Cap the on-disk journal where a limit is set
+  when: journald_system_max_use | length > 0
+  block:
+    - name: Ensure the journald drop-in directory exists
+      ansible.builtin.file:
+        path: /etc/systemd/journald.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the journald size cap
+      ansible.builtin.copy:
+        content: |
+          # Managed by ansible/roles/alloy_collector.
+          # Safe because Alloy ships this journal to Loki; see the role
+          # defaults for the reasoning. Raise or remove journald_system_max_use
+          # in group_vars to change it.
+          [Journal]
+          SystemMaxUse={{ journald_system_max_use }}
+        dest: /etc/systemd/journald.conf.d/10-fleet-size-cap.conf
+        owner: root
+        group: root
+        mode: "0644"
+      # Restarting journald is safe and does not lose anything already
+      # written, but it does need to happen for the cap to take effect.
+      notify: Restart journald
+
+- name: Enable and start Alloy
+  ansible.builtin.systemd:
+    name: alloy
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers so the readiness check tests the new config
+  ansible.builtin.meta: flush_handlers
+
+# --- Proof of life -------------------------------------------------------
+- name: Wait for Alloy to become ready
+  ansible.builtin.uri:
+    url: "http://{{ alloy_listen_addr }}/-/ready"
+    status_code: [200]
+  register: alloy_ready
+  retries: 10
+  delay: 3
+  until: alloy_ready is succeeded

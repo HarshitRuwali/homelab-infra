@@ -1,0 +1,18 @@
+[Unit]
+Description=Periodic SMART disk health refresh
+
+[Timer]
+OnBootSec=5min
+OnCalendar={{ smart_metrics_oncalendar }}
+
+# Staggered for the same reason as fleet-update-metrics: nothing here should
+# land on every host at the same instant.
+RandomizedDelaySec={{ smart_metrics_randomized_delay }}
+
+# A host that was powered off runs on next boot rather than reporting stale
+# disk health, which for this metric is the dangerous failure mode.
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

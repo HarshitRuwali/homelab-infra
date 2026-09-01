@@ -1,0 +1,18 @@
+[Unit]
+Description=Periodic fleet update metrics refresh
+
+[Timer]
+OnBootSec=3min
+OnCalendar={{ update_metrics_oncalendar }}
+
+# Staggers the fleet so a dozen hosts do not hit apt and the same mirror
+# simultaneously. On the Pis this also spreads SD-card IO.
+RandomizedDelaySec={{ update_metrics_randomized_delay }}
+
+# A Pi that was powered off still runs on next boot rather than silently
+# reporting stale patch state.
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

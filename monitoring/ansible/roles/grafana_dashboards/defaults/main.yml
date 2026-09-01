@@ -1,0 +1,25 @@
+---
+# Where Grafana reads dashboards from. These two MUST stay disjoint siblings:
+# Grafana's file provider walks each provider path RECURSIVELY, so a provider
+# pointed at the parent would also claim everything under servers/, and two
+# providers owning the same uid makes those dashboards flip between folders
+# and log duplicate-provisioning errors on every scan. See
+# grafana/provisioning/dashboards/dashboards.yml.
+grafana_dashboard_root: /var/lib/grafana/dashboards
+grafana_dashboard_dirs:
+  - fleet
+  - servers
+
+grafana_provisioning_dashboards_dir: /etc/grafana/provisioning/dashboards
+grafana_env_file: /etc/default/grafana-monitoring
+grafana_api_url: http://127.0.0.1:3000
+grafana_admin_user: admin
+
+# Remove dashboards on the box that are no longer in the repo.
+#
+# On by default because the alternative is worse: `disableDeletion: false` in
+# the provider means Grafana deletes a dashboard from its database when the
+# FILE disappears, so a leftover file keeps resurrecting a dashboard you
+# deleted from git. The repo is meant to be the source of truth; without this
+# it only ever adds.
+grafana_dashboard_prune: true

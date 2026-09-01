@@ -1,0 +1,35 @@
+---
+grafana_provisioning_dir: /etc/grafana/provisioning
+grafana_alerting_dir: "{{ grafana_provisioning_dir }}/alerting"
+grafana_env_file: /etc/default/grafana-monitoring
+grafana_api_url: http://127.0.0.1:3000
+
+# Must match GF_SECURITY_ADMIN_USER in /etc/default/grafana-monitoring.
+# Do NOT assume "admin": lxc-install.sh writes whatever GRAFANA_ADMIN_USER is
+# set to in .env, which is often a real username.
+grafana_admin_user: admin
+
+# The `host` label of the central node itself. Must match MONITOR_HOSTNAME in
+# /etc/default/alloy on the central LXC, which is read during Phase 0.
+central_host_label: "{{ hostvars[groups['central'][0]].monitor_hostname | default('main-server') }}"
+
+# Committed alerting files copied verbatim. rules-availability.yaml is NOT
+# here: it is templated from the inventory.
+grafana_alerting_static_files:
+  - contactpoints.yaml
+  - templates.yaml
+  - policies.yaml
+  - mute-timings.yaml
+  - rules-resources.yaml
+  - rules-updates.yaml
+  - rules-services.yaml
+  - rules-containers.yaml
+  # SMART disk health. Only hosts in `metal` can produce these series, which
+  # is why every rule in it uses noDataState: OK; see the file's header.
+  - rules-storage.yaml
+  # Network health. Every rule filters out virtual interfaces; without that
+  # an unfiltered link-down rule fires forever on any Docker or PVE host.
+  - rules-network.yaml
+  # GPU health. Liveness keys on up{job="nvidia-gpu"} rather than on absent
+  # nvidia_smi_* series, which by definition vanish exactly when needed.
+  - rules-gpu.yaml

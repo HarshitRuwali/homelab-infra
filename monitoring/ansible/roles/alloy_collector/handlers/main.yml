@@ -1,0 +1,14 @@
+---
+- name: Restart alloy
+  ansible.builtin.systemd:
+    name: alloy
+    state: restarted
+    daemon_reload: true
+
+# systemd-journald restarts without dropping anything already committed to
+# disk, and re-reads its drop-ins on start. Vacuuming down to a newly lowered
+# SystemMaxUse happens on the next rotation, not instantly.
+- name: Restart journald
+  ansible.builtin.systemd:
+    name: systemd-journald
+    state: restarted

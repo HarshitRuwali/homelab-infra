@@ -1,0 +1,11 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+# Run once immediately so metrics appear within seconds of the play rather
+# than up to 15 minutes later on the next timer tick.
+- name: Run fleet-update-metrics
+  ansible.builtin.systemd:
+    name: fleet-update-metrics.service
+    state: started

@@ -1,0 +1,58 @@
+---
+# tailscale-router (Proxmox guest 106), the tailnet exit node and subnet
+# router.
+#
+# WHY THIS IS host_vars AND NOT group_vars. It used to be group_vars/proxmox,
+# a group of exactly one host, described as "hosts running a PVE kernel".
+# That description was true but misleading: this host reports a `-pve` kernel
+# because an LXC shares the hypervisor's kernel, not because it runs Proxmox.
+# It has no /etc/pve. So `proxmox` was never a property that generalised, and
+# once `monitored` was split into lxc/vm/pi it became actively confusing to
+# have a third thing called `proxmox` alongside them.
+#
+# Everything below is justified by THIS host's specifics -- a 2.0 GB rootfs
+# and its exit-node role -- so it belongs to the host. Do NOT promote any of
+# it to group_vars/lxc or group_vars/lxc_debian without checking it against
+# the other containers: the journal and disk caps in particular would be a
+# real behaviour change for plex, memory and monitor-lxc.
+#
+# Two distinct hazards are handled here:
+#   1. Cardinality. PVE enumerates hundreds of transient per-guest systemd
+#      units (lxc@103, qemu@110, scopes, slices). Left alone the systemd
+#      collector alone emits ~2000 series per host.
+#   2. Journal volume. A hypervisor journal is enormous; backfilling 12h of
+#      it on first Alloy start is the fastest way to hit Loki ingest limits.
+
+alloy_systemd_unit_exclude: '.+\\.(automount|device|mount|scope|slice|socket|swap|path)|(lxc|qemu|pve-container|user|session|run-r|systemd-fsck|systemd-cryptsetup|blockdev)@.+'
+
+# /etc/pve is a FUSE mount that always reports 100% full; lxcfs binds mirror
+# guest filesystems. Both would fire the disk alert permanently.
+alloy_fs_mount_points_exclude: '^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+|var/lib/lxcfs|etc/pve|rpool(/.*)?)($|/)'
+
+alloy_journal_max_age: 1h
+alloy_enable_docker: false
+
+# --- Patching ---
+# Never let unattended-upgrades autoremove a Proxmox kernel, and never let it
+# restart pveproxy/pvedaemon under running guests.
+# Nothing held back here by policy. Note this means pve-* upgrades will
+# restart pveproxy/pvedaemon, and a tailscale upgrade restarts tailscaled,
+# briefly dropping this host's exit node and subnet routes.
+#
+# Kernel autoremoval stays off: losing the kernel this box booted from is not
+# worth the disk saving on a hypervisor-adjacent host.
+uu_remove_unused_kernels: false
+
+# --- Small rootfs ---
+# tailscale-router has a 2.0 GB root disk. It hit 94% used (124 MB free) with
+# 199 MB of apt archives and 192 MB of journal, and predict_linear had it
+# reaching zero inside 24 hours. Under `o=*` the apt cache refills every
+# night, so the weekly default is too slack here: clean daily.
+uu_clean_interval_days: 1
+
+# Same reasoning for the journal. Alloy ships everything to Loki within
+# seconds, so the on-disk journal is only a local buffer for the window
+# between a write and its shipment, plus whatever you want for reading
+# `journalctl` over SSH. 64 MB is plenty for both; the default was unbounded,
+# which on this host meant 10% of the entire disk.
+journald_system_max_use: 64M

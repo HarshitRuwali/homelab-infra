@@ -1,0 +1,117 @@
+---
+- name: Refuse to deploy with placeholder Matrix credentials
+  ansible.builtin.assert:
+    that:
+      - not (matrix_webhook_url is search('REPLACE_ME'))
+      - not (matrix_webhook_id is search('REPLACE_ME'))
+      - not (matrix_webhook_pw is search('REPLACE_ME'))
+    fail_msg: >-
+      Matrix credentials are still placeholders. Fill them in first:
+      ansible-vault edit inventory/group_vars/all/vault.yml
+      (homeserver URL, bot MXID, bot password, and the internal room ID from
+      Element -> Room Settings -> Advanced).
+
+- name: Install Python venv tooling
+  ansible.builtin.apt:
+    name:
+      - python3-venv
+      - python3-pip
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the matrix-webhook system user
+  ansible.builtin.user:
+    name: "{{ matrix_webhook_user }}"
+    system: true
+    home: "{{ matrix_webhook_home }}"
+    shell: /usr/sbin/nologin
+    create_home: true
+
+# Built as root rather than via become_user: minimal LXC images often ship
+# without sudo, and Ansible's default become_method needs it. The venv only
+# has to be READABLE by the service user, so root-owned 0755 is correct and
+# avoids depending on sudo being installed at all.
+- name: Install matrix-webhook into a dedicated venv
+  ansible.builtin.pip:
+    name: matrix-webhook
+    state: present
+    virtualenv: "{{ matrix_webhook_venv }}"
+    virtualenv_command: python3 -m venv
+  notify: Restart matrix-webhook
+
+- name: Make the venv readable by the service user
+  ansible.builtin.file:
+    path: "{{ matrix_webhook_home }}"
+    state: directory
+    owner: root
+    group: "{{ matrix_webhook_user }}"
+    mode: "0750"
+    recurse: false
+
+- name: Ensure the environment directory exists
+  ansible.builtin.file:
+    path: "{{ matrix_webhook_env_dir }}"
+    state: directory
+    owner: root
+    group: "{{ matrix_webhook_user }}"
+    mode: "0750"
+
+- name: Write the matrix-webhook environment file
+  ansible.builtin.template:
+    src: matrix-webhook.env.j2
+    dest: "{{ matrix_webhook_env_dir }}/matrix-webhook.env"
+    owner: root
+    group: "{{ matrix_webhook_user }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart matrix-webhook
+
+- name: Install the matrix-webhook systemd unit
+  ansible.builtin.template:
+    src: matrix-webhook.service.j2
+    dest: /etc/systemd/system/matrix-webhook.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart matrix-webhook
+
+- name: Enable and start matrix-webhook
+  ansible.builtin.systemd:
+    name: matrix-webhook
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Flush handlers before the smoke test
+  ansible.builtin.meta: flush_handlers
+
+# Proves the listener is bound and reachable without actually sending a
+# message. An auth rejection is a SUCCESS here: it means the relay is up and
+# validating the key.
+- name: Smoke-test the relay listener
+  ansible.builtin.uri:
+    url: "http://{{ matrix_webhook_listen_host }}:{{ matrix_webhook_listen_port }}/"
+    method: POST
+    body_format: json
+    body: {}
+    status_code: [400, 401, 403, 422]
+  register: mw_smoke
+  retries: 5
+  delay: 3
+  until: mw_smoke is succeeded
+
+# `| default(...)` on mw_smoke.status is load-bearing. The uri smoke test above
+# is skipped under --check, so the registered variable is a dict with no
+# `status` key, and referencing it unguarded aborted the whole play with
+# "object of type 'dict' has no attribute 'status'". That broke
+# `site.yml --check` on the central node, which the docs present as the safe
+# way to preview a fleet-wide run.
+- name: Report
+  ansible.builtin.debug:
+    msg: >-
+      matrix-webhook is listening on
+      {{ matrix_webhook_listen_host }}:{{ matrix_webhook_listen_port }}
+      (returned {{ mw_smoke.status | default('not probed, check mode') }} to an
+      empty request, as expected).
+      Send a real test message with the curl in docs/fleet-ansible.md.

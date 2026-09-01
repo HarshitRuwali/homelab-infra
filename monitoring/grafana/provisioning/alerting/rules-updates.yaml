@@ -1,0 +1,251 @@
+apiVersion: 1
+
+# Patch-state alerts. These are what make "auto-apply but never auto-reboot"
+# a safe policy rather than a way to silently accumulate unpatched kernels.
+#
+# All series here come from the update_metrics role's textfile exporter
+# (ansible/roles/update_metrics), read by Alloy's prometheus.exporter.unix
+# textfile collector. If that role has not run on a host, these are silent.
+#
+# interval is 10m, not 1m: patch state moves on the order of days, and a 1m
+# evaluation just burns cycles.
+
+groups:
+  - orgId: 1
+    name: updates
+    folder: Fleet
+    interval: 10m
+    rules:
+
+      # ---------------------------------------------------------------
+      - uid: fleet-security-updates-stuck
+        title: Security Updates Not Applying
+        condition: C
+        for: 24h
+        labels:
+          severity: warning
+        annotations:
+          summary: Security updates have been pending for over 24h; unattended-upgrades is not clearing them.
+          runbook: "ssh in, run: sudo unattended-upgrade --dry-run --debug"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # Scoped to hosts that are actually configured to auto-apply.
+              # This alert's premise is "unattended-upgrades is not clearing
+              # them", which is only a fault where it was ever going to run.
+              # On a deliberately hand-patched host (the hypervisor, anything
+              # in `no_autoupdate`) pending security updates are the expected
+              # steady state, and this would fire forever with a runbook
+              # telling you to run a binary that is not installed. The pending
+              # counts stay visible on the dashboards either way.
+              expr: |
+                max by (host) (apt_upgrades_security_pending)
+                  and on (host) (fleet_unattended_upgrades_enabled == 1)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-reboot-required-too-long
+        title: Reboot Pending Too Long
+        condition: C
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: A reboot has been required for over 7 days. Nothing reboots itself here, so schedule a window.
+          runbook: "Reboot one host at a time and confirm it returns before the next."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # The exporter emits this series ONLY while a reboot is pending.
+              # When the host reboots it stops, Alloy forwards a staleness
+              # marker, and this resolves on its own.
+              expr: max by (host) (time() - fleet_reboot_required_since_timestamp_seconds)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [604800]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-dpkg-wedged
+        title: dpkg Half-Configured
+        condition: C
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: Packages are in a half-configured state. This is the worst outcome of an interrupted unattended upgrade and blocks all future apt work.
+          runbook: "sudo dpkg --configure -a && sudo apt-get -f install"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: max by (host) (fleet_dpkg_needs_configure)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-autoupdates-disabled
+        title: Auto-Updates Disabled
+        condition: C
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: The apt-daily-upgrade timer is disabled on a host that is supposed to auto-patch. Config drift, or someone masked it.
+          runbook: "ansible-playbook playbooks/unattended-upgrades.yml --limit <host>"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # Gated on INTENT, not on a hardcoded host list. The previous
+              # version assumed every monitored host auto-patches and warned
+              # that parking one outside `autoupdate` would make this fire
+              # forever; onboarding the hypervisor did exactly that.
+              #
+              # fleet_autoupdate_expected is templated from group membership
+              # by roles/update_metrics, so a host moving between autoupdate
+              # and no_autoupdate updates this rule's scope on its own.
+              #
+              # `and on (host)` keeps only the hosts that are supposed to
+              # patch. It is not interchangeable with `or`, which would ADD
+              # the hosts that are not supposed to and invert the meaning.
+              expr: |
+                min by (host) (fleet_unattended_upgrades_enabled)
+                  and on (host) (max by (host) (fleet_autoupdate_expected) == 1)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-update-metrics-stale
+        title: Update Metrics Exporter Stale
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: The fleet-update-metrics timer has not written in over an hour, so all patch-state alerts for this host are blind.
+          runbook: "systemctl status fleet-update-metrics.timer; journalctl -u fleet-update-metrics -n 50"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              # node_exporter emits node_textfile_mtime_seconds for free, so
+              # a broken exporter script is detectable without extra plumbing.
+              expr: time() - max by (host) (node_textfile_mtime_seconds{file="fleet-updates.prom"})
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [3600]}
+
+      # ---------------------------------------------------------------
+      - uid: fleet-apt-cache-stale
+        title: APT Cache Stale
+        condition: C
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: apt-get update has not succeeded in 3 days, so pending-update counts for this host are not trustworthy.
+          runbook: "systemctl status apt-daily.timer; sudo apt-get update"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: time() - max by (host) (fleet_apt_last_update_timestamp_seconds)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [259200]}

@@ -1,0 +1,237 @@
+---
+# Onboard ONE new host: from "it exists in the inventory" to "its metrics and
+# logs are visible in central Grafana".
+#
+#   ansible-playbook playbooks/preflight.yml --limit <newhost>
+#   ansible-playbook playbooks/onboard.yml   --limit <newhost>
+#
+# Before running, add the host to inventory/hosts.local.yml with ansible_host,
+# ansible_user, monitor_role, and membership of `monitored` (plus `autoupdate`
+# if it should be auto-patched). See docs/fleet/onboarding.md.
+#
+# WHY THIS EXISTS ALONGSIDE collectors.yml: collectors.yml is the fleet-wide
+# convergence run and assumes a host that already works. Onboarding is the
+# case where nothing has ever been proven, so this play checks the two things
+# that make a new host fail LATE and confusingly (it cannot reach the ingest
+# endpoint; its clock is wrong) before installing anything, and afterwards
+# confirms from the CONTROLLER that data actually landed centrally. A green
+# `systemctl status alloy` is not evidence of that: Alloy stays running and
+# healthy while every remote_write attempt is rejected.
+#
+# Idempotent. Safe to re-run against an already-onboarded host.
+
+- name: Refuse to onboard the whole fleet by accident
+  hosts: localhost
+  gather_facts: false
+  become: false
+  tasks:
+    - name: Require an explicit --limit
+      ansible.builtin.assert:
+        that: ansible_limit is defined
+        fail_msg: >-
+          onboard.yml is a single-host play and must be limited. Run
+          `ansible-playbook playbooks/onboard.yml --limit <newhost>`. To
+          converge the whole fleet instead, use playbooks/site.yml.
+        quiet: true
+
+    # Without this you get "skipping: no hosts matched", which reads like a
+    # typo in the limit and is in fact the commonest new-host mistake: the
+    # host was added to the inventory but not to `monitored`, so no playbook
+    # in this repo will ever target it.
+    - name: Confirm the target is actually in the `monitored` group
+      ansible.builtin.assert:
+        that: >-
+          query('inventory_hostnames', ansible_limit)
+          | intersect(groups['monitored'] | default([]))
+          | length > 0
+        fail_msg: >-
+          `{{ ansible_limit }}` is not in the `monitored` group. Every
+          playbook here targets that group, so a host outside it is invisible
+          to all of them. Add it under monitored: in
+          inventory/hosts.local.yml.
+        quiet: true
+
+- name: Install the collector on a new host and prove it reaches central
+  hosts: monitored
+  become: true
+
+  pre_tasks:
+    - name: Confirm the host carries the inventory vars the collector needs
+      ansible.builtin.assert:
+        that:
+          - monitor_role is defined
+          - monitor_hostname | length > 0
+        fail_msg: >-
+          {{ inventory_hostname }} is missing monitor_role. It becomes the
+          `role` external label on every metric and log line this host ships,
+          and the dashboards group by it. Set it in the inventory.
+        quiet: true
+
+    # The role installs these too, but the reachability check below runs
+    # first and needs a trust store to validate the ingest certificate. On a
+    # minimal LXC image that store is not there yet, and without this the
+    # check fails as a TLS error that looks like a broken endpoint.
+    - name: Install the TLS trust store the ingest check depends on
+      ansible.builtin.apt:
+        name: ca-certificates
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    # THE check for a new host. Everything else can be fixed later; a host
+    # that cannot reach the ingest endpoint will install cleanly, run
+    # cleanly, and ship nothing.
+    #
+    # /-/ready is derived from the remote_write URL so this follows whichever
+    # path the host is configured to push on, rather than assuming the public
+    # one. That distinction is load-bearing for the central node, which
+    # pushes to itself over loopback precisely so its telemetry does not
+    # depend on the WAN (see group_vars/central).
+    #
+    # Loki has no equivalent check: `/loki/ready` is a 404 through nginx
+    # because Loki's readiness path is `/ready` and the proxy preserves the
+    # `/loki` prefix. See docs/fleet/verification.md.
+    - name: Confirm this host can reach the central ingest endpoint
+      ansible.builtin.uri:
+        url: "{{ prometheus_remote_write_url | regex_replace('/api/v1/write$', '/-/ready') }}"
+        method: GET
+        status_code: [200]
+        url_username: "{{ collector_basic_auth_user if collector_basic_auth_required | bool else omit }}"
+        url_password: "{{ collector_basic_auth_password if collector_basic_auth_required | bool else omit }}"
+        force_basic_auth: "{{ collector_basic_auth_required | bool }}"
+      register: onboard_ingest
+      failed_when: false
+      no_log: true
+
+    - name: Explain an unreachable ingest endpoint
+      ansible.builtin.assert:
+        that: onboard_ingest.status | default(0) == 200
+        fail_msg: >-
+          {{ inventory_hostname }} cannot reach
+          {{ prometheus_remote_write_url }} (HTTP
+          {{ onboard_ingest.status | default('connection failed') }}).
+          Alloy would install and run here without ever shipping a sample.
+          401 means the collector password is wrong for this host; a
+          connection or DNS failure means egress or resolution is broken;
+          502 means the central stack is down. Fix this before continuing.
+        quiet: true
+
+    # Prometheus rejects samples whose timestamps fall outside its accepted
+    # window, so a host with a skewed clock ships a full config, reports a
+    # healthy unit, and still shows up nowhere. Fresh LXC guests inherit the
+    # host clock and are usually fine, which is exactly why this one gets
+    # overlooked. A warning rather than a failure: the host may legitimately
+    # sync by some means this check does not know about.
+    - name: Check the clock is disciplined
+      ansible.builtin.command: timedatectl show --property=NTPSynchronized --value
+      register: onboard_ntp
+      changed_when: false
+      failed_when: false
+
+    - name: Warn about an undisciplined clock
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: NTPSynchronized={{ onboard_ntp.stdout | trim }}.
+          Clock skew makes central Prometheus reject this host's samples as
+          out of bounds while Alloy reports itself perfectly healthy. Enable
+          time sync (`timedatectl set-ntp true`) if the verification below
+          fails to find any data.
+      when: (onboard_ntp.stdout | trim) != 'yes'
+
+  roles:
+    # Order matches site.yml: GPU detection first because config.alloy.j2
+    # reads the fact it sets, then the collector, then the exporter whose
+    # .prom files the collector's textfile directory picks up.
+    #
+    # gpu_exporter must stay in this list, not just in collectors.yml. This
+    # play re-renders the Alloy config, so running it without gpu_exporter
+    # leaves gpu_exporter_available undefined, silently drops the GPU scrape
+    # block and restarts Alloy -- costing a GPU host its telemetry on a play
+    # that is documented as safe to re-run.
+    - gpu_exporter
+    - alloy_collector
+    - update_metrics
+
+  post_tasks:
+    # --- Proof, from the controller --------------------------------------
+    # The role already waits for Alloy's local /-/ready. That proves the
+    # process parsed its config, nothing more. These two checks are the only
+    # ones that answer the actual question: did the data arrive.
+    #
+    # Always over the PUBLIC endpoint with basic auth, even when onboarding
+    # the central node itself, because the query runs from the controller
+    # rather than on the target. And always keyed on monitor_hostname, not
+    # inventory_hostname: monitor-lxc pushes as `main-server`, so keying on
+    # the inventory name would look for a host that never reports.
+    - name: Wait for this host's metrics to land in central Prometheus
+      ansible.builtin.uri:
+        url: "https://{{ monitoring_domain }}/prometheus/api/v1/query"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          query: 'count(node_uname_info{host="{{ monitor_hostname }}"})'
+        url_username: "{{ collector_basic_auth_user }}"
+        url_password: "{{ collector_basic_auth_password }}"
+        force_basic_auth: true
+      delegate_to: localhost
+      become: false
+      register: onboard_metrics
+      failed_when: false
+      changed_when: false
+      no_log: true
+      # ~15s scrape plus a 5s batch deadline, so the first samples are due
+      # within a minute. The rest of the budget is for a cold remote_write
+      # queue working through backpressure on a busy ingest path.
+      retries: 20
+      delay: 15
+      until: onboard_metrics.json.data.result | default([]) | length > 0
+
+    - name: Confirm metrics arrived
+      ansible.builtin.assert:
+        that: onboard_metrics.json.data.result | default([]) | length > 0
+        fail_msg: >-
+          No metrics for host="{{ monitor_hostname }}" reached central
+          Prometheus within five minutes. Alloy is installed and running, so
+          the fault is between it and ingest. On the host:
+          `journalctl -u alloy -n 50` shows remote_write errors directly.
+          Check the clock warning above, and see
+          docs/fleet/troubleshooting.md.
+        quiet: true
+
+    - name: Wait for this host's logs to land in central Loki
+      ansible.builtin.uri:
+        url: "https://{{ monitoring_domain }}/loki/api/v1/label/host/values"
+        method: GET
+        url_username: "{{ collector_basic_auth_user }}"
+        url_password: "{{ collector_basic_auth_password }}"
+        force_basic_auth: true
+      delegate_to: localhost
+      become: false
+      register: onboard_logs
+      failed_when: false
+      changed_when: false
+      no_log: true
+      retries: 10
+      delay: 15
+      until: monitor_hostname in (onboard_logs.json.data | default([]))
+
+    - name: Confirm logs arrived
+      ansible.builtin.assert:
+        that: monitor_hostname in (onboard_logs.json.data | default([]))
+        fail_msg: >-
+          Metrics arrived but logs did not, so ingest and credentials are
+          fine and the journal source is not. Alloy reads the journal as a
+          member of systemd-journal; on an LXC guest with a
+          volatile-only journal there may genuinely be nothing to ship yet.
+          Check `journalctl -u alloy | grep -i loki` on the host.
+        quiet: true
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }} onboarded as host="{{ monitor_hostname }}"
+          role="{{ monitor_role }}". Metrics and logs confirmed in central
+          Grafana at https://{{ monitoring_domain }}. Next:
+          `ansible-playbook playbooks/site.yml --limit {{ inventory_hostname }}`
+          applies the patching and container-update policy for whichever
+          groups this host is in.

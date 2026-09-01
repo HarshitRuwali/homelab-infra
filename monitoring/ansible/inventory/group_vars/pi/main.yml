@@ -1,0 +1,12 @@
+---
+# PLATFORM-level overrides for the Raspberry Pis: true because of the
+# hardware, whatever distro is on it.
+#
+# The distro-level counterpart is group_vars/pi_debian, which holds the
+# Raspberry Pi OS kernel and bootloader package holds. Anything naming an apt
+# package belongs there, not here, because that is precisely what a future
+# non-Debian Pi would not share. See the header of inventory/hosts.local.yml.
+
+# These are SD-card hosts with 25-29 pending packages each. Keep the metrics
+# exporter off the critical path for IO.
+update_metrics_randomized_delay: 600

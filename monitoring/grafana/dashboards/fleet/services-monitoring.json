@@ -1,0 +1,169 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(node_systemd_unit_state{state=\"active\",host=~\"$host\"})", "refId": "A"}],
+      "title": "Active Systemd Units",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(node_systemd_unit_state{state=\"failed\",host=~\"$host\"})", "refId": "A"}],
+      "title": "Failed Systemd Units",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "id": 3,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(count by (host, name) (container_last_seen{host=~\"$host\",name!=\"\"}))", "refId": "A"}],
+      "title": "Containers Seen",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "id": 4,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "sum(count_over_time({host=~\"$host\"} |~ \"(?i)(error|failed|fatal|panic)\" [5m]))", "refId": "A"}],
+      "title": "Error Logs 5m",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Every Docker container in the fleet, one row each, with what it costs and how settled it is.\n\nRestarts 30m is the column to scan first: anything above 1 is a container fighting with something, and Uptime resetting between refreshes means the same thing.\n\nThis table is empty unless cAdvisor can see per-container cgroups. Membership of the `docker` group is NOT sufficient: cAdvisor also needs root for /run/containerd/containerd.sock, which roles/alloy_collector grants with a systemd drop-in on Docker hosts. If this is blank while Docker Logs at the bottom is not, that drop-in is missing.",
+      "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}, "unit": "short"}, "overrides": [{"matcher": {"id": "byName", "options": "CPU"}, "properties": [{"id": "unit", "value": "percentunit"}, {"id": "min", "value": 0}, {"id": "max", "value": 1}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "gradient"}}]}, {"matcher": {"id": "byName", "options": "Memory"}, "properties": [{"id": "unit", "value": "bytes"}]}, {"matcher": {"id": "byName", "options": "Uptime"}, "properties": [{"id": "unit", "value": "s"}]}, {"matcher": {"id": "byName", "options": "Restarts 30m"}, "properties": [{"id": "custom.cellOptions", "value": {"type": "color-background"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 3}]}}]}]},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 5},
+      "id": 11,
+      "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Restarts 30m"}]},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by (host, name) (rate(container_cpu_usage_seconds_total{host=~\"$host\",name!=\"\"}[5m]))", "format": "table", "instant": true, "range": false, "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "sum by (host, name) (container_memory_working_set_bytes{host=~\"$host\",name!=\"\"})", "format": "table", "instant": true, "range": false, "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "time() - max by (host, name) (container_start_time_seconds{host=~\"$host\",name!=\"\"})", "format": "table", "instant": true, "range": false, "refId": "C"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "editorMode": "code", "expr": "max by (host, name) (changes(container_start_time_seconds{host=~\"$host\",name!=\"\"}[30m]))", "format": "table", "instant": true, "range": false, "refId": "D"}
+      ],
+      "title": "Container Inventory",
+      "transformations": [{"id": "merge", "options": {}}, {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"host": 0, "name": 1, "Value #A": 2, "Value #B": 3, "Value #C": 4, "Value #D": 5}, "renameByName": {"Value #A": "CPU", "Value #B": "Memory", "Value #C": "Uptime", "Value #D": "Restarts 30m", "host": "Host", "name": "Container"}}}],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14},
+      "id": 5,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (host, state) (node_systemd_unit_state{state=~\"active|failed|inactive\",host=~\"$host\"})", "legendFormat": "{{host}} {{state}}", "refId": "A"}],
+      "title": "Systemd Units by State",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14},
+      "id": 6,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (host, name) (rate(container_cpu_usage_seconds_total{host=~\"$host\",image!=\"\",name!=\"\"}[5m]))", "legendFormat": "{{host}} {{name}}", "refId": "A"}],
+      "title": "Container CPU",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"unit": "bytes"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22},
+      "id": 7,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (host, name) (container_memory_working_set_bytes{host=~\"$host\",image!=\"\",name!=\"\"})", "legendFormat": "{{host}} {{name}}", "refId": "A"}],
+      "title": "Container Memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22},
+      "id": 8,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
+      "targets": [
+        {"datasource": {"type": "loki", "uid": "loki"}, "expr": "sum by (host) (count_over_time({host=~\"$host\",source=\"journal\"}[5m]))", "legendFormat": "{{host}} journal", "refId": "A"},
+        {"datasource": {"type": "loki", "uid": "loki"}, "expr": "sum by (host) (count_over_time({host=~\"$host\",source=\"docker\"}[5m]))", "legendFormat": "{{host}} docker", "refId": "B"}
+      ],
+      "title": "Log Volume 5m",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 30},
+      "id": 9,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "{host=~\"$host\",source=\"journal\"}", "refId": "A"}],
+      "title": "Systemd Journal Logs",
+      "type": "logs"
+    },
+    {
+      "datasource": {"type": "loki", "uid": "loki"},
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 30},
+      "id": 10,
+      "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showLabels": false, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "{host=~\"$host\",source=\"docker\"}", "refId": "A"}],
+      "title": "Docker Logs",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["services", "logs", "docker", "systemd"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": true, "text": "All", "value": "$__all"},
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "definition": "label_values(node_uname_info, host)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "host",
+        "options": [],
+        "query": {"query": "label_values(node_uname_info, host)", "refId": "PrometheusVariableQueryEditor-VariableQuery"},
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Services and Logs",
+  "uid": "services-monitoring",
+  "version": 1,
+  "weekStart": ""
+}

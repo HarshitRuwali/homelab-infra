@@ -1,0 +1,120 @@
+---
+# This role is applied by GROUP MEMBERSHIP (`autoupdate`), never by an
+# in-role `when:`. A conditional here would be one typo away from
+# auto-upgrading the hypervisor. See inventory/hosts.yml.
+
+- name: Install unattended-upgrades and helpers
+  ansible.builtin.apt:
+    name:
+      - unattended-upgrades
+      - apt-listchanges
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configure the APT periodic schedule
+  ansible.builtin.template:
+    src: 20auto-upgrades.j2
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Configure unattended-upgrades policy
+  ansible.builtin.template:
+    src: 52unattended-upgrades-fleet.j2
+    dest: /etc/apt/apt.conf.d/52unattended-upgrades-fleet
+    owner: root
+    group: root
+    mode: "0644"
+  when: uu_enable_installs | default(true)
+
+- name: Ensure the apt-daily-upgrade timer override directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/apt-daily-upgrade.timer.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: uu_enable_installs | default(true)
+
+- name: Stagger the apt-daily-upgrade timer
+  ansible.builtin.template:
+    src: apt-daily-upgrade-fleet.conf.j2
+    dest: /etc/systemd/system/apt-daily-upgrade.timer.d/fleet.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: uu_enable_installs | default(true)
+  notify: Reload systemd
+
+- name: Flush handlers before touching timers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the apt refresh timer
+  ansible.builtin.systemd:
+    name: apt-daily.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Enable the apt upgrade timer
+  ansible.builtin.systemd:
+    name: apt-daily-upgrade.timer
+    enabled: "{{ uu_enable_installs | default(true) }}"
+    state: "{{ (uu_enable_installs | default(true)) | ternary('started', 'stopped') }}"
+
+# --- Validation gates ----------------------------------------------------
+# Everything below fails the play now rather than letting you discover a
+# broken config at 03:00 when it silently does the wrong thing.
+
+- name: Read back the effective apt configuration
+  ansible.builtin.command: apt-config dump
+  register: uu_apt_config
+  changed_when: false
+  # Read-only, and it MUST run under --check. A skipped command registers a
+  # stub with an empty stdout, so the auto-reboot assert below would evaluate
+  # `'...' in ''`, fail, and abort a dry run on every patched host. Letting it
+  # run means --check genuinely verifies the never-reboot guarantee against
+  # what is on disk right now, rather than skipping the one safety property
+  # this role exists to enforce.
+  check_mode: false
+
+- name: Assert that auto-reboot is disabled
+  ansible.builtin.assert:
+    that:
+      - "'Unattended-Upgrade::Automatic-Reboot \"false\"' in uu_apt_config.stdout"
+    fail_msg: >-
+      REFUSING TO CONTINUE: Automatic-Reboot is not false on
+      {{ inventory_hostname }}. The fleet policy is that nothing ever reboots
+      itself. Inspect /etc/apt/apt.conf.d/ for a conflicting file.
+    success_msg: "Automatic-Reboot is disabled."
+
+- name: Dry-run unattended-upgrades
+  ansible.builtin.command: unattended-upgrade --dry-run --debug
+  register: uu_dryrun
+  changed_when: false
+  failed_when: false
+  when: uu_enable_installs | default(true)
+  # `--dry-run` installs nothing, so this is safe to run in check mode, and
+  # running it is the point: the two asserts below are the gate that catches a
+  # broken config before 03:00. Skipping them under --check would make the
+  # dry run report success on a host whose next real run would fail.
+  check_mode: false
+
+- name: Assert the dry run did not blow up
+  ansible.builtin.assert:
+    that:
+      - uu_dryrun.rc == 0
+      - "'Traceback' not in uu_dryrun.stdout"
+      - "'Traceback' not in uu_dryrun.stderr"
+    fail_msg: >-
+      unattended-upgrade --dry-run failed on {{ inventory_hostname }}.
+      rc={{ uu_dryrun.rc }}. Tail:
+      {{ (uu_dryrun.stdout | default(''))[-2000:] }}
+  when: uu_enable_installs | default(true)
+
+- name: Show what the next run would install
+  ansible.builtin.debug:
+    msg: "{{ uu_dryrun.stdout_lines | select('search', '(?i)^\\s*(Inst|Packages that will be upgraded|Keeping)') | list }}"
+  when: uu_enable_installs | default(true)

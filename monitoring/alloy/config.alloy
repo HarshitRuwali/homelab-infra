@@ -1,0 +1,149 @@
+// SCOPE: Docker collector ONLY (docker-compose.yml, docker-compose.collector.yml).
+//
+// This file sets rootfs_path/procfs_path/sysfs_path because the containerised
+// collector runs with /:/rootfs and /proc:/host/proc bind mounts. A NATIVE
+// systemd Alloy must not set them.
+//
+// Native installs are managed by Ansible, which is authoritative:
+//   ansible/roles/alloy_collector/templates/config.alloy.j2
+// Changes made here do NOT reach any host in the fleet. See docs/fleet-ansible.md.
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+prometheus.remote_write "central" {
+  external_labels = {
+    host = sys.env("MONITOR_HOSTNAME"),
+    role = sys.env("MONITOR_ROLE"),
+  }
+
+  endpoint {
+    name = "central-prometheus"
+    url  = sys.env("PROMETHEUS_REMOTE_WRITE_URL")
+
+    basic_auth {
+      username = sys.env("COLLECTOR_BASIC_AUTH_USER")
+      password = sys.env("COLLECTOR_BASIC_AUTH_PASSWORD")
+    }
+  }
+}
+
+prometheus.exporter.unix "host" {
+  rootfs_path = "/rootfs"
+  procfs_path = "/host/proc"
+  sysfs_path  = "/sys"
+
+  enable_collectors = ["systemd", "processes"]
+
+  filesystem {
+    mount_points_exclude = "^/(dev|proc|run/credentials/.+|sys|var/lib/docker/.+)($|/)"
+  }
+
+  systemd {
+    enable_restarts = true
+    start_time      = true
+    task_metrics    = true
+  }
+}
+
+prometheus.scrape "host" {
+  job_name        = "host-unix"
+  targets         = prometheus.exporter.unix.host.targets
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+
+prometheus.exporter.cadvisor "containers" {
+  docker_host      = "unix:///var/run/docker.sock"
+  docker_only      = true
+  storage_duration = "5m"
+}
+
+prometheus.scrape "containers" {
+  job_name        = "container-cadvisor"
+  targets         = prometheus.exporter.cadvisor.containers.targets
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+
+prometheus.scrape "alloy" {
+  job_name = "alloy"
+  targets = [{"__address__" = "127.0.0.1:12345"}]
+  forward_to = [prometheus.remote_write.central.receiver]
+}
+
+loki.write "central" {
+  external_labels = {
+    host = sys.env("MONITOR_HOSTNAME"),
+    role = sys.env("MONITOR_ROLE"),
+  }
+
+  endpoint {
+    name = "central-loki"
+    url  = sys.env("LOKI_WRITE_URL")
+
+    basic_auth {
+      username = sys.env("COLLECTOR_BASIC_AUTH_USER")
+      password = sys.env("COLLECTOR_BASIC_AUTH_PASSWORD")
+    }
+  }
+}
+
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+}
+
+loki.source.journal "system" {
+  max_age       = "12h"
+  labels        = {job = "systemd-journal", source = "journal"}
+  relabel_rules = loki.relabel.journal.rules
+  forward_to    = [loki.write.central.receiver]
+}
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label  = "container_id"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+
+  rule {
+    target_label = "source"
+    replacement  = "docker"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  labels     = {job = "docker"}
+  targets    = discovery.relabel.docker_logs.output
+  forward_to = [loki.write.central.receiver]
+}

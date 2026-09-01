@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+# Managed by ansible/roles/smart_metrics. Do not edit by hand.
+#
+# Writes SMART disk-health metrics to {{ smart_metrics_dir }}/{{ smart_metrics_file }}
+# for the node_exporter textfile collector that Alloy already reads.
+#
+# WHY PYTHON AND NOT SHELL, unlike roles/update_metrics: this parses
+# `smartctl --json`, and the alternative is scraping smartctl's human-readable
+# output with awk. That output differs between SATA and NVMe, between
+# smartmontools versions, and between drive vendors, which is exactly the kind
+# of parsing that silently starts reporting zeros after a package upgrade.
+# The JSON schema is stable and versioned.
+#
+# EXIT STATUS: smartctl uses a BITMASK, not a plain code. Bit 0 (1) means a
+# command-line/open error, bit 1 (2) means the device was not opened, but bits
+# 2+ (4, 8, 16...) are health findings, and bit 5 (32) just means "a prefail
+# attribute is below threshold". Treating any non-zero exit as failure would
+# throw away the reading from exactly the failing disk this exists to catch.
+# So we only reject bits 0 and 1, and otherwise trust the JSON payload.
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+
+OUT_DIR = "{{ smart_metrics_dir }}"
+OUT_FILE = "{{ smart_metrics_file }}"
+NOCHECK = "{{ smart_metrics_nocheck }}"
+
+SMARTCTL = "/usr/sbin/smartctl"
+OPEN_FAILED_MASK = 0b11  # bits 0 and 1 only
+
+
+def smartctl(args):
+    """Run smartctl --json and return (parsed_json, exit_code)."""
+    try:
+        p = subprocess.run(
+            [SMARTCTL, "--json"] + args,
+            capture_output=True, text=True, timeout=120,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None, -1
+    try:
+        return json.loads(p.stdout), p.returncode
+    except ValueError:
+        return None, p.returncode
+
+
+def esc(s):
+    """Escape a Prometheus label value."""
+    return str(s).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def scan():
+    data, _ = smartctl(["--scan"])
+    if not data:
+        return []
+    return [d["name"] for d in data.get("devices", []) if d.get("name")]
+
+
+def collect(dev):
+    """Return a list of (metric_name, labels_dict, value) for one device."""
+    data, rc = smartctl(["-a", "--nocheck", NOCHECK, dev])
+    if data is None or (rc & OPEN_FAILED_MASK):
+        return []
+
+    # A device that cannot do SMART at all (QEMU virtual disks, most USB
+    # bridges) is not an error worth alerting on; it simply has nothing to say.
+    if not data.get("smart_support", {}).get("available", False):
+        return []
+
+    labels = {
+        "device": dev,
+        "model": data.get("model_name", "unknown"),
+        "serial": data.get("serial_number", "unknown"),
+        "type": data.get("device", {}).get("type", "unknown"),
+    }
+    out = []
+
+    def add(name, value, extra=None):
+        if value is None:
+            return
+        lbl = dict(labels)
+        if extra:
+            lbl.update(extra)
+        out.append((name, lbl, float(value)))
+
+    passed = data.get("smart_status", {}).get("passed")
+    if passed is not None:
+        add("fleet_smart_device_health_ok", 1 if passed else 0)
+
+    add("fleet_smart_temperature_celsius", data.get("temperature", {}).get("current"))
+    add("fleet_smart_power_on_hours", data.get("power_on_time", {}).get("hours"))
+    add("fleet_smart_power_cycle_count", data.get("power_cycle_count"))
+
+    # --- SATA / ATA attributes ------------------------------------------
+    # These four are the ones that actually predict a failing spinning disk.
+    # Reallocated and pending sectors are the classic leading indicators.
+    wanted = {
+        5: "fleet_smart_reallocated_sectors",
+        197: "fleet_smart_pending_sectors",
+        198: "fleet_smart_offline_uncorrectable",
+        199: "fleet_smart_crc_errors",
+    }
+    for attr in data.get("ata_smart_attributes", {}).get("table", []):
+        name = wanted.get(attr.get("id"))
+        if name:
+            add(name, attr.get("raw", {}).get("value"))
+
+    # --- NVMe health log -------------------------------------------------
+    nv = data.get("nvme_smart_health_information_log", {})
+    if nv:
+        add("fleet_smart_nvme_percentage_used_ratio", nv.get("percentage_used", 0) / 100.0)
+        add("fleet_smart_nvme_available_spare_ratio", nv.get("available_spare", 0) / 100.0)
+        add("fleet_smart_nvme_media_errors", nv.get("media_errors"))
+        add("fleet_smart_nvme_unsafe_shutdowns", nv.get("unsafe_shutdowns"))
+
+    # Self-test log: the most recent completed test's status.
+    st = data.get("ata_smart_self_test_log", {}).get("standard", {}).get("table", [])
+    if st:
+        add("fleet_smart_last_self_test_passed",
+            1 if st[0].get("status", {}).get("passed") else 0)
+
+    return out
+
+
+def main():
+    lines = []
+    devices = scan()
+    samples = []
+    for dev in devices:
+        samples.extend(collect(dev))
+
+    # Group by metric name so each family gets exactly one HELP/TYPE pair,
+    # which is what the textfile collector requires.
+    by_name = {}
+    for name, lbl, val in samples:
+        by_name.setdefault(name, []).append((lbl, val))
+
+    for name in sorted(by_name):
+        lines.append("# HELP %s From smartctl, via roles/smart_metrics." % name)
+        lines.append("# TYPE %s gauge" % name)
+        for lbl, val in by_name[name]:
+            rendered = ",".join('%s="%s"' % (k, esc(v)) for k, v in sorted(lbl.items()))
+            # NOTE: built by concatenation on purpose. Ansible renders this
+            # file as a Jinja template before installing it, and an opening
+            # brace immediately followed by a percent sign is a Jinja
+            # statement tag. The obvious single-format-string version puts
+            # those two characters next to each other and kills the play with
+            # "Encountered unknown tag 's'". Never let those two characters
+            # become adjacent anywhere in this file, comments included.
+            labelled = "{" + rendered + "}"
+            lines.append("%s%s %g" % (name, labelled, val))
+
+    # Emitted unconditionally, including when no SMART-capable device exists.
+    # Without these two the dashboard cannot tell "this host has no such disk"
+    # from "the exporter died", which is the same trap node_textfile_mtime
+    # exists to close.
+    lines.append("# HELP fleet_smart_devices_total SMART-capable devices found.")
+    lines.append("# TYPE fleet_smart_devices_total gauge")
+    lines.append("fleet_smart_devices_total %d" % len(by_name.get("fleet_smart_device_health_ok", [])))
+    lines.append("# HELP fleet_smart_collection_timestamp_seconds When this ran.")
+    lines.append("# TYPE fleet_smart_collection_timestamp_seconds gauge")
+    lines.append("fleet_smart_collection_timestamp_seconds %d" % int(time.time()))
+
+    # Write-then-rename, and into the SAME directory so the rename is atomic
+    # within one filesystem. The collector will happily read a half-written
+    # file and export garbage otherwise.
+    os.makedirs(OUT_DIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=OUT_DIR, prefix=".fleet-smart.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, os.path.join(OUT_DIR, OUT_FILE))
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

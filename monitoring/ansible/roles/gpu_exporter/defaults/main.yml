@@ -1,0 +1,29 @@
+---
+# Pinned deliberately, same reasoning as alloy_package_state: there is no apt
+# repo for this exporter, so `apt: state=present` cannot express "never
+# silently upgrade" the way it does for Alloy. A specific version pinned here
+# is that guarantee instead. Bump both this and the checksums below together.
+gpu_exporter_version: "1.14.0"
+
+# Loopback only. The packaged systemd unit defaults to :9835 on every
+# interface; Alloy scrapes it locally, same pattern as its own self-scrape on
+# alloy_listen_addr, so nothing needs it reachable off the host.
+gpu_exporter_listen_addr: "127.0.0.1:9835"
+
+# Export per-process GPU metrics: which PID is holding how much VRAM.
+#
+# This is the one figure `nvidia-smi` shows at the bottom and `nvtop` shows in
+# its process table, and it is the difference between "the GPU is full" and
+# "THIS job is filling the GPU". Off by default in the exporter, on here.
+#
+# Cardinality is bounded by the number of processes actually holding a CUDA
+# context, which is a handful even on a busy box, not by the process count of
+# the host. It is nothing like the per-process CPU exporter.
+gpu_exporter_collect_processes: true
+
+# sha256 of each release's .deb, copied from the signed checksums.txt at
+# https://github.com/utkuozdemir/nvidia_gpu_exporter/releases. Update
+# alongside gpu_exporter_version.
+gpu_exporter_checksums:
+  amd64: "sha256:a6769afa6059c1ce4993979f89a80c28deb6b40d9f62e9bb6c2ede7d5dbdde8f"
+  arm64: "sha256:5812801f9bd8b62d883346cba5c1f9a90a4e6fa4cbe6d9d89ab9eeb3e6e0b631"

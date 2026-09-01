@@ -1,0 +1,17 @@
+---
+# The central monitoring LXC (Proxmox guest 112).
+#
+# CRITICAL: monitor_hostname must match the MONITOR_HOSTNAME already set in
+# /etc/default/alloy on this box. This node has been reporting since before
+# the Ansible rollout, so renaming it would fork its identity in Prometheus
+# and Loki: old history under one `host` label, new data under another.
+#
+# It also feeds the host-down or-chain in roles/grafana_alerting. If this
+# value does not match reality, fleet-host-down fires permanently for a host
+# that never existed, while the real central node is never checked.
+#
+# VERIFY IN PHASE 0 before running any playbook against this host:
+#   ssh <monitor-lxc> 'grep MONITOR_HOSTNAME /etc/default/alloy'
+#
+# `main-server` is the value suggested by .env.example, not a confirmed read.
+monitor_hostname: main-server

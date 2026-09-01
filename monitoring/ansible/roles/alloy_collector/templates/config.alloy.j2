@@ -1,0 +1,228 @@
+// Managed by ansible/roles/alloy_collector. Do not edit by hand.
+// Rendered for {{ inventory_hostname }} (role={{ monitor_role }}).
+//
+// This template is the single source of truth for every NATIVE Alloy install
+// in the fleet. Two other copies of this config exist and are deliberately
+// scoped narrower:
+//   - alloy/config.alloy            -> Docker collector only (sets rootfs_path
+//                                      etc. because it runs with bind mounts)
+//   - scripts/lxc-install.sh heredoc -> bootstrap only, guarded by
+//                                      /etc/alloy/.ansible-managed
+// A native install must NOT set rootfs_path/procfs_path/sysfs_path.
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+prometheus.remote_write "central" {
+  external_labels = {
+    host = sys.env("MONITOR_HOSTNAME"),
+    role = sys.env("MONITOR_ROLE"),
+  }
+
+  endpoint {
+    name = "central-prometheus"
+    url  = sys.env("PROMETHEUS_REMOTE_WRITE_URL")
+{% if collector_basic_auth_required | bool %}
+
+    basic_auth {
+      username = sys.env("COLLECTOR_BASIC_AUTH_USER")
+      password = sys.env("COLLECTOR_BASIC_AUTH_PASSWORD")
+    }
+{% endif %}
+
+    // Onboarding the whole fleet at once means backfilling a lot of history
+    // through a shared ingest path. Retry rather than drop on backpressure.
+    queue_config {
+      capacity            = 10000
+      max_shards          = 10
+      batch_send_deadline = "5s"
+      retry_on_http_429   = true
+    }
+  }
+}
+
+prometheus.exporter.unix "host" {
+  enable_collectors = ["systemd", "processes"]
+
+  // Reads /var/lib/node_exporter/textfile_collector/*.prom, which is how the
+  // update_metrics role surfaces apt/reboot state. node_exporter also emits
+  // node_textfile_mtime_seconds for free, so a broken exporter script is
+  // detectable centrally.
+  textfile {
+    directory = "{{ alloy_textfile_dir }}"
+  }
+
+  filesystem {
+    mount_points_exclude = "{{ alloy_fs_mount_points_exclude }}"
+    fs_types_exclude     = "{{ alloy_fs_types_exclude }}"
+  }
+
+  systemd {
+    enable_restarts = true
+    start_time      = true
+    task_metrics    = true
+    unit_exclude    = "{{ alloy_systemd_unit_exclude }}"
+  }
+}
+
+prometheus.scrape "host" {
+  job_name        = "host-unix"
+  targets         = prometheus.exporter.unix.host.targets
+  scrape_interval = "{{ alloy_scrape_interval }}"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+
+prometheus.scrape "alloy" {
+  job_name   = "alloy"
+  targets    = [{"__address__" = "{{ alloy_listen_addr }}"}]
+  forward_to = [prometheus.remote_write.central.receiver]
+}
+
+loki.write "central" {
+  external_labels = {
+    host = sys.env("MONITOR_HOSTNAME"),
+    role = sys.env("MONITOR_ROLE"),
+  }
+
+  endpoint {
+    name = "central-loki"
+    url  = sys.env("LOKI_WRITE_URL")
+{% if collector_basic_auth_required | bool %}
+
+    basic_auth {
+      username = sys.env("COLLECTOR_BASIC_AUTH_USER")
+      password = sys.env("COLLECTOR_BASIC_AUTH_PASSWORD")
+    }
+{% endif %}
+  }
+}
+
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+}
+
+loki.source.journal "system" {
+  max_age       = "{{ alloy_journal_max_age }}"
+  labels        = {job = "systemd-journal", source = "journal"}
+  relabel_rules = loki.relabel.journal.rules
+  forward_to    = [loki.write.central.receiver]
+}
+{% if alloy_enable_process | default(false) %}
+
+// --- Per-process metrics -------------------------------------------------
+// Opt-in per host; see alloy_enable_process in the role defaults for the
+// cardinality reasoning.
+
+prometheus.exporter.process "processes" {
+  // Group by command name, so every PID of the same program collapses into
+  // one series. Grouping by PID instead mints a new series on every restart
+  // and grows without bound.
+  //
+  // The matcher name is hardcoded rather than exposed as a variable on
+  // purpose: its value is the literal string {{ "{{.Comm}}" }}, and Ansible
+  // templates variable values too, so holding it in a var means fighting two
+  // layers of Jinja to keep the braces intact. It is not worth a knob.
+  // `cmdline`, not `comm`. They are not interchangeable: comm is a list of
+  // EXACT command names, cmdline is a list of REGEXES. `comm = [".+"]` is
+  // therefore not "match everything", it matches a process literally named
+  // ".+", which is nothing at all. Verified the wrong way round first: the
+  // component started cleanly, the scrape pool came up, and exactly zero
+  // series were produced.
+  matcher {
+    name    = "{{ "{{.Comm}}" }}"
+    cmdline = [".+"]
+  }
+
+  // Both off deliberately. track_threads multiplies series by thread count,
+  // and gather_smaps walks /proc/*/smaps on every scrape, which is expensive
+  // on a host with many processes and buys detail nothing here charts.
+  track_threads = false
+  gather_smaps  = false
+}
+
+prometheus.scrape "processes" {
+  job_name        = "host-process"
+  targets         = prometheus.exporter.process.processes.targets
+  scrape_interval = "{{ alloy_scrape_interval }}"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+{% endif %}
+{% if gpu_exporter_available | default(false) %}
+
+// --- GPU telemetry (host has an NVIDIA GPU) -------------------------------
+// nvidia_gpu_exporter runs as its own systemd service, installed and bound
+// to loopback by roles/gpu_exporter; there is no in-process Alloy component
+// for this the way prometheus.exporter.unix/.cadvisor are.
+
+prometheus.scrape "gpu" {
+  job_name        = "nvidia-gpu"
+  targets         = [{"__address__" = "{{ gpu_exporter_listen_addr }}"}]
+  scrape_interval = "{{ alloy_scrape_interval }}"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+{% endif %}
+{% if alloy_docker_effective %}
+
+// --- Docker telemetry (host has /var/run/docker.sock) --------------------
+
+prometheus.exporter.cadvisor "containers" {
+  docker_host      = "unix:///var/run/docker.sock"
+  docker_only      = true
+  storage_duration = "5m"
+}
+
+prometheus.scrape "containers" {
+  job_name        = "container-cadvisor"
+  targets         = prometheus.exporter.cadvisor.containers.targets
+  scrape_interval = "{{ alloy_scrape_interval }}"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label  = "container_id"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+
+  rule {
+    target_label = "source"
+    replacement  = "docker"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  labels     = {job = "docker"}
+  targets    = discovery.relabel.docker_logs.output
+  forward_to = [loki.write.central.receiver]
+}
+{% endif %}

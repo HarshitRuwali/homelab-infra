@@ -1,0 +1,105 @@
+---
+- name: Install needrestart for kernel/service staleness detection
+  ansible.builtin.apt:
+    name: needrestart
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  when: update_metrics_use_needrestart | bool
+
+# needrestart's own APT hook prompts interactively during upgrades, which
+# would hang an unattended run. We only want its reporting mode.
+- name: Put needrestart in non-interactive list mode
+  ansible.builtin.copy:
+    content: |
+      # Managed by ansible/roles/update_metrics.
+      # List outdated services, never prompt: an interactive prompt would
+      # hang unattended-upgrades indefinitely.
+      $nrconf{restart} = 'l';
+    dest: /etc/needrestart/conf.d/50-fleet-noninteractive.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: update_metrics_use_needrestart | bool
+
+- name: Ensure the textfile collector directory exists
+  ansible.builtin.file:
+    path: "{{ update_metrics_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the update-metrics exporter script
+  ansible.builtin.template:
+    src: fleet-update-metrics.sh.j2
+    dest: "{{ update_metrics_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Run fleet-update-metrics
+
+- name: Install the update-metrics systemd service
+  ansible.builtin.template:
+    src: fleet-update-metrics.service.j2
+    dest: /etc/systemd/system/fleet-update-metrics.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Run fleet-update-metrics
+
+- name: Install the update-metrics systemd timer
+  ansible.builtin.template:
+    src: fleet-update-metrics.timer.j2
+    dest: /etc/systemd/system/fleet-update-metrics.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Enable and start the update-metrics timer
+  ansible.builtin.systemd:
+    name: fleet-update-metrics.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+
+# `enabled` only, never `state`. The unit's [Install] section wires it to
+# multi-user.target so a reboot refreshes the metrics immediately instead of
+# waiting out RandomizedDelaySec; see the service template for why. Setting
+# state here as well would run the apt simulation on every play, which on a Pi
+# is ~30s of SD-card IO for nothing.
+- name: Enable the update-metrics service so a reboot refreshes it at once
+  ansible.builtin.systemd:
+    name: fleet-update-metrics.service
+    enabled: true
+
+- name: Flush handlers so metrics exist before we verify them
+  ansible.builtin.meta: flush_handlers
+
+# --- Proof of life -------------------------------------------------------
+# `systemd: state=started` returns once the oneshot job is ENQUEUED, not when
+# it finishes. The script runs apt-get --just-print, which takes ~30s on a Pi
+# with a large pending list, so a bare stat here races and reports a false
+# failure. Retry until it lands.
+- name: Confirm the metrics file was written
+  ansible.builtin.stat:
+    path: "{{ update_metrics_dir }}/{{ update_metrics_file }}"
+  register: update_metrics_out
+  retries: 18
+  delay: 5
+  until:
+    - update_metrics_out.stat.exists
+    - update_metrics_out.stat.size | default(0) > 0
+
+- name: Fail if the exporter produced nothing
+  ansible.builtin.assert:
+    that:
+      - update_metrics_out.stat.exists
+      - update_metrics_out.stat.size > 0
+    fail_msg: >-
+      {{ update_metrics_script }} did not produce
+      {{ update_metrics_dir }}/{{ update_metrics_file }}.
+      Check: journalctl -u fleet-update-metrics.service -n 50

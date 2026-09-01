@@ -1,0 +1,149 @@
+---
+# SMART disk health, surfaced through the textfile collector Alloy already
+# reads. See defaults/main.yml for why this is gated on inventory membership
+# rather than autodetected, and roles/update_metrics for the pattern it
+# mirrors.
+
+- name: Report the resolved SMART shape
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: smart_metrics_enabled={{ smart_metrics_enabled }}"
+
+- name: Install SMART disk health collection
+  when: smart_metrics_enabled | bool
+  block:
+    - name: Install smartmontools
+      ansible.builtin.apt:
+        name: smartmontools
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure the textfile collector directory exists
+      ansible.builtin.file:
+        path: "{{ smart_metrics_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the SMART metrics exporter script
+      ansible.builtin.template:
+        src: fleet-smart-metrics.j2
+        dest: "{{ smart_metrics_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+        # Catches a template edit that produces invalid Python before it is
+        # installed, rather than leaving a timer that fails every 15 minutes.
+        validate: /usr/bin/python3 -m py_compile %s
+      notify: Run fleet-smart-metrics
+
+    - name: Install the SMART metrics systemd service
+      ansible.builtin.template:
+        src: fleet-smart-metrics.service.j2
+        dest: /etc/systemd/system/fleet-smart-metrics.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Run fleet-smart-metrics
+
+    - name: Install the SMART metrics systemd timer
+      ansible.builtin.template:
+        src: fleet-smart-metrics.timer.j2
+        dest: /etc/systemd/system/fleet-smart-metrics.timer
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Enable and start the SMART metrics timer
+      ansible.builtin.systemd:
+        name: fleet-smart-metrics.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # `enabled` only, never `state`, for the same reason as update_metrics:
+    # the unit is wired to multi-user.target so a reboot refreshes it, and
+    # setting state here would interrogate every disk on every play.
+    - name: Enable the SMART metrics service so a reboot refreshes it at once
+      ansible.builtin.systemd:
+        name: fleet-smart-metrics.service
+        enabled: true
+
+    - name: Flush handlers so metrics exist before we verify them
+      ansible.builtin.meta: flush_handlers
+
+    # --- Proof of life ---------------------------------------------------
+    # `state: started` on a oneshot returns when the job is ENQUEUED, not when
+    # it finishes, and interrogating a spun-down 2 TB disk is not quick. Retry
+    # rather than race.
+    - name: Confirm the metrics file was written
+      ansible.builtin.stat:
+        path: "{{ smart_metrics_dir }}/{{ smart_metrics_file }}"
+      register: smart_metrics_out
+      retries: 18
+      delay: 5
+      until:
+        - smart_metrics_out.stat.exists
+        - smart_metrics_out.stat.size | default(0) > 0
+      when: not ansible_check_mode
+
+    - name: Fail if the exporter produced nothing
+      ansible.builtin.assert:
+        that:
+          - smart_metrics_out.stat.exists
+          - smart_metrics_out.stat.size > 0
+        fail_msg: >-
+          {{ smart_metrics_script }} did not produce
+          {{ smart_metrics_dir }}/{{ smart_metrics_file }}.
+          Check: journalctl -u fleet-smart-metrics.service -n 50
+      when: not ansible_check_mode
+
+    # A host in the group that finds no SMART-capable device is a
+    # configuration mistake worth surfacing loudly: the whole point of gating
+    # on group membership is that someone asserted this host has real disks.
+    - name: Warn if the host reports no SMART-capable devices
+      ansible.builtin.shell: |
+        grep '^fleet_smart_devices_total ' {{ smart_metrics_dir }}/{{ smart_metrics_file }} | awk '{print $2}'
+      register: smart_metrics_count
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Report the device count
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ smart_metrics_count.stdout | trim }}
+          SMART-capable device(s).
+          {{ 'CHECK THIS: the host is in the smart_metrics group but reports none.'
+             if (smart_metrics_count.stdout | trim | int) == 0 else '' }}
+      when: not ansible_check_mode
+
+- name: Remove SMART disk health collection where it is not enabled
+  when: not (smart_metrics_enabled | bool)
+  block:
+    - name: Stop and disable the SMART metrics timer
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - fleet-smart-metrics.timer
+        - fleet-smart-metrics.service
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Remove the SMART metrics units, script and stale metrics
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/fleet-smart-metrics.timer
+        - /etc/systemd/system/fleet-smart-metrics.service
+        - "{{ smart_metrics_script }}"
+        # Left behind, this would report disk health frozen at the moment
+        # collection stopped, which is worse than reporting nothing.
+        - "{{ smart_metrics_dir }}/{{ smart_metrics_file }}"
+      notify: Reload systemd

@@ -1,0 +1,130 @@
+---
+# Deploy the committed Grafana dashboards.
+#
+# This role exists because dashboards were the one provisioned artefact with no
+# Ansible path: alert rules ship via roles/grafana_alerting, collector config
+# via roles/alloy_collector, but dashboards were only ever written by
+# scripts/lxc-install.sh or by hand with `ansible -m copy`. That meant the repo
+# and the running Grafana could drift with nothing to reconcile them, and
+# `site.yml` could not honestly claim to make the stack match git.
+
+- name: Ensure the dashboard directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: "0755"
+  loop: >-
+    {{ [grafana_dashboard_root]
+       + (grafana_dashboard_dirs | map('regex_replace', '^', grafana_dashboard_root + '/') | list) }}
+
+- name: Install the dashboard provider config
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../grafana/provisioning/dashboards/dashboards.yml"
+    dest: "{{ grafana_provisioning_dashboards_dir }}/dashboards.yml"
+    owner: root
+    group: grafana
+    mode: "0640"
+  # The ONLY task here that restarts Grafana. Provider paths and folder names
+  # are read at startup; dashboard JSON is not.
+  notify: Restart grafana-server
+
+- name: Find the dashboards committed to the repo
+  ansible.builtin.find:
+    paths: "{{ playbook_dir }}/../../grafana/dashboards/{{ item }}"
+    patterns: "*.json"
+  loop: "{{ grafana_dashboard_dirs }}"
+  register: gd_local
+  delegate_to: localhost
+  become: false
+  changed_when: false
+  check_mode: false
+
+- name: Install the dashboards
+  ansible.builtin.copy:
+    src: "{{ item.1.path }}"
+    dest: "{{ grafana_dashboard_root }}/{{ item.0.item }}/{{ item.1.path | basename }}"
+    owner: grafana
+    group: grafana
+    mode: "0644"
+    # Parse the JSON on the target BEFORE it lands. A truncated or malformed
+    # file is otherwise accepted silently: the provider logs an error nobody
+    # reads and the dashboard simply never appears.
+    validate: "python3 -c \"import json,sys; json.load(open(sys.argv[1]))\" %s"
+  loop: "{{ gd_local.results | subelements('files') }}"
+  loop_control:
+    label: "{{ item.0.item }}/{{ item.1.path | basename }}"
+
+# --- Prune ---------------------------------------------------------------
+- name: Reconcile dashboards deleted from the repo
+  when: grafana_dashboard_prune | bool
+  block:
+    - name: List the dashboards currently on the host
+      ansible.builtin.find:
+        paths: "{{ grafana_dashboard_root }}/{{ item }}"
+        patterns: "*.json"
+      loop: "{{ grafana_dashboard_dirs }}"
+      register: gd_remote
+      changed_when: false
+
+    - name: Remove dashboards that are no longer committed
+      ansible.builtin.file:
+        path: "{{ item.1.path }}"
+        state: absent
+      loop: "{{ gd_remote.results | subelements('files') }}"
+      loop_control:
+        label: "{{ item.1.path | basename }}"
+      when: >-
+        (item.1.path | basename) not in
+        (gd_local.results
+          | selectattr('item', 'equalto', item.0.item)
+          | map(attribute='files') | flatten
+          | map(attribute='path') | map('basename') | list)
+
+- name: Flush handlers so the readback tests the running config
+  ansible.builtin.meta: flush_handlers
+
+# --- Proof of life -------------------------------------------------------
+# The file provider scans on an interval, so a readback immediately after the
+# copy races it. Retry rather than assert once and fail a correct deploy.
+- name: Wait for the Grafana API
+  ansible.builtin.uri:
+    url: "{{ grafana_api_url }}/api/health"
+    status_code: [200]
+  register: gd_health
+  retries: 20
+  delay: 3
+  until: gd_health is succeeded
+  when: not ansible_check_mode
+
+- name: Read back the provisioned dashboards
+  ansible.builtin.uri:
+    url: "{{ grafana_api_url }}/api/search?type=dash-db&limit=500"
+    user: "{{ grafana_admin_user }}"
+    password: "{{ vault_grafana_admin_password }}"
+    force_basic_auth: true
+    status_code: [200]
+  register: gd_live
+  no_log: true
+  retries: 10
+  delay: 6
+  until:
+    - gd_live is succeeded
+    - (gd_live.json | length) >= (gd_local.results | map(attribute='files') | map('length') | sum)
+  when: not ansible_check_mode
+
+- name: Assert every committed dashboard is live
+  ansible.builtin.assert:
+    that:
+      - (gd_live.json | length) >= (gd_local.results | map(attribute='files') | map('length') | sum)
+    fail_msg: >-
+      Grafana reports {{ gd_live.json | default([], true) | length }} dashboards
+      but {{ gd_local.results | map(attribute='files') | map('length') | sum }}
+      are committed. A file that fails to parse is dropped silently by the
+      provider. Check:
+      journalctl -u grafana-server -n 100 | grep -i provision
+    success_msg: >-
+      {{ gd_live.json | length }} dashboards live
+      ({{ gd_live.json | map(attribute='folderTitle') | unique | sort | join(', ') }}).
+  when: not ansible_check_mode

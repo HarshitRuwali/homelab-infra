@@ -1,0 +1,194 @@
+# Example inventory. Copy to hosts.local.yml and fill in your own values:
+#
+#   cp inventory/hosts.example.yml inventory/hosts.local.yml
+#
+# hosts.local.yml is gitignored and is what ansible.cfg actually loads. Real
+# addresses, usernames and domains belong there, never in this file: this
+# repository is public, and an inventory is a complete map of your estate
+# (ingest endpoint, internal addressing, valid usernames, and which box to hit
+# to blind your monitoring).
+#
+# =========================================================================
+# HOW `monitored` IS BIFURCATED
+# =========================================================================
+# Two levels: PLATFORM, then DISTRO FAMILY.
+#
+#   lxc            -> Proxmox LXC containers (share the hypervisor kernel)
+#     lxc_debian
+#   vm             -> Proxmox KVM virtual machines (own kernel)
+#     vm_debian
+#   pi             -> bare-metal ARM SBCs
+#     pi_debian
+#
+# Every monitored host goes in exactly one leaf. Today every leaf is
+# `_debian`, which is the point of the split rather than an argument against
+# it: when a `vm_fedora` or `lxc_alpine` arrives it slots in beside its
+# sibling without disturbing anything, and `--limit vm` keeps meaning "every
+# VM" regardless of what is installed on them.
+#
+# WHICH LEVEL DOES A VARIABLE BELONG TO?
+#   platform (lxc/vm/pi)  -> true because of the hardware or the
+#                            virtualisation. SD-card IO on the Pis. Shared
+#                            kernel on LXC.
+#   distro   (*_debian)   -> true because of the package manager. Anything
+#                            naming an apt package belongs here, because that
+#                            is exactly what a `_fedora` sibling would not
+#                            share.
+# Deeper groups win, so a `_debian` value overrides its platform parent.
+#
+# "debian" MEANS THE DEBIAN FAMILY. Ubuntu belongs in `*_debian`: the axis
+# that matters to every role in this repo is apt-vs-dnf, and Ubuntu is on the
+# apt side of it. Reserve a new leaf for distros that would actually break
+# these roles.
+#
+# DETERMINE PLATFORM FROM THE HOST, DO NOT ASSUME FROM ITS NAME:
+#   ansible <host> -m setup -a 'filter=ansible_virtualization*'
+# An LXC reports virtualization_type=lxc and, confusingly, whatever kernel
+# the hypervisor runs (often `-pve`). Bare metal reports role=host.
+#
+# =========================================================================
+# OVERLAY GROUPS
+# =========================================================================
+# These cut across the platform tree; a host is in as many as apply.
+#   monitored      -> gets the Alloy collector and the update-metrics exporter
+#   lan_guests     -> HOW it is reached (ProxyJump, not direct)
+#   central        -> WHAT IT RUNS (the monitoring stack itself)
+#   autoupdate     -> ALSO gets unattended-upgrades (auto-apply, never reboot)
+#   no_autoupdate  -> monitored but NEVER auto-patched
+#
+# Membership in `autoupdate` is the ONLY thing that enables patching. The
+# unattended_upgrades role has no internal host conditional on purpose: a
+# conditional inside a role is one typo away from auto-upgrading a hypervisor.
+
+all:
+  vars:
+    ansible_user: youruser
+    ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+    ansible_python_interpreter: /usr/bin/python3
+
+    # Public hostname of the central stack. Used to build the remote_write and
+    # Loki push URLs in group_vars/all/main.yml.
+    monitoring_domain: monitor.example.com
+
+    # Host used as a ProxyJump to reach `lan_guests`. Must be set here, not in
+    # group_vars/lan_guests: group_vars beats inventory vars, so a default
+    # there would silently override this.
+    lan_jump_host: workstation-01
+
+  children:
+
+    monitored:
+      children:
+
+        # --- Proxmox LXC containers ----------------------------------------
+        # Shared kernel: these cannot reboot into a kernel of their own, so
+        # kernel packages inside them are inert and /run/reboot-required means
+        # something different here than on a VM.
+        lxc:
+          children:
+            lxc_debian:
+              hosts:
+                router-01:
+                  ansible_host: 10.0.0.31
+                  ansible_user: root
+                  monitor_role: router
+
+                # Reached through lan_jump_host; see the overlay below.
+                app-01:
+                  pve_vmid: 103
+                  ansible_host: 10.0.1.11
+                  ansible_user: root
+                  monitor_role: service
+
+                # The central monitoring stack itself.
+                monitor-lxc:
+                  pve_vmid: 112
+                  ansible_host: 10.0.1.99
+                  ansible_user: root
+                  monitor_role: central
+                  # monitor_hostname is pinned in host_vars/monitor-lxc.yml to
+                  # the value already in /etc/default/alloy on that box.
+                  # Renaming it forks its history in Prometheus and Loki.
+
+        # --- Proxmox KVM virtual machines ----------------------------------
+        # Own kernel, so kernel upgrades and reboot-required are real here.
+        vm:
+          children:
+            vm_debian:
+              hosts:
+                server-01:
+                  ansible_host: 10.0.0.11
+                  monitor_role: server
+                workstation-01:
+                  ansible_host: 10.0.0.12
+                  ansible_user: someoneelse
+                  monitor_role: workstation
+
+        # --- Bare-metal ARM SBCs -------------------------------------------
+        # group_vars/pi holds the SD-card IO tuning; group_vars/pi_debian
+        # holds the kernel/bootloader package blacklist and explains why that
+        # matters under a never-reboot policy.
+        pi:
+          children:
+            pi_debian:
+              hosts:
+                pi-01:
+                  ansible_host: 10.0.0.21
+                  monitor_role: pi
+
+        # --- Bare-metal x86 hosts -------------------------------------------
+        # The only platform that can report SMART disk health. Virtualised
+        # guests cannot, and the reason differs by platform: an LXC sees the
+        # host's disks in /sys but has no /dev nodes; a KVM guest has a
+        # /dev/sda that reports "device lacks SMART capability"; an SD card
+        # does not implement SMART at all. group_vars/metal sets
+        # smart_metrics_enabled, which is what actually turns collection on.
+        #
+        # A hypervisor here should stay OUT of `autoupdate`: an unattended
+        # upgrade restarts pveproxy/pvedaemon underneath every running guest.
+        metal:
+          children:
+            metal_debian:
+              hosts:
+                hypervisor-01:
+                  ansible_host: 10.0.0.5
+                  ansible_user: root
+                  monitor_role: hypervisor
+
+        # --- OVERLAYS: these cross the platform tree above ------------------
+        # Guests with no direct route from the controller, of any platform.
+        # Reached via ProxyJump through `lan_jump_host`. See
+        # group_vars/lan_guests/main.yml, and set lan_use_jump_host=false when
+        # running from a controller already on that network.
+        lan_guests:
+          hosts:
+            app-01: {}
+
+        # The central stack. Pushes to itself over loopback rather than out
+        # through the WAN and back; see group_vars/central.
+        central:
+          hosts:
+            monitor-lxc: {}
+
+    # ---------------------------------------------------------------------
+    # Patching policy
+    # ---------------------------------------------------------------------
+    autoupdate:
+      hosts:
+        server-01: {}
+        workstation-01: {}
+        pi-01: {}
+        router-01: {}
+        app-01: {}
+        # The central stack auto-applies OS and security patches, but the
+        # monitoring services themselves (grafana, prometheus, loki, alloy,
+        # nginx) are blacklisted in group_vars/central. Those stay on the
+        # deliberate `scripts/lxc-update.sh central` path, so an unattended
+        # run can never restart the stack that is watching the fleet.
+        monitor-lxc: {}
+
+    # Hosts here get package lists refreshed, so pending counts stay honest,
+    # but nothing is installed. Good for a hypervisor or anything you want to
+    # see but never touch automatically.
+    no_autoupdate:
+      hosts: {}

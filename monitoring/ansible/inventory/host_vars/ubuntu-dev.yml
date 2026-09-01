@@ -1,0 +1,16 @@
+---
+# ubuntu-dev, the workstation and the jump host for the lan_guests group.
+
+# Per-process metrics, for the "Host Processes" dashboard.
+#
+# Opt-in per host rather than a fleet default, and this file is what makes it
+# stick: enabling it with `-e alloy_enable_process=true` on the command line
+# lasts exactly one run, and the NEXT collectors.yml pass would re-render the
+# config without the block and silently drop the metrics.
+#
+# Enabled here because this is the box whose processes anyone actually looks
+# at. It costs ~1000 series (measured: 47 process groups, 1072 series) against
+# a fleet head of ~52k, so turning it on everywhere would be roughly a 20%
+# increase for hosts whose process list never changes. See
+# roles/alloy_collector/defaults/main.yml.
+alloy_enable_process: true

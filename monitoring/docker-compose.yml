@@ -1,0 +1,113 @@
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus-monitoring
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-30d}
+      - --web.enable-remote-write-receiver
+      - --web.enable-lifecycle
+    ports:
+      - "${PROMETHEUS_HTTP_BIND:-127.0.0.1}:9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    restart: unless-stopped
+    networks:
+      - monitoring
+
+  loki:
+    image: grafana/loki:latest
+    container_name: loki-monitoring
+    command:
+      - -config.file=/etc/loki/local-config.yml
+    ports:
+      - "${LOKI_HTTP_BIND:-127.0.0.1}:3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yml:ro
+      - loki-data:/loki
+    restart: unless-stopped
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana-monitoring
+    ports:
+      - "${GRAFANA_HTTP_BIND:-127.0.0.1}:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+      GF_SECURITY_COOKIE_SECURE: ${GRAFANA_COOKIE_SECURE:-false}
+      GF_SECURITY_COOKIE_SAMESITE: strict
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - monitoring
+
+  collector:
+    image: grafana/alloy:latest
+    container_name: monitoring-collector
+    privileged: true
+    pid: host
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    ports:
+      - "127.0.0.1:12345:12345"
+    environment:
+      MONITOR_HOSTNAME: ${MONITOR_HOSTNAME:-main-server}
+      MONITOR_ROLE: ${MONITOR_ROLE:-central}
+      PROMETHEUS_REMOTE_WRITE_URL: ${PROMETHEUS_REMOTE_WRITE_URL:-http://prometheus:9090/api/v1/write}
+      LOKI_WRITE_URL: ${LOKI_WRITE_URL:-http://loki:3100/loki/api/v1/push}
+      COLLECTOR_BASIC_AUTH_USER: ${COLLECTOR_BASIC_AUTH_USER:-collector}
+      COLLECTOR_BASIC_AUTH_PASSWORD: ${COLLECTOR_BASIC_AUTH_PASSWORD:?set COLLECTOR_BASIC_AUTH_PASSWORD in .env}
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+      - /:/rootfs:ro
+      - /proc:/host/proc:ro
+      - /sys:/sys:ro
+      - /var/run:/var/run:rw
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
+      - /var/log/journal:/var/log/journal:ro
+      - /run/log/journal:/run/log/journal:ro
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+      - loki
+    networks:
+      - monitoring
+
+volumes:
+  grafana-data:
+    name: monitoring-grafana-data
+    external: true
+  prometheus-data:
+    name: monitoring-prometheus-data
+    external: true
+  loki-data:
+    name: monitoring-loki-data
+    external: true
+  alloy-data:
+    name: monitoring-alloy-data
+    external: true
+
+networks:
+  monitoring:
+    driver: bridge
