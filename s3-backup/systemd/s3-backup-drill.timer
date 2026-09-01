@@ -1,0 +1,12 @@
+[Unit]
+Description=Monthly restore drill for the S3 backups
+
+[Timer]
+# An untested backup is a hypothesis. Once a month, prove it.
+OnCalendar=*-*-01 05:00:00
+RandomizedDelaySec=1h
+Persistent=true
+Unit=s3-backup-drill.service
+
+[Install]
+WantedBy=timers.target

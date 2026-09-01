@@ -1,0 +1,37 @@
+[Unit]
+Description=Daily off-site backup of Immich and Nextcloud to S3
+Documentation=file:///opt/s3-backup/docs/index.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/s3-backup/bin/s3-backup run
+EnvironmentFile=-/etc/s3-backup/service.env
+
+# Backups must not be killed for being slow; a seed run can take many hours.
+TimeoutStartSec=infinity
+
+# Never let the backup starve the services it is backing up.
+Nice=10
+IOSchedulingClass=idle
+CPUSchedulingPolicy=batch
+
+# systemd creates /run/s3-backup 0700 and deletes it when the unit stops, so a
+# fetched restic password cannot outlive the run even if we are SIGKILLed.
+RuntimeDirectory=s3-backup
+RuntimeDirectoryMode=0700
+
+# Needs root to read service data and to drive docker; restrict the rest.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

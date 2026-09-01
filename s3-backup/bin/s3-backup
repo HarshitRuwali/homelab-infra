@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+#
+# s3-backup - daily off-site backup of Immich and Nextcloud to S3.
+#
+#   restic  -> databases + Nextcloud data/config  (encrypted, deduped, snapshots)
+#   rclone  -> Immich originals                   (plain browsable mirror)
+#
+# Usage:
+#   s3-backup [run]            full backup (default)
+#   s3-backup --dry-run run    show what would happen, change nothing
+#   s3-backup install-canaries write the mount-detection marker files
+#   s3-backup preflight        run the safety checks only
+#   s3-backup snapshots        list restic snapshots
+#   s3-backup verify           full restic integrity check (reads all data)
+#   s3-backup --version        which build is deployed under /opt
+#
+# Options:
+#   -n, --dry-run              change nothing, show what would happen
+#   -c, --config FILE          use FILE instead of /etc/s3-backup/backup.env
+#
+set -euo pipefail
+
+LIB_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib" && pwd)"
+# shellcheck source=lib/common.sh
+source "$LIB_DIR/common.sh"
+source "$LIB_DIR/secrets.sh"
+source "$LIB_DIR/preflight.sh"
+source "$LIB_DIR/dumps.sh"
+source "$LIB_DIR/restic-repo.sh"
+source "$LIB_DIR/immich-sync.sh"
+source "$LIB_DIR/metrics.sh"
+
+DRY_RUN=""
+declare -A PHASE_RESULT=()
+MAINTENANCE_ON=0
+START_TS=$(date +%s)
+
+RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+RUN_DATE="$(date -u +%F)"
+RESTIC_HOST="$(hostname -s)"
+export RUN_STAMP RUN_DATE RESTIC_HOST
+
+usage() { awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit "${1:-0}"; }
+
+# ---------------------------------------------------------------------------
+
+cleanup() {
+  local rc=$?
+  set +e
+  # Nextcloud must never be left in maintenance mode because a backup died.
+  if (( MAINTENANCE_ON )); then
+    warn "run ended with Nextcloud still in maintenance mode; clearing it"
+    nextcloud_maintenance off
+    MAINTENANCE_ON=0
+  fi
+  shred_runtime_secrets
+  local duration=$(( $(date +%s) - START_TS ))
+  local success=0; (( rc == 0 )) && success=1
+  write_metrics "$success" "$duration"
+  ping_healthcheck "$success"
+  if (( success )); then
+    info "DONE in ${duration}s"
+  else
+    err "FAILED after ${duration}s (exit $rc)"
+  fi
+  exit "$rc"
+}
+
+phase() {
+  local name="$1"; shift
+  PHASE_RESULT["$name"]=0
+  info "=== phase: $name ==="
+  "$@"
+  PHASE_RESULT["$name"]=1
+}
+
+do_run() {
+  preflight
+
+  RESTIC_MOUNTS=(-v "${STAGING_DIR}:${STAGING_DIR}:ro")
+  if [[ "$NEXTCLOUD_ENABLED" == "1" ]]; then
+    RESTIC_MOUNTS+=(-v "${NEXTCLOUD_DATA_DIR}:${NEXTCLOUD_DATA_DIR}:ro")
+    [[ -d "${NEXTCLOUD_CONFIG_DIR:-}" ]] && RESTIC_MOUNTS+=(-v "${NEXTCLOUD_CONFIG_DIR}:${NEXTCLOUD_CONFIG_DIR}:ro")
+  fi
+  IMMICH_MOUNTS=()
+  [[ "$IMMICH_ENABLED" == "1" ]] \
+    && IMMICH_MOUNTS=(-v "${IMMICH_UPLOAD_LOCATION}:${IMMICH_UPLOAD_LOCATION}:ro")
+
+  restic_ensure_repo
+
+  # Phase 1: dumps. Maintenance mode is held across both dumps so the two
+  # databases and the file tree describe the same instant.
+  phase dumps _phase_dumps
+
+  # Phase 2: restic. Databases and Nextcloud files, encrypted and deduplicated.
+  phase restic _phase_restic
+
+  # Phase 3: Immich originals. Runs with Nextcloud already back up unless the
+  # operator asked for full_run consistency.
+  phase immich _phase_immich
+
+  if [[ "$NEXTCLOUD_MAINTENANCE_MODE" == "full_run" ]] && (( MAINTENANCE_ON )); then
+    nextcloud_maintenance off; MAINTENANCE_ON=0
+  fi
+
+  phase retention restic_retention
+
+  IMMICH_REMOTE_STATS="$(immich_remote_size)"
+  info "immich mirror in S3: $(human "${IMMICH_REMOTE_STATS%% *}") across ${IMMICH_REMOTE_STATS##* } objects"
+}
+
+_phase_dumps() {
+  if [[ "$NEXTCLOUD_ENABLED" == "1" ]]; then
+    nextcloud_maintenance on; MAINTENANCE_ON=1
+  fi
+  dump_nextcloud_db
+  dump_immich_db
+  if [[ "$NEXTCLOUD_MAINTENANCE_MODE" == "dumps_only" ]] && (( MAINTENANCE_ON )); then
+    nextcloud_maintenance off; MAINTENANCE_ON=0
+  fi
+  prune_staging
+}
+
+_phase_restic() { restic_backup; }
+_phase_immich() { immich_sync; }
+
+# ---------------------------------------------------------------------------
+
+main() {
+  local cmd="run"
+  while (( $# )); do
+    case "$1" in
+      -n|--dry-run) DRY_RUN=1; shift ;;
+      -c|--config)  CONFIG_FILE="$2"; shift 2 ;;
+      -h|--help)    usage 0 ;;
+      -V|--version)
+        root="$(cd "$LIB_DIR/../.." && pwd)"
+        if [[ -r "$root/.installed" ]]; then
+          cat "$root/.installed"
+          now="$(fingerprint_tree "$root")"
+          rec="$(sed -n 's/^version=//p' "$root/.installed")"
+          [[ "$now" == "$rec" ]] || warn "files under $root changed since install (now $now)"
+        else
+          echo "unknown (no $root/.installed)"
+        fi
+        exit 0 ;;
+      run|preflight|install-canaries|snapshots|verify) cmd="$1"; shift ;;
+      *) err "unknown argument: $1"; usage 1 ;;
+    esac
+  done
+
+  load_config
+  [[ -n "$DRY_RUN" ]] && warn "DRY RUN - no data will be written to S3"
+
+  # Placing canaries needs no credentials, and is something you may well be
+  # doing on a fresh drive before the AWS side is reachable.
+  if [[ "$cmd" == "install-canaries" ]]; then install_canaries; exit 0; fi
+
+  # Everything else needs the restic password. Fetch it once, and make sure the
+  # tmpfs copy is removed however this process exits.
+  trap shred_runtime_secrets EXIT
+  resolve_secrets
+
+  case "$cmd" in
+    preflight)  preflight; exit 0 ;;
+    snapshots)
+      RESTIC_MOUNTS=(); restic_run snapshots --host "$RESTIC_HOST"; exit 0 ;;
+    verify)
+      RESTIC_MOUNTS=(); restic_run check --read-data; exit 0 ;;
+  esac
+
+  # One backup at a time. A second run starting while the first is mid-sync
+  # would fight over the restic lock and the maintenance-mode flag.
+  exec 9>"$LOCK_FILE"
+  flock -n 9 || die "another s3-backup run holds $LOCK_FILE"
+
+  trap cleanup EXIT
+  info "s3-backup starting (run ${RUN_STAMP}, host ${RESTIC_HOST})"
+  do_run
+}
+
+main "$@"

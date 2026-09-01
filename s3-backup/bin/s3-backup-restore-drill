@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+#
+# s3-backup-restore-drill - prove the backups actually restore.
+#
+# A backup you have never restored is a hypothesis. This restores the latest
+# database dumps out of S3 and, with --deep, loads them into throwaway
+# containers and queries them. Production is never touched.
+#
+#   sudo s3-backup-restore-drill            # fetch + integrity check
+#   sudo s3-backup-restore-drill --deep     # also load into scratch databases
+#
+set -euo pipefail
+LIB_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib" && pwd)"
+source "$LIB_DIR/common.sh"
+source "$LIB_DIR/secrets.sh"
+source "$LIB_DIR/restic-repo.sh"
+source "$LIB_DIR/immich-sync.sh"
+
+DEEP=0
+while (( $# )); do
+  case "$1" in
+    --deep)    DEEP=1; shift ;;
+    -c|--config) CONFIG_FILE="$2"; shift 2 ;;
+    -h|--help) awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit 0 ;;
+    *) err "unknown argument: $1"; exit 1 ;;
+  esac
+done
+load_config
+
+WORK="$(mktemp -d /var/tmp/s3-backup-drill.XXXXXX)"
+SCRATCH=()
+cleanup() {
+  local c
+  for c in "${SCRATCH[@]:-}"; do [[ -n "$c" ]] && docker rm -f "$c" >/dev/null 2>&1 || true; done
+  rm -rf "$WORK"
+  shred_runtime_secrets
+}
+trap cleanup EXIT
+
+resolve_secrets
+
+FAILURES=0
+pass() { printf '  \033[32mPASS\033[0m %s\n' "$*"; }
+fail() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAILURES=$((FAILURES+1)); }
+
+echo "== 1. restic repository reachable and consistent =="
+RESTIC_MOUNTS=()
+if restic_run check >/dev/null 2>&1; then pass "restic check"; else fail "restic check"; fi
+
+echo
+echo "== 2. restore latest DB dumps from S3 =="
+RESTIC_MOUNTS=(-v "${WORK}:${WORK}")
+if restic_run restore latest --host "$(hostname -s)" \
+     --include "${STAGING_DIR}/*.sql.gz" --target "$WORK" >/dev/null 2>&1; then
+  pass "restic restore"
+else
+  fail "restic restore"; echo; echo "$FAILURES failure(s)"; exit 1
+fi
+
+mapfile -t DUMPS < <(find "$WORK" -name '*.sql.gz' | sort)
+(( ${#DUMPS[@]} )) || { fail "no .sql.gz found in the restored snapshot"; exit 1; }
+
+for d in "${DUMPS[@]}"; do
+  if gzip -t "$d" 2>/dev/null; then pass "gzip integrity: $(basename "$d")"; else fail "gzip integrity: $(basename "$d")"; fi
+  # A dump truncated mid-write still gunzips; only the trailer proves it finished.
+  if zcat "$d" | tail -5 | grep -qiE 'PostgreSQL database (cluster )?dump complete|Dump completed on'; then
+    pass "dump trailer present: $(basename "$d")"
+  else
+    fail "dump has no completion trailer - it was truncated: $(basename "$d")"
+  fi
+done
+
+echo
+echo "== 3. Immich mirror spot check =="
+if [[ "$IMMICH_ENABLED" == "1" ]]; then
+  IMMICH_MOUNTS=(-v "${IMMICH_UPLOAD_LOCATION}:${IMMICH_UPLOAD_LOCATION}:ro")
+  if rclone_run check "${IMMICH_UPLOAD_LOCATION%/}/library" "s3:${S3_BUCKET}/${IMMICH_PREFIX}/library" \
+       --size-only --one-way --fast-list >/dev/null 2>&1; then
+    pass "every local Immich original exists in S3 at the right size"
+  else
+    fail "rclone check found Immich originals missing or mismatched in S3"
+  fi
+else
+  echo "  (immich disabled)"
+fi
+
+if (( DEEP )); then
+  echo
+  echo "== 4. deep restore into throwaway databases =="
+
+  immich_dump="$(printf '%s\n' "${DUMPS[@]}" | grep immich-db | tail -1 || true)"
+  if [[ -n "$immich_dump" ]]; then
+    img="$(docker inspect -f '{{.Config.Image}}' "$IMMICH_DB_CONTAINER")"
+    c="drill-immich-$$"; SCRATCH+=("$c")
+    docker run -d --name "$c" -e POSTGRES_PASSWORD=drill -e POSTGRES_USER=postgres \
+      -e POSTGRES_INITDB_ARGS='--data-checksums' "$img" >/dev/null
+    for _ in $(seq 60); do
+      docker exec "$c" pg_isready -U postgres >/dev/null 2>&1 && break; sleep 2
+    done
+    if zcat "$immich_dump" | docker exec -i "$c" psql -q -U postgres -d postgres >/dev/null 2>&1; then
+      n="$(docker exec "$c" psql -tAX -U postgres -d immich -c \
+            'select count(*) from asset' 2>/dev/null || echo ERR)"
+      if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 0 )); then
+        pass "immich dump restored; ${n} rows in asset table"
+      else
+        fail "immich dump restored but the asset table is empty or missing"
+      fi
+    else
+      fail "immich dump would not load into a clean $img"
+    fi
+  fi
+
+  nc_dump="$(printf '%s\n' "${DUMPS[@]}" | grep nextcloud-db | tail -1 || true)"
+  if [[ -n "$nc_dump" && "$NEXTCLOUD_DB_ENGINE" == "mysql" ]]; then
+    img="$(docker inspect -f '{{.Config.Image}}' "$NEXTCLOUD_DB_CONTAINER")"
+    c="drill-nc-$$"; SCRATCH+=("$c")
+    docker run -d --name "$c" -e MYSQL_ROOT_PASSWORD=drill "$img" >/dev/null
+    for _ in $(seq 90); do
+      docker exec "$c" mysqladmin ping -u root -pdrill >/dev/null 2>&1 && break; sleep 2
+    done
+    if zcat "$nc_dump" | docker exec -i "$c" mysql -u root -pdrill >/dev/null 2>&1; then
+      n="$(docker exec "$c" mysql -N -B -u root -pdrill -e \
+            'select count(*) from nextcloud.oc_filecache' 2>/dev/null || echo ERR)"
+      if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 0 )); then
+        pass "nextcloud dump restored; ${n} rows in oc_filecache"
+      else
+        fail "nextcloud dump restored but oc_filecache is empty or missing"
+      fi
+    else
+      fail "nextcloud dump would not load into a clean $img"
+    fi
+  fi
+fi
+
+echo
+if (( FAILURES )); then
+  echo "DRILL FAILED: $FAILURES problem(s). Your backups are not trustworthy until these are fixed."
+  exit 1
+fi
+echo "DRILL PASSED - backups restore cleanly."

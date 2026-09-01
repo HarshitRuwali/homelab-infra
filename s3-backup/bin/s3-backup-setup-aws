@@ -1,0 +1,448 @@
+#!/usr/bin/env bash
+#
+# s3-backup-setup-aws - create everything this backup needs in AWS, in the
+# right order, and write the results into /etc/s3-backup/backup.env.
+#
+# DRY RUN BY DEFAULT. Nothing is created until you pass --apply.
+#
+#   sudo s3-backup-setup-aws --bucket my-homelab-backup --region ap-south-1
+#   sudo s3-backup-setup-aws --bucket my-homelab-backup --region ap-south-1 --apply
+#
+# Uses your ADMIN credentials (an ~/.aws profile, or the environment). Under
+# sudo it reads the invoking user's ~/.aws, not root's; override with
+# --aws-config-dir if they live somewhere else. Access
+# keys it creates are written straight into backup.env at mode 0600 and are
+# never printed, so no secret reaches your terminal, scrollback or shell
+# history. There is nothing for you to copy by hand.
+#
+# What it does, skipping anything that already exists:
+#   1. the S3 bucket, hardened (no public access, SSE, versioning, lifecycle,
+#      TLS-only policy)
+#   2. an IAM user for the backup host, limited to that one bucket
+#   3. with SECRETS_BACKEND=aws-secrets-manager: a Secrets Manager secret
+#      holding the restic password and the S3 key
+#   4. with SECRETS_BACKEND=aws-secrets-manager: a bootstrap IAM user that can
+#      read that one secret and nothing else
+#   5. backup.env, updated in place
+#
+set -euo pipefail
+
+LIB_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib" && pwd)"
+AWS_DIR="$(cd "$LIB_DIR/../../aws" && pwd)"
+# shellcheck source=lib/common.sh
+source "$LIB_DIR/common.sh"
+
+CONFIG_FILE="${CONFIG_FILE:-/etc/s3-backup/backup.env}"
+ARG_BUCKET=""; ARG_REGION=""; ARG_SECRET_ID=""; PROFILE=""; APPLY=0
+IAM_USER="s3-backup-homelab"; BOOTSTRAP_USER="s3-backup-bootstrap"
+KMS_KEY=""; PW_FILE=""; ARG_AWS_CONFIG_DIR=""
+
+usage() { awk 'NR>1 && /^#/ {sub(/^# ?/,""); print; next} NR>1 {exit}' "$0"; exit "${1:-0}"; }
+
+while (( $# )); do
+  case "$1" in
+    --bucket)               ARG_BUCKET="$2"; shift 2 ;;
+    --region)               ARG_REGION="$2"; shift 2 ;;
+    --secret-id)            ARG_SECRET_ID="$2"; shift 2 ;;
+    --profile)              PROFILE="$2"; shift 2 ;;
+    --iam-user)             IAM_USER="$2"; shift 2 ;;
+    --bootstrap-user)       BOOTSTRAP_USER="$2"; shift 2 ;;
+    --kms-key-id)           KMS_KEY="$2"; shift 2 ;;
+    --restic-password-file) PW_FILE="$2"; shift 2 ;;
+    --aws-config-dir)       ARG_AWS_CONFIG_DIR="$2"; shift 2 ;;
+    --config)               CONFIG_FILE="$2"; shift 2 ;;
+    --apply)                APPLY=1; shift ;;
+    -h|--help)              usage 0 ;;
+    *) err "unknown argument: $1"; usage 1 ;;
+  esac
+done
+
+# Captured before backup.env is sourced: that file defines AWS_ACCESS_KEY_ID
+# for the backup host, a least-privilege key that cannot create buckets or IAM
+# users. Only credentials that were genuinely in the environment count as admin.
+ENV_AWS_ACCESS_KEY_ID="${AWS_ACCESS_KEY_ID:-}"
+ENV_AWS_SECRET_ACCESS_KEY="${AWS_SECRET_ACCESS_KEY:-}"
+ENV_AWS_SESSION_TOKEN="${AWS_SESSION_TOKEN:-}"
+
+check_deployment_freshness
+
+[[ "$(id -u)" == "0" ]] || die "must run as root (it writes $CONFIG_FILE)"
+[[ -r "$CONFIG_FILE" ]] || die "$CONFIG_FILE not found - run install.sh first"
+
+# Read the existing config for defaults, without the strict validation
+# load_config applies (the file is deliberately incomplete at this point).
+# shellcheck source=/dev/null
+set -a
+# shellcheck source=/dev/null
+source "$CONFIG_FILE"
+set +a
+: "${SECRETS_BACKEND:=file}"
+: "${RUNNER_IMAGE:=s3-backup-runner:1.0.0}"
+: "${AWSCLI_IMAGE:=amazon/aws-cli:2.17.0}"
+# Flags win over whatever the config already says.
+BUCKET="${ARG_BUCKET:-${S3_BUCKET:-}}"
+REGION="${ARG_REGION:-${AWS_DEFAULT_REGION:-}}"
+SECRET_ID="${ARG_SECRET_ID:-${SECRET_ID:-homelab/s3-backup}}"
+[[ -n "$BUCKET" ]] || die "--bucket is required (and not set in $CONFIG_FILE)"
+[[ -n "$REGION" ]] || die "--region is required (and not set in $CONFIG_FILE)"
+
+WANT_SECRET=0
+[[ "$SECRETS_BACKEND" == "aws-secrets-manager" ]] && WANT_SECRET=1
+
+docker image inspect "$AWSCLI_IMAGE" >/dev/null 2>&1 || {
+  info "pulling $AWSCLI_IMAGE"; docker pull -q "$AWSCLI_IMAGE" >/dev/null; }
+if (( WANT_SECRET )); then
+  docker image inspect "$RUNNER_IMAGE" >/dev/null 2>&1 \
+    || die "runner image '$RUNNER_IMAGE' not built - run install.sh first"
+fi
+
+# Secret material is staged on tmpfs, never on disk.
+WORK="$(mktemp -d /run/s3-backup-setup.XXXXXX)"; chmod 700 "$WORK"
+trap 'rm -rf "$WORK"' EXIT
+
+for f in iam-policy.json bucket-policy-tls.json lifecycle.json bootstrap-iam-policy.json; do
+  [[ -r "$AWS_DIR/$f" ]] || die "missing policy template: $AWS_DIR/$f"
+done
+sed "s/BUCKET_NAME/${BUCKET}/g" "$AWS_DIR/iam-policy.json"        > "$WORK/iam-policy.json"
+sed "s/BUCKET_NAME/${BUCKET}/g" "$AWS_DIR/bucket-policy-tls.json" > "$WORK/bucket-policy-tls.json"
+cp "$AWS_DIR/lifecycle.json" "$WORK/lifecycle.json"
+
+# Where the ADMIN credentials live. Under sudo, $HOME is root's, not the
+# invoking user's, so an ~/.aws written as harshit is at /home/harshit/.aws.
+# Getting this wrong is silent: `docker -v` creates a missing bind source as an
+# empty directory, and the AWS CLI then reports "profile could not be found".
+if [[ -n "$ARG_AWS_CONFIG_DIR" ]]; then
+  AWS_CONFIG_DIR="$ARG_AWS_CONFIG_DIR"
+elif [[ -n "${SUDO_USER:-}" ]] && home="$(getent passwd "$SUDO_USER" | cut -d: -f6)" \
+     && [[ -n "$home" ]]; then
+  AWS_CONFIG_DIR="$home/.aws"
+else
+  AWS_CONFIG_DIR="${HOME:-/root}/.aws"
+fi
+
+HAVE_ENV_CREDS=0
+[[ -n "$ENV_AWS_ACCESS_KEY_ID" && -n "$ENV_AWS_SECRET_ACCESS_KEY" ]] && HAVE_ENV_CREDS=1
+
+if [[ ! -d "$AWS_CONFIG_DIR" ]] && (( ! HAVE_ENV_CREDS )); then
+  err "no AWS admin credentials found."
+  err "  looked for a config directory at: $AWS_CONFIG_DIR"
+  [[ -n "${SUDO_USER:-}" ]] && err "  (resolved from SUDO_USER=$SUDO_USER; \$HOME under sudo is ${HOME:-/root})"
+  err "Fix with either:"
+  err "  1. point at an existing one:"
+  err "       sudo $(basename "$0") ... --aws-config-dir /path/to/.aws"
+  err "  2. or create ~/.aws/credentials as your normal user (not root)."
+  err "     There is no aws CLI on this host by design, so write the file directly:"
+  err "       mkdir -p ~/.aws && chmod 700 ~/.aws"
+  err "       \$EDITOR ~/.aws/credentials    # then chmod 600 it"
+  err "     containing, with your ADMIN key:"
+  err "       [default]"
+  err "       aws_access_key_id = ..."
+  err "       aws_secret_access_key = ..."
+  die "cannot continue without admin credentials"
+fi
+
+if [[ -n "$PROFILE" ]]; then
+  if [[ ! -d "$AWS_CONFIG_DIR" ]]; then
+    die "--profile $PROFILE given, but no config directory at $AWS_CONFIG_DIR"
+  fi
+  if ! grep -qE "^\[(profile )?${PROFILE}\]" "$AWS_CONFIG_DIR"/config "$AWS_CONFIG_DIR"/credentials 2>/dev/null; then
+    err "profile '$PROFILE' is not defined in $AWS_CONFIG_DIR/{config,credentials}"
+    err "profiles found: $(grep -hoE '^\[(profile )?[^]]+\]' "$AWS_CONFIG_DIR"/config "$AWS_CONFIG_DIR"/credentials 2>/dev/null | tr -d '[]' | sed 's/^profile //' | sort -u | paste -sd' ' || echo none)"
+    die "no such profile"
+  fi
+fi
+
+aws_env=()
+[[ -n "$PROFILE" ]] && aws_env+=(-e "AWS_PROFILE=$PROFILE")
+if (( HAVE_ENV_CREDS )); then
+  # Re-export the snapshot: sourcing backup.env overwrote these with the
+  # backup host's key. Values pass through by name, never in argv.
+  export AWS_ACCESS_KEY_ID="$ENV_AWS_ACCESS_KEY_ID"
+  export AWS_SECRET_ACCESS_KEY="$ENV_AWS_SECRET_ACCESS_KEY"
+  aws_env+=(-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY)
+  if [[ -n "$ENV_AWS_SESSION_TOKEN" ]]; then
+    export AWS_SESSION_TOKEN="$ENV_AWS_SESSION_TOKEN"
+    aws_env+=(-e AWS_SESSION_TOKEN)
+  fi
+else
+  # Nothing from the environment: unset so the CLI cannot pick up the
+  # low-privilege key that backup.env just put into our shell.
+  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+fi
+aws_mounts=(-v "$WORK:/work:ro")
+# Mount only when it really exists, so docker cannot fabricate an empty one.
+[[ -d "$AWS_CONFIG_DIR" ]] && aws_mounts+=(-v "$AWS_CONFIG_DIR:/root/.aws:ro")
+
+awscli() {
+  docker run --rm -i "${aws_env[@]}" -e "AWS_DEFAULT_REGION=$REGION" \
+    "${aws_mounts[@]}" "$AWSCLI_IMAGE" "$@"
+}
+
+did() { printf '   \033[32m+\033[0m %s\n' "$*"; }
+skip() { printf '   \033[2m=\033[0m %s\n' "$*"; }
+plan() { printf '   \033[33m~\033[0m %s\n' "$*"; }
+
+# Rewrite one KEY="value" line in backup.env, preserving the file's mode and
+# ownership. Values go through the environment so awk does not process escapes.
+set_config() {
+  local key="$1" val="$2" tmp
+  tmp="$(mktemp "$WORK/cfg.XXXXXX")"
+  SBK="$key" SBV="$val" awk '
+    BEGIN { k = ENVIRON["SBK"]; v = ENVIRON["SBV"] }
+    $0 ~ "^" k "=" && !done { print k "=\"" v "\""; done = 1; next }
+    { print }
+    END { if (!done) print k "=\"" v "\"" }
+  ' "$CONFIG_FILE" > "$tmp"
+  cat "$tmp" > "$CONFIG_FILE"   # truncate-in-place: keeps mode 0600 and owner
+  rm -f "$tmp"
+}
+
+# ---------------------------------------------------------------------------
+echo "bucket          : $BUCKET"
+echo "region          : $REGION"
+echo "secrets backend : $SECRETS_BACKEND"
+(( WANT_SECRET )) && echo "secret id       : $SECRET_ID"
+echo "config          : $CONFIG_FILE"
+echo "aws credentials : $( (( HAVE_ENV_CREDS )) && echo "environment" || echo "$AWS_CONFIG_DIR${PROFILE:+ (profile $PROFILE)}")"
+(( APPLY )) || printf '\n\033[33mDRY RUN\033[0m - nothing will be created. Re-run with --apply.\n'
+
+echo
+echo "== authenticating =="
+ACCOUNT="$(awscli sts get-caller-identity --query Account --output text)" \
+  || die "cannot authenticate to AWS - set a --profile or export admin credentials"
+echo "   account $ACCOUNT"
+
+# --- 1. bucket ---------------------------------------------------------------
+echo
+echo "== 1. bucket =="
+if awscli s3api head-bucket --bucket "$BUCKET" >/dev/null 2>&1; then
+  skip "s3://$BUCKET already exists"
+elif (( APPLY )); then
+  if [[ "$REGION" == "us-east-1" ]]; then
+    awscli s3api create-bucket --bucket "$BUCKET" >/dev/null
+  else
+    awscli s3api create-bucket --bucket "$BUCKET" \
+      --create-bucket-configuration "LocationConstraint=$REGION" >/dev/null
+  fi
+  did "created s3://$BUCKET"
+else
+  plan "create s3://$BUCKET"
+fi
+
+harden() { # harden <description> <aws args...>
+  local desc="$1"; shift
+  if (( APPLY )); then awscli "$@" >/dev/null && did "$desc"; else plan "$desc"; fi
+}
+harden "block all public access" s3api put-public-access-block --bucket "$BUCKET" \
+  --public-access-block-configuration \
+  BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+harden "default encryption (SSE-S3)" s3api put-bucket-encryption --bucket "$BUCKET" \
+  --server-side-encryption-configuration \
+  '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"},"BucketKeyEnabled":true}]}'
+harden "versioning" s3api put-bucket-versioning --bucket "$BUCKET" \
+  --versioning-configuration Status=Enabled
+harden "lifecycle rules (IA transition, graveyard expiry, MPU cleanup)" \
+  s3api put-bucket-lifecycle-configuration --bucket "$BUCKET" \
+  --lifecycle-configuration file:///work/lifecycle.json
+harden "deny non-TLS access" s3api put-bucket-policy --bucket "$BUCKET" \
+  --policy file:///work/bucket-policy-tls.json
+
+# --- 2. S3 IAM user ----------------------------------------------------------
+echo
+echo "== 2. IAM user for the backup host =="
+S3_KEY_ID=""; S3_KEY_SECRET=""
+if awscli iam get-user --user-name "$IAM_USER" >/dev/null 2>&1; then
+  skip "IAM user $IAM_USER already exists"
+  S3_USER_EXISTED=1
+elif (( APPLY )); then
+  awscli iam create-user --user-name "$IAM_USER" >/dev/null; did "created IAM user $IAM_USER"
+  S3_USER_EXISTED=0
+else
+  plan "create IAM user $IAM_USER"; S3_USER_EXISTED=0
+fi
+
+if (( APPLY )); then
+  awscli iam put-user-policy --user-name "$IAM_USER" \
+    --policy-name "s3-backup-${BUCKET}" \
+    --policy-document file:///work/iam-policy.json >/dev/null
+  did "attached least-privilege policy for s3://$BUCKET"
+else
+  plan "attach least-privilege policy for s3://$BUCKET"
+fi
+
+# Only mint a key when there is somewhere to put it and none is configured yet.
+need_key=1
+if (( S3_USER_EXISTED )); then
+  if (( WANT_SECRET )); then
+    need_key=0   # decided below, once the existing secret has been inspected
+  elif [[ -n "${AWS_ACCESS_KEY_ID:-}" ]]; then
+    need_key=0
+  fi
+fi
+
+# --- 3. secret ---------------------------------------------------------------
+RESTIC_PW=""
+if (( WANT_SECRET )); then
+  echo
+  echo "== 3. Secrets Manager =="
+  SECRET_EXISTS=0
+  awscli secretsmanager describe-secret --secret-id "$SECRET_ID" >/dev/null 2>&1 && SECRET_EXISTS=1
+
+  if (( SECRET_EXISTS )); then
+    skip "secret $SECRET_ID already exists"
+    if (( APPLY )); then
+      # Reuse the stored restic password. Replacing it would leave the existing
+      # repository unopenable; changing it is `restic key add`, not this script.
+      payload="$(awscli secretsmanager get-secret-value --secret-id "$SECRET_ID" \
+                   --query SecretString --output text)"
+      RESTIC_PW="$(printf '%s' "$payload" | docker run --rm -i "$RUNNER_IMAGE" \
+                     jq -r 'if type=="object" then (.restic_password // "") else . end')"
+      unset payload
+      [[ -n "$RESTIC_PW" ]] || die "existing secret has no restic_password; refusing to overwrite it"
+      skip "reusing the restic password already in the secret"
+      [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] || need_key=1
+      (( S3_USER_EXISTED )) || need_key=1
+    fi
+  elif [[ -n "$PW_FILE" ]]; then
+    [[ -r "$PW_FILE" ]] || die "cannot read $PW_FILE"
+    RESTIC_PW="$(cat "$PW_FILE")"
+    [[ -n "$RESTIC_PW" ]] || die "$PW_FILE is empty"
+    plan "migrate the existing restic password from $PW_FILE into $SECRET_ID"
+    need_key=1
+  else
+    (( APPLY )) && RESTIC_PW="$(head -c 32 /dev/urandom | base64)"
+    plan "generate a new restic password and store it in $SECRET_ID"
+    need_key=1
+  fi
+fi
+
+# Mint the S3 access key now that we know whether anything will consume it.
+if (( need_key )); then
+  if (( APPLY )); then
+    read -r S3_KEY_ID S3_KEY_SECRET < <(awscli iam create-access-key \
+      --user-name "$IAM_USER" \
+      --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text)
+    [[ -n "$S3_KEY_ID" ]] || die "failed to create an access key for $IAM_USER"
+    did "created an access key for $IAM_USER (value not shown)"
+  else
+    plan "create an access key for $IAM_USER"
+  fi
+else
+  skip "keeping the S3 access key already configured"
+fi
+
+if (( WANT_SECRET )) && (( APPLY )); then
+  RP="$RESTIC_PW" AKID="$S3_KEY_ID" ASAK="$S3_KEY_SECRET" \
+  docker run --rm -e RP -e AKID -e ASAK "$RUNNER_IMAGE" jq -n '
+    {restic_password: env.RP}
+    + (if env.AKID != "" then
+         {aws_access_key_id: env.AKID, aws_secret_access_key: env.ASAK}
+       else {} end)' > "$WORK/secret.json"
+  chmod 600 "$WORK/secret.json"
+  if (( SECRET_EXISTS )); then
+    awscli secretsmanager put-secret-value --secret-id "$SECRET_ID" \
+      --secret-string file:///work/secret.json >/dev/null
+    did "updated $SECRET_ID (restic password preserved)"
+  else
+    awscli secretsmanager create-secret --name "$SECRET_ID" \
+      --description "restic password for the Immich/Nextcloud S3 backup" \
+      ${KMS_KEY:+--kms-key-id "$KMS_KEY"} \
+      --secret-string file:///work/secret.json >/dev/null
+    did "created $SECRET_ID"
+  fi
+  rm -f "$WORK/secret.json"
+fi
+
+# --- 4. bootstrap user -------------------------------------------------------
+BS_KEY_ID=""; BS_KEY_SECRET=""
+if (( WANT_SECRET )); then
+  echo
+  echo "== 4. bootstrap IAM user =="
+  SECRET_ARN="arn:aws:secretsmanager:${REGION}:${ACCOUNT}:secret:${SECRET_ID}-*"
+  sed "s|SECRET_ARN|${SECRET_ARN}|g" "$AWS_DIR/bootstrap-iam-policy.json" > "$WORK/bootstrap-policy.json"
+
+  if awscli iam get-user --user-name "$BOOTSTRAP_USER" >/dev/null 2>&1; then
+    skip "IAM user $BOOTSTRAP_USER already exists"
+    BS_EXISTED=1
+  elif (( APPLY )); then
+    awscli iam create-user --user-name "$BOOTSTRAP_USER" >/dev/null
+    did "created IAM user $BOOTSTRAP_USER"; BS_EXISTED=0
+  else
+    plan "create IAM user $BOOTSTRAP_USER"; BS_EXISTED=0
+  fi
+
+  if (( APPLY )); then
+    awscli iam put-user-policy --user-name "$BOOTSTRAP_USER" \
+      --policy-name "read-${SECRET_ID//\//-}" \
+      --policy-document file:///work/bootstrap-policy.json >/dev/null
+    did "GetSecretValue on $SECRET_ARN, everything else denied"
+  else
+    plan "attach read-only policy for $SECRET_ARN"
+  fi
+
+  if (( BS_EXISTED )) && [[ -n "${BOOTSTRAP_AWS_ACCESS_KEY_ID:-}" ]]; then
+    skip "keeping the bootstrap key already in $CONFIG_FILE"
+  elif (( APPLY )); then
+    read -r BS_KEY_ID BS_KEY_SECRET < <(awscli iam create-access-key \
+      --user-name "$BOOTSTRAP_USER" \
+      --query 'AccessKey.[AccessKeyId,SecretAccessKey]' --output text)
+    [[ -n "$BS_KEY_ID" ]] || die "failed to create an access key for $BOOTSTRAP_USER"
+    did "created a bootstrap access key (value not shown)"
+  else
+    plan "create an access key for $BOOTSTRAP_USER"
+  fi
+fi
+
+# --- 5. write the config -----------------------------------------------------
+echo
+echo "== 5. $CONFIG_FILE =="
+if (( APPLY )); then
+  set_config S3_BUCKET "$BUCKET";          did "S3_BUCKET"
+  set_config AWS_DEFAULT_REGION "$REGION"; did "AWS_DEFAULT_REGION"
+  if (( WANT_SECRET )); then
+    set_config SECRETS_BACKEND "aws-secrets-manager"
+    set_config SECRET_ID "$SECRET_ID"; did "SECRET_ID"
+    if [[ -n "$BS_KEY_ID" ]]; then
+      set_config BOOTSTRAP_AWS_ACCESS_KEY_ID "$BS_KEY_ID"
+      set_config BOOTSTRAP_AWS_SECRET_ACCESS_KEY "$BS_KEY_SECRET"
+      did "BOOTSTRAP_AWS_ACCESS_KEY_ID (${BS_KEY_ID:0:8}...) and its secret"
+    fi
+    # The S3 key lives in the secret; make sure no stale copy lingers on disk.
+    set_config AWS_ACCESS_KEY_ID ""
+    set_config AWS_SECRET_ACCESS_KEY ""
+    did "cleared the on-disk S3 key (it is in the secret)"
+  elif [[ -n "$S3_KEY_ID" ]]; then
+    set_config AWS_ACCESS_KEY_ID "$S3_KEY_ID"
+    set_config AWS_SECRET_ACCESS_KEY "$S3_KEY_SECRET"
+    did "AWS_ACCESS_KEY_ID (${S3_KEY_ID:0:8}...) and its secret"
+  fi
+  chmod 600 "$CONFIG_FILE"
+else
+  plan "set S3_BUCKET, AWS_DEFAULT_REGION$( (( WANT_SECRET )) && echo ", SECRET_ID, BOOTSTRAP_AWS_*" || echo ", AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY")"
+fi
+
+echo
+if (( APPLY )); then
+  cat <<NEXT
+AWS setup complete. Nothing sensitive was printed above.
+
+Next:
+  sudo s3-backup install-canaries
+  sudo s3-backup preflight
+NEXT
+  if (( WANT_SECRET )) && [[ -z "$PW_FILE" ]]; then
+    cat <<'WARN'
+
+The restic password now exists only in AWS Secrets Manager. Save an offline
+copy before you rely on this - losing the AWS account otherwise loses the
+backups and the key to them:
+
+  aws secretsmanager get-secret-value --secret-id SECRET --query SecretString \
+    --output text | jq -r .restic_password
+
+See docs/secrets.md.
+WARN
+  fi
+else
+  echo "Dry run complete. Nothing was changed. Re-run with --apply."
+fi

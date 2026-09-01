@@ -1,0 +1,13 @@
+[Unit]
+Description=Monthly restore drill for the S3 backups
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/s3-backup/bin/s3-backup-restore-drill --deep
+TimeoutStartSec=infinity
+RuntimeDirectory=s3-backup
+RuntimeDirectoryMode=0700
+Nice=15
+IOSchedulingClass=idle

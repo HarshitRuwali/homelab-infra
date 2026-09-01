@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# s3-backup-status - what the last run did, and what is in S3 right now.
+set -euo pipefail
+LIB_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/lib" && pwd)"
+source "$LIB_DIR/common.sh"
+source "$LIB_DIR/secrets.sh"
+source "$LIB_DIR/restic-repo.sh"
+source "$LIB_DIR/immich-sync.sh"
+load_config
+trap shred_runtime_secrets EXIT
+resolve_secrets
+
+echo "== timer =="
+systemctl list-timers s3-backup.timer --no-pager 2>/dev/null || echo "(timer not installed)"
+
+echo
+echo "== last run =="
+if [[ -n "${METRICS_DIR:-}" && -r "${METRICS_DIR%/}/s3_backup.prom" ]]; then
+  awk '!/^#/ && NF' "${METRICS_DIR%/}/s3_backup.prom"
+  last="$(awk '/^s3_backup_last_success_timestamp_seconds /{print $2}' "${METRICS_DIR%/}/s3_backup.prom")"
+  if [[ -n "${last:-}" ]]; then
+    age=$(( $(date +%s) - last ))
+    printf '\nlast success: %s (%d hours ago)\n' "$(date -d "@$last" -Is)" "$((age/3600))"
+    (( age > 172800 )) && echo "WARNING: no successful backup in over 48 hours"
+  fi
+else
+  echo "(no metrics file; has a run completed yet?)"
+fi
+
+echo
+echo "== restic snapshots =="
+RESTIC_MOUNTS=(); restic_run snapshots --host "$(hostname -s)" --compact 2>/dev/null || echo "(cannot reach repository)"
+
+echo
+echo "== restic repo size =="
+RESTIC_MOUNTS=(); restic_run stats --mode raw-data 2>/dev/null || true
+
+echo
+echo "== immich mirror =="
+read -r b c <<<"$(immich_remote_size)"
+printf '%s across %s objects\n' "$(human "$b")" "$c"
+
+echo
+echo "== journal (last run) =="
+journalctl -u s3-backup.service -n 25 --no-pager 2>/dev/null || echo "(no journal)"
