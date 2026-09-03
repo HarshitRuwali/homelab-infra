@@ -91,9 +91,12 @@ Retention is covered in [Operations → Retention](../operations/retention.md).
 Three copies of the Alloy config exist. This is deliberate, and the scoping
 matters:
 
+Paths are relative to `monitoring/`, except the first, which is at the
+repository root:
+
 | File | Scope |
 |---|---|
-| `ansible/roles/alloy_collector/templates/config.alloy.j2` | **authoritative**, every native install |
+| `../ansible/roles/alloy_collector/templates/config.alloy.j2` | **authoritative**, every native install |
 | `alloy/config.alloy` | Docker collector only |
 | `scripts/lxc-install.sh` heredoc | bootstrap only, guarded by a marker |
 

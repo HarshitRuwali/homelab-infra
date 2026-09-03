@@ -16,6 +16,11 @@ Day-to-day running of the central stack.
 
     Step-by-step recovery for the things that go wrong.
 
+- :material-history: **[Deployment log](deployment-log.md)**
+
+    A dated record of what was rolled out, what broke, and what it turned out
+    to be.
+
 </div>
 
 ## Daily checks
@@ -48,7 +53,7 @@ curl -u collector:<pw> https://monitor.example.com/loki/api/v1/labels
     The `/loki/` location preserves the path prefix, and Loki's readiness
     endpoint is `/ready`, not `/loki/ready`. Use `/loki/api/v1/labels` as the
     external liveness check instead. See
-    [the path asymmetry](../fleet/verification.md#the-ingest-path-asymmetry).
+    [the path asymmetry](https://harshitruwali.github.io/homelab-infra/ansible/fleet/verification/#the-ingest-path-asymmetry).
 
 ## Service states, all at once
 

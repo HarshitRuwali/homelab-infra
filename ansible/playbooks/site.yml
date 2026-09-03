@@ -8,7 +8,8 @@
 # WHAT THIS DOES NOT DO: it does not install package or image updates. It
 # configures the machinery that applies them on a schedule (03:00 apt, 04:00
 # containers). To force either one now, see the commands in
-# docs/fleet-ansible.md; both restart services and deserve to be deliberate.
+# docs/fleet/schedules.md; both restart services and deserve to be
+# deliberate.
 #
 # ORDER IS LOAD-BEARING:
 #   1. collectors first, so telemetry exists before anything starts changing

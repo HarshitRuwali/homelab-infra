@@ -1,16 +1,22 @@
 name: Deploy docs
 
-# Builds both MkDocs sites in this repository and publishes them to the single
+# Builds every MkDocs site in this repository and publishes them to the single
 # GitHub Pages site, each under its own subdirectory:
 #
 #   /homelab-infra/             landing page, docs-landing/index.html
-#   /homelab-infra/memory/      built from memory/mkdocs.yml
 #   /homelab-infra/monitoring/  built from monitoring/mkdocs.yml
+#   /homelab-infra/ansible/     built from ansible/mkdocs.yml
+#   /homelab-infra/memory/      built from memory/mkdocs.yml
+#   /homelab-infra/s3-backup/   built from s3-backup/mkdocs.yml
 #
-# A repository gets exactly one Pages site, which is why the two stacks share
-# this workflow instead of keeping the separate ones they had as standalone
-# repositories. Both `site_url` values point at the subdirectory above, so
-# canonical links and sitemap.xml stay correct.
+# Every module has its own dedicated site; none is folded into another. Adding
+# or removing a stack means touching four places in this file: the path filters
+# on both triggers, the pip cache key, the install step, and a build step.
+#
+# A repository gets exactly one Pages site, which is why the stacks share this
+# workflow instead of keeping the separate ones they had as standalone
+# repositories. Every `site_url` points at the subdirectory above, so canonical
+# links and sitemap.xml stay correct.
 #
 # Docs only: it builds Markdown into static HTML and uploads it. It never
 # starts a stack, never runs a playbook, never reaches a datastore or a model
@@ -32,6 +38,10 @@ on:
       - memory/mkdocs.yml
       - monitoring/docs/**
       - monitoring/mkdocs.yml
+      - ansible/docs/**
+      - ansible/mkdocs.yml
+      - s3-backup/docs/**
+      - s3-backup/mkdocs.yml
       - docs-landing/**
       - .github/workflows/deploy-docs.yml
   push:
@@ -42,6 +52,10 @@ on:
       - memory/mkdocs.yml
       - monitoring/docs/**
       - monitoring/mkdocs.yml
+      - ansible/docs/**
+      - ansible/mkdocs.yml
+      - s3-backup/docs/**
+      - s3-backup/mkdocs.yml
       - docs-landing/**
       - .github/workflows/deploy-docs.yml
   workflow_dispatch:
@@ -71,38 +85,48 @@ jobs:
           cache-dependency-path: |
             memory/docs/requirements.txt
             monitoring/docs/requirements.txt
+            ansible/docs/requirements.txt
+            s3-backup/docs/requirements.txt
 
-      # Both files pin the identical set (mkdocs 1.6.1, mkdocs-material 9.7.7,
-      # pymdown-extensions 11.0.1, markdown 3.10.3), so one environment serves
-      # both builds. pip resolves them together and fails loudly if the two
+      # All four files pin the identical set (mkdocs 1.6.1, mkdocs-material
+      # 9.7.7, pymdown-extensions 11.0.1, markdown 3.10.3), so one environment
+      # serves every build. pip resolves them together and fails loudly if the
       # files ever drift into a genuine conflict, which is the wanted signal.
       - name: Install docs dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r memory/docs/requirements.txt \
-                                -r monitoring/docs/requirements.txt
+                                -r monitoring/docs/requirements.txt \
+                                -r ansible/docs/requirements.txt \
+                                -r s3-backup/docs/requirements.txt
 
       # --strict turns broken internal links and pages missing from the nav
       # into build failures rather than warnings nobody reads.
       #
       # -d is resolved relative to the config file, so ../site/<name> lands
-      # both builds in one tree at the repository root for a single upload.
+      # every build in one tree at the repository root for a single upload.
       - name: Build the memory docs
         run: mkdocs build --strict -f memory/mkdocs.yml -d ../site/memory
 
       - name: Build the monitoring docs
         run: mkdocs build --strict -f monitoring/mkdocs.yml -d ../site/monitoring
 
+      - name: Build the fleet automation docs
+        run: mkdocs build --strict -f ansible/mkdocs.yml -d ../site/ansible
+
+      - name: Build the s3-backup docs
+        run: mkdocs build --strict -f s3-backup/mkdocs.yml -d ../site/s3-backup
+
       # Plain static file, no MkDocs build: it only has to link onward to the
-      # two sites, and giving it a third theme install would be waste.
+      # four sites, and giving it a fifth theme install would be waste.
       - name: Add the landing page
         run: cp docs-landing/index.html site/index.html
 
       # Skipped on pull requests: nothing in the PR path consumes its outputs
-      # (both `site_url` values are hardcoded in the mkdocs.yml files), and it
-      # fails with "Get Pages site failed" on any repository where Pages has
-      # not been enabled yet. Without this guard a PR that only touches
-      # Markdown goes red after `mkdocs build --strict` has already passed.
+      # (every `site_url` is hardcoded in the mkdocs.yml files), and it fails
+      # with "Get Pages site failed" on any repository where Pages has not been
+      # enabled yet. Without this guard a PR that only touches Markdown goes red
+      # after `mkdocs build --strict` has already passed.
       - name: Configure GitHub Pages
         if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5

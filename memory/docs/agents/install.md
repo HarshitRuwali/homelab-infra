@@ -1,4 +1,4 @@
-# Installing the MCP Server
+# Installing the MCP server
 
 The MCP server is a Python package installed with `uv`.
 
@@ -6,6 +6,15 @@ The MCP server is a Python package installed with `uv`.
 
 - `uv` package manager
 - A running Open Memory Stack API (default: `http://localhost:8080`)
+
+!!! warning "The all-in-one Compose stack is on 8088, not 8080"
+    `8080` is the port the API listens on *inside* its container, and the
+    default every client here assumes. The all-in-one stack publishes it on the
+    host as **8088** (`FASTAPI_PORT` in `.env.example`), so the default sends
+    the MCP server to a closed port. Set `OPEN_MEMORY_API_URL` to
+    `http://localhost:8088`, or change `FASTAPI_PORT` to `8080`. Running the
+    API on its own, as in a [split deployment](../getting-started/split-deployment.md),
+    it is `8080` and the default is right.
 
 ## Install
 

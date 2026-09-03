@@ -1,4 +1,4 @@
-# Memory Endpoints
+# Memory endpoints
 
 ## `POST /memory/store`
 

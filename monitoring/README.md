@@ -5,8 +5,10 @@ homelab. Grafana for dashboards, Prometheus for metrics, Loki for logs, Grafana
 Alloy as the collector on every host, and Ansible to keep the whole fleet
 configured, patched and alerting.
 
-**Full documentation:** [`docs/`](docs/index.md), or build the site locally
-(see [Building the docs](docs/reference/tooling.md)).
+**📖 Documentation: <https://harshitruwali.github.io/homelab-infra/monitoring/>**
+
+Source under [`docs/`](docs/index.md); build it locally with
+[Building the docs](docs/reference/tooling.md).
 
 ## What it does
 
@@ -39,33 +41,21 @@ survives `docker compose down -v`.
 
 ## Quick start
 
-### Fleet management, the primary path
+### Fleet management, documented separately
 
 Ansible owns the Alloy config on every host, deploys the apt and reboot metrics
 exporter, configures package patching, schedules container image updates, and
-provisions alerting.
+provisions alerting. It lives at [`../ansible/`](../ansible/README.md) and has
+its own docs site: **[Fleet Automation](https://harshitruwali.github.io/homelab-infra/ansible/)**.
 
 ```bash
-brew install ansible                            # macOS
-# Debian/Ubuntu: python3 -m venv ~/.venvs/ansible
-#                ~/.venvs/ansible/bin/pip install ansible
-
 cd ansible                                      # from the repository root
-cp inventory/hosts.example.yml inventory/hosts.local.yml   # then edit it
-ansible-playbook playbooks/preflight.yml        # read-only checks
 ansible-playbook playbooks/site.yml             # everything, idempotent
 ```
 
-Runs from macOS or from a Linux box on the Proxmox LAN. Add
-`-e lan_use_jump_host=false` when running from the LAN itself.
-
-> [!IMPORTANT]
-> `site.yml` **configures** the machinery; it does not itself install packages
-> or pull images. Those apply on a schedule: **03:00** for packages, **04:00**
-> for containers, both with jitter. Nothing ever reboots a machine.
-
-New to Ansible? [Getting started](docs/getting-started/index.md) assumes no
-prior knowledge and uses examples from this repo.
+Install the central stack below **first**: a collector with nowhere to push is
+not useful. Then hand configuration to Ansible, which owns it from that point
+on.
 
 ### Central stack, first install
 
@@ -120,7 +110,7 @@ https://monitor.example.com/loki/api/v1/push         -> Basic Auth log ingest
 > The two ingest paths behave differently: `/prometheus/` **strips** its prefix
 > while `/loki/` **preserves** it. So a Loki query URL is
 > `/loki/api/v1/label/host/values`, and `/loki/ready` is a 404. See
-> [Verification](docs/fleet/verification.md).
+> [Verification](https://harshitruwali.github.io/homelab-infra/ansible/fleet/verification/).
 
 See [Security notes](docs/security.md).
 
@@ -150,10 +140,9 @@ filtered through `$host`. Hosts with an NVIDIA GPU also get GPU utilization,
 VRAM, temperature, power and fan.
 
 **Alert rules** in `grafana/provisioning/alerting/`: 42 committed across
-availability, resources, updates, containers, services, storage, network and
-GPU, plus a
-`rules-availability.yaml` **generated from the inventory** so adding a host
-cannot leave a silent gap in down-detection.
+resources, updates, containers, services, storage, network and GPU, plus five
+more in a `rules-availability.yaml` **generated from the inventory** so adding
+a host cannot leave a silent gap in down-detection. 47 rules load in total.
 
 > [!NOTE]
 > This stack is push-based, so `up` is a series each collector pushes about
@@ -163,17 +152,12 @@ cannot leave a silent gap in down-detection.
 
 ## Repo layout
 
-Paths below are relative to this directory, `monitoring/`. Fleet automation
-lives one level up at `ansible/` in the repository root, shared with the other
-stacks; every `cd ansible` in these docs means from the repository root.
+Paths below are relative to this directory, `monitoring/`. Fleet automation is
+a separate module one level up at [`../ansible/`](../ansible/README.md), with
+its own README and its own docs site; every `cd ansible` here means from the
+repository root.
 
 ```text
-../ansible/                    Fleet automation (repository root, not this stack)
-  playbooks/site.yml             everything, in dependency order
-  inventory/hosts.example.yml    template; hosts.local.yml is gitignored
-  roles/                         alloy_collector, gpu_exporter, smart_metrics,
-                                 update_metrics, unattended_upgrades,
-                                 docker_updates, grafana_alerting, matrix_webhook
 alloy/config.alloy             Docker-collector config (native installs use Ansible)
 grafana/dashboards/fleet/      Fleet-wide dashboards (Monitoring folder)
 grafana/dashboards/servers/    Per-host dashboards (Servers folder)
@@ -189,15 +173,15 @@ docs/requirements.txt          Pinned MkDocs toolchain
 ```
 
 > [!CAUTION]
-> `ansible/inventory/hosts.local.yml`, at the repository root, is gitignored and must stay that way.
+> `../ansible/inventory/hosts.local.yml` is gitignored and must stay that way.
 > This repository is public, and an inventory is a complete map of the estate:
 > ingest endpoint, internal addressing, valid usernames, and which box to hit
-> to blind the monitoring. `group_vars/all/vault.yml` is committed but
-> ansible-vault encrypted; its password lives outside the repo.
+> to blind the monitoring. See [Fleet Automation](../ansible/README.md).
 
 ## Documentation
 
-31 pages, built with MkDocs Material.
+Built with MkDocs Material, and published as one section of the repository's
+GitHub Pages site.
 
 ```bash
 python3 -m venv .venv
@@ -206,34 +190,36 @@ python3 -m venv .venv
 .venv/bin/mkdocs build             # render the static site into site/
 ```
 
-Published to GitHub Pages by `.github/workflows/deploy-docs.yml` on push to `master`;
-pull requests run the same checks without publishing. The workflow is
-docs-only: it never runs a playbook, never touches the fleet, and uses no
-repository secrets.
+Published to GitHub Pages by the repository-root
+`.github/workflows/deploy-docs.yml` on push to `master`; pull requests run the
+same checks without publishing. One workflow builds all three docs sites in
+this repository, so a change here rebuilds the others too. It is docs-only: it
+never runs a playbook, never touches the fleet, and uses no repository secrets.
 
 > [!IMPORTANT]
 > Pages must be enabled once by hand: **Settings → Pages → Source: GitHub
 > Actions**. It cannot be automated, because creating a Pages site is an
 > admin-level API call that `GITHUB_TOKEN` is not permitted to make. Until
-> then `build` passes and `deploy` fails.
+> then the **build** job fails, at `Configure GitHub Pages`, after every
+> `mkdocs build --strict` has already passed.
 
 | Section | Start at |
 |---|---|
-| Never used Ansible | [Getting started](docs/getting-started/index.md) |
+| Install the central stack | [Getting started](docs/getting-started/index.md) |
 | Architecture and the push model | [Architecture](docs/architecture/index.md) |
-| Fleet management, patching, container updates | [Fleet](docs/fleet/index.md) |
+| Fleet management, patching, container updates | [Fleet Automation](https://harshitruwali.github.io/homelab-infra/ansible/) |
 | Collectors, dashboards, alerting | [Monitoring](docs/monitoring/index.md) |
 | Lifecycle, retention, runbooks | [Operations](docs/operations/index.md) |
-| Playbooks, metrics, variables | [Reference](docs/reference/playbooks.md) |
+| Metrics catalogue and tooling | [Reference](docs/reference/index.md) |
 | Security notes | [Security](docs/security.md) |
 
 Frequently wanted:
 
-- [What runs when](docs/fleet/schedules.md): every timer and how to force it
-- [Troubleshooting](docs/fleet/troubleshooting.md): failure modes seen in production
+- [What runs when](https://harshitruwali.github.io/homelab-infra/ansible/fleet/schedules/): every timer and how to force it
+- [Troubleshooting](https://harshitruwali.github.io/homelab-infra/ansible/fleet/troubleshooting/): failure modes seen in production
 - [Runbooks](docs/operations/runbooks.md): recovery steps per alert
 - [Metrics catalogue](docs/reference/metrics.md): everything this repo adds
-- [Glossary](docs/getting-started/glossary.md): Ansible, monitoring and systemd terms
+- [Glossary](https://harshitruwali.github.io/homelab-infra/ansible/getting-started/glossary/): Ansible, monitoring and systemd terms
 
 ## Design commitments
 

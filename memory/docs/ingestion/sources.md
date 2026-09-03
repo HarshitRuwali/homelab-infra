@@ -1,4 +1,4 @@
-# Data Sources
+# What gets collected
 
 The ingestion pipeline collects from these sources:
 

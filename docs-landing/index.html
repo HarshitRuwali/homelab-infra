@@ -2,10 +2,30 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>homelab-infra docs</title>
+<meta name="description" content="Documentation for the stacks in the homelab-infra repository: monitoring, memory, S3 backup and fleet automation.">
+<!--
+  Deliberately a single static file with no build step and no dependencies: it
+  only has to link onward to the MkDocs sites, and giving it a fifth theme
+  install would be waste. It is copied to site/index.html by
+  .github/workflows/deploy-docs.yml.
+
+  The palette below mirrors mkdocs-material's `indigo` primary in its `default`
+  and `slate` colour schemes, which is what every site here is configured with.
+  Keep them in step: this page is the seam a reader crosses on the way in, and
+  a colour shift at that seam reads as two unrelated projects.
+-->
 <style>
-  :root { color-scheme: light dark; --fg:#1a1a1a; --muted:#5c6370; --bg:#fbfbfa; --card:#fff; --line:#e3e3e0; }
+  :root {
+    color-scheme: light dark;
+    --fg:rgba(0,0,0,.87); --muted:rgba(0,0,0,.54); --bg:#fff; --card:#fff;
+    --line:rgba(0,0,0,.12); --primary:#3f51b5;
+  }
   @media (prefers-color-scheme: dark) {
-    :root { --fg:#e8e8e6; --muted:#9aa0aa; --bg:#17181a; --card:#1f2124; --line:#303338; }
+    :root {
+      --fg:hsla(232,75%,95%,1); --muted:hsla(232,15%,75%,1);
+      --bg:hsla(232,15%,21%,1); --card:hsla(232,15%,24%,1);
+      --line:hsla(232,15%,32%,1); --primary:#9fa8da;
+    }
   }
   body { margin:0; background:var(--bg); color:var(--fg);
          font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
@@ -13,12 +33,15 @@
   h1 { font-size:1.75rem; margin:0 0 .5rem; letter-spacing:-.02em; }
   p.lede { color:var(--muted); margin:0 0 2.5rem; }
   a.card { display:block; padding:1.15rem 1.35rem; margin-bottom:.85rem; background:var(--card);
-           border:1px solid var(--line); border-radius:10px; text-decoration:none; color:inherit; }
-  a.card:hover { border-color:var(--muted); }
+           border:1px solid var(--line); border-radius:10px; text-decoration:none; color:inherit;
+           transition:border-color .15s, box-shadow .15s; }
+  a.card:hover { border-color:var(--primary); box-shadow:0 1px 6px rgba(0,0,0,.12); }
   a.card strong { display:block; font-size:1.05rem; }
+  a.card:hover strong { color:var(--primary); }
   a.card span { color:var(--muted); font-size:.925rem; }
   footer { margin-top:2.5rem; color:var(--muted); font-size:.9rem; }
-  footer a { color:inherit; }
+  footer a { color:var(--primary); }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.85em; }
 </style>
 <main>
   <h1>homelab-infra</h1>
@@ -26,8 +49,14 @@
 
   <a class="card" href="monitoring/">
     <strong>Monitoring</strong>
-    <span>Grafana, Prometheus, Loki and Alloy, plus the Ansible fleet automation
-    that configures, patches and alerts on every host.</span>
+    <span>Central Grafana, Prometheus, Loki and Alloy: what is collected, what
+    the dashboards show, and what alerts on it.</span>
+  </a>
+
+  <a class="card" href="ansible/">
+    <strong>Fleet Automation</strong>
+    <span>The Ansible control plane at <code>ansible/</code>: collectors, package
+    patching, container updates, host onboarding and provisioned alerting.</span>
   </a>
 
   <a class="card" href="memory/">
@@ -36,9 +65,15 @@
     service, with an MCP server for coding agents.</span>
   </a>
 
+  <a class="card" href="s3-backup/">
+    <strong>S3 Backup</strong>
+    <span>Nightly off-site backup of Immich and Nextcloud to Amazon S3: restic
+    for the databases, rclone for the photo originals, restores drilled monthly.</span>
+  </a>
+
   <footer>
     <a href="https://github.com/HarshitRuwali/homelab-infra">Source on GitHub</a>.
-    The <code>s3-backup</code> and <code>ansible</code> directories document
-    themselves in their READMEs.
+    Every module has its own dedicated site; each directory also carries a
+    README with a quick start.
   </footer>
 </main>

@@ -5,7 +5,7 @@
 # behaviour and the "look but do not touch" behaviour can never be confused
 # by a single mis-set variable.
 #
-# Staged rollout (see docs/fleet-ansible.md):
+# Staged rollout (see docs/fleet/rollout.md):
 #   --limit ubuntu-dev            # 0 pending, proves config at zero risk
 #   --limit ubuntu-ai             # 3 pending, first real installs
 #   --limit rpi5                  # 25 pending, SUPERVISED, image the card first

@@ -1,4 +1,4 @@
-# Embedding and LLM Endpoints
+# Embedding and LLM endpoints
 
 ## `POST /embed`
 

@@ -37,10 +37,11 @@ with an explicit message if it does not.
 
 ## The trade-off you are accepting
 
-> Putting the restic password in the same AWS account as the restic repository
-> means one account compromise yields both the ciphertext and the key. With
-> `SECRETS_BACKEND=file`, an attacker with AWS access gets an encrypted repo
-> they cannot read.
+!!! warning "One account compromise yields both the ciphertext and the key"
+    Putting the restic password in the same AWS account as the restic
+    repository means one account compromise yields both. With
+    `SECRETS_BACKEND=file`, an attacker with AWS access gets an encrypted repo
+    they cannot read.
 
 Two consequences worth acting on:
 

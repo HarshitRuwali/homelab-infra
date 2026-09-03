@@ -10,7 +10,7 @@ bootstrap path.
     takes about fifteen minutes and uses examples from this repo.
 
 ```bash
-cd ansible
+cd ansible                                           # from the repository root
 ansible-playbook playbooks/site.yml                  # everything, in order
 ansible-playbook playbooks/site.yml --limit rpi5     # one host
 ansible-playbook playbooks/site.yml --limit pi       # one group
@@ -29,14 +29,16 @@ monitored host sits in exactly one leaf.
 | `lxc` → `lxc_debian` | tailscale-router, plex, memory, monitor-lxc | yes | yes, `central` see below | memory only |
 | `vm` → `vm_debian` | ubuntu-dev, ubuntu-ai, cloud-services, matrix | yes | yes | yes |
 | `pi` → `pi_debian` | rpi5, rpi4b | yes | yes | rpi5 only |
+| `metal` → `metal_debian` | t7920 (the Proxmox host) | yes | **no**, deliberately | no |
 
 Today every leaf is `_debian`. That is the point of the split rather than an
 argument against it: a future `vm_fedora` slots in beside its sibling without
 disturbing anything, and `--limit vm` keeps meaning "every VM". Variables
 divide along the same seam, and deeper groups win:
 
-- **platform** (`lxc` / `vm` / `pi`): true because of the hardware or the
-  virtualisation. SD-card IO on the Pis. Shared kernel on the containers.
+- **platform** (`lxc` / `vm` / `pi` / `metal`): true because of the hardware
+  or the virtualisation. SD-card IO on the Pis. Shared kernel on the
+  containers. Real disks, so real SMART, on `metal`.
 - **distro** (`*_debian`): true because of the package manager. Anything
   naming an apt package belongs here, because that is exactly what a
   `_fedora` sibling would not share.
@@ -64,7 +66,8 @@ host is in as many as apply.
 |---|---|---|
 | `lan_guests` | plex, memory, matrix | **how** it is reached: `ProxyJump` via `lan_jump_host` |
 | `central` | monitor-lxc | **what it runs**: the monitoring stack itself |
-| `autoupdate` | all ten | **whether** it is auto-patched |
+| `autoupdate` | every host except t7920 | **whether** it is auto-patched |
+| `no_autoupdate` | t7920 | monitored, package lists refreshed, but **never** patched automatically |
 
 Do not fold an overlay into the platform tree. `lxc_debian` holds both
 `tailscale-router` (reached directly over the tailnet) and `monitor-lxc`
@@ -117,11 +120,12 @@ Documented so the omission is a decision, not a gap.
     `rules-resources.yaml` **before** you do, or you will re-create the disk
     noise.
 
-??? note "t7920, the Proxmox host itself"
-    All of its guests are monitored, but the hypervisor is not. Accept the
-    consequence: host-level CPU, RAM, disk and ZFS pressure on the machine
-    everything else runs on is invisible here. If a guest looks starved, there
-    is no fleet metric explaining why. Watch it in the Proxmox UI.
+??? note "t7920, the Proxmox host: monitored, never auto-patched"
+    It **is** monitored, as the sole member of the `metal` platform group, and
+    it is the only host that can report SMART disk health. What is deliberately
+    out of scope is **patching**: it is kept out of `autoupdate`, because an
+    unattended upgrade there restarts pveproxy and pvedaemon underneath every
+    running guest. Updates on this box are a deliberate, supervised act.
 
 ??? note "OPNsense (VM 102, FreeBSD)"
     Monitor via the `os-node_exporter` plugin if you want it, scraped rather
@@ -145,6 +149,7 @@ ansible/inventory/
     all/vault.yml        ansible-vault, committed encrypted
     pi/main.yml          SD-card IO tuning (platform)
     pi_debian/main.yml   RPi kernel/bootloader blacklist (distro)
+    metal/main.yml       SMART, PVE cardinality and mount exclusions
     central/main.yml     loopback ingest, stack blacklist
     lan_guests/main.yml  ProxyJump defaults
   host_vars/
@@ -152,7 +157,8 @@ ansible/inventory/
     tailscale-router.yml    PVE-safe overrides, small-rootfs caps
 ```
 
-`lxc`, `lxc_debian`, `vm` and `vm_debian` have no var files yet. They exist to
+`lxc`, `lxc_debian`, `vm`, `vm_debian` and `metal_debian` have no var files
+yet. They exist to
 be extended: the platform/distro seam is where the next override goes, rather
 than into a host_vars file that quietly grows a second copy of the same
 setting.
@@ -168,9 +174,11 @@ setting.
 
 !!! warning "The repo is public"
     All real domains, IPs and usernames live only in `hosts.local.yml`, which
-    `.gitignore` excludes via `ansible/**/*.local.yml`. Note the pre-existing
-    `*.local` pattern matches only names *ending* in `.local`, which would
-    **not** catch `secrets.local.yml`.
+    the **repository-root** `.gitignore` excludes via `ansible/**/*.local.yml`.
+    That pattern is spelled out rather than relying on a bare `*.local`, which
+    matches only names *ending* in `.local` and would **not** catch
+    `secrets.local.yml`. `monitoring/.gitignore` does have a bare `*.local`,
+    but it governs this directory only, never `ansible/`.
 
 ## Variable precedence gotcha
 

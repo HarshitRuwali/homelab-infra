@@ -1,4 +1,4 @@
-# Storage Model
+# Storage model
 
 Memory chunks are persisted in two stores. Qdrant holds the vectors and search
 payload. PostgreSQL holds structured metadata and supports relational queries.

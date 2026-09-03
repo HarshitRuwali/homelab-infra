@@ -68,7 +68,7 @@ Written to `fleet-docker.prom` by `fleet-docker-update.sh`, after each run.
 ## Per-process metrics
 
 From `prometheus.exporter.process`, **opt-in per host** via
-`alloy_enable_process`; see [Variables](variables.md#collector).
+`alloy_enable_process`; see [Variables](https://harshitruwali.github.io/homelab-infra/ansible/reference/variables/#collector).
 
 | Metric | Meaning |
 |---|---|

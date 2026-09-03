@@ -6,7 +6,7 @@
 # looks like a config error.
 #
 # Do NOT enable auto-updates (Phase 7) until the host-down test from
-# docs/fleet-ansible.md has actually fired and resolved.
+# monitoring/docs/monitoring/alerting.md has actually fired and resolved.
 
 - name: Configure central alerting
   hosts: central

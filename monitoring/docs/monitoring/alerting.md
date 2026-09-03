@@ -1,7 +1,10 @@
 # Alerting
 
-26 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
-room through a local relay.
+47 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
+room through a local relay. 42 are committed under
+`grafana/provisioning/alerting/`; the five availability rules are generated
+from the inventory, so adding a host cannot leave a silent gap in
+down-detection.
 
 ## Rule catalogue
 
@@ -33,11 +36,11 @@ room through a local relay.
     | uid | Severity | For | Fires when |
     |---|---|---|---|
     | `fleet-security-updates-stuck` | warning | 24h | security updates pending a full day |
-    | `fleet-unattended-stale` | warning |, | no unattended run in 48h |
-    | `fleet-autoupdates-disabled` | warning |, | config drifted or timer masked |
-    | `fleet-reboot-required-too-long` | warning |, | reboot outstanding 7 days |
-    | `fleet-dpkg-wedged` | critical |, | dpkg needs `--configure -a` |
-    | `fleet-update-metrics-stale` | warning |, | exporter stopped writing |
+    | `fleet-apt-cache-stale` | warning | 1h | `apt-get update` has not succeeded in 3 days, so pending counts are untrustworthy |
+    | `fleet-autoupdates-disabled` | warning | 1h | config drifted or timer masked |
+    | `fleet-reboot-required-too-long` | warning | 1h | reboot outstanding 7 days |
+    | `fleet-dpkg-wedged` | critical | 30m | dpkg needs `--configure -a` |
+    | `fleet-update-metrics-stale` | warning | 30m | exporter stopped writing |
 
 === "Containers (7)"
 

@@ -1,4 +1,4 @@
-# Vector Dimensions
+# Vector dimensions
 
 `VECTOR_DIM` declares the output dimension of your embedding model. It must
 match both the model and the live Qdrant collection.

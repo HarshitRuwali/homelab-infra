@@ -1,4 +1,4 @@
-# API Reference
+# API reference
 
 The FastAPI service exposes a REST API with auto-generated Swagger and Redoc
 interfaces at `/docs` and `/redoc` respectively.

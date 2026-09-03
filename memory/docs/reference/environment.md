@@ -1,4 +1,4 @@
-# Environment Variables
+# Environment variables
 
 Complete list of environment variables used by the all-in-one Docker Compose
 stack and the FastAPI application.

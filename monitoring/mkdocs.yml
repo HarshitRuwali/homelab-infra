@@ -20,7 +20,7 @@ edit_uri: edit/master/monitoring/docs/
 # Build a static site into ./site:
 #   uvx --with mkdocs-material mkdocs build
 #
-# Pinned deps live in requirements-docs.txt for CI.
+# Pinned deps live in docs/requirements.txt for CI.
 
 theme:
   name: material
@@ -90,7 +90,8 @@ markdown_extensions:
 plugins:
   - search
 
-# Themes Mermaid diagrams to the indigo palette in both colour schemes.
+# Themes Mermaid diagrams to the indigo palette in both colour schemes. This
+# file is byte-identical across memory/, monitoring/ and s3-backup/.
 extra_css:
   - stylesheets/extra.css
 
@@ -104,26 +105,12 @@ nav:
 
   - Getting started:
       - getting-started/index.md
-      - Ansible concepts: getting-started/ansible-basics.md
-      - Your first run: getting-started/first-run.md
-      - Reading the output: getting-started/reading-output.md
-      - Glossary: getting-started/glossary.md
+      - Central stack install: getting-started/install.md
 
   - Architecture:
       - architecture/index.md
       - Data flow: architecture/data-flow.md
       - The push model: architecture/push-model.md
-
-  - Fleet management:
-      - fleet/index.md
-      - Controller setup: fleet/setup.md
-      - Onboarding a new host: fleet/onboarding.md
-      - What runs when: fleet/schedules.md
-      - Rollout order: fleet/rollout.md
-      - Package patching: fleet/patching.md
-      - Container updates: fleet/container-updates.md
-      - Verification: fleet/verification.md
-      - Troubleshooting: fleet/troubleshooting.md
 
   - Monitoring:
       - monitoring/index.md
@@ -140,9 +127,8 @@ nav:
       - Deployment log: operations/deployment-log.md
 
   - Reference:
-      - reference/playbooks.md
+      - reference/index.md
       - Metrics catalogue: reference/metrics.md
-      - Variables: reference/variables.md
       - Building the docs: reference/tooling.md
 
   - Security: security.md

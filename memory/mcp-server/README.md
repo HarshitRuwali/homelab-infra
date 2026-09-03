@@ -1,14 +1,15 @@
 # Open Memory MCP server
 
-Exposes the [Open Memory Stack](../api-service) FastAPI service as native MCP
+Exposes the [Open Memory Stack](../README.md) FastAPI service as native MCP
 tools, so Claude Code / Codex / OpenCode can read and write long-term semantic
 memory directly.
 
 It is a thin HTTP client — it holds no state and talks only to the FastAPI
 service over `OPEN_MEMORY_API_URL`.
 
-Full documentation:
-<https://harshitruwali.github.io/homelab-infra/memory/agents/>
+**📖 Documentation: <https://harshitruwali.github.io/homelab-infra/memory/agents/>**
+
+Source under [`../docs/agents/`](../docs/agents/index.md).
 
 > **Note:** `.env.example` documents the environment variables but is **not
 > loaded** by the server. Pass them through the MCP client's `env` block.

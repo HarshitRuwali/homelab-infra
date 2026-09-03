@@ -1,108 +1,66 @@
 # Getting started
 
-This section assumes **no prior Ansible experience**. If you have used Ansible
-before, skip to [Fleet management](../fleet/index.md).
+Standing up the central stack: one host running Grafana, Prometheus, Loki and
+Alloy, behind a reverse proxy that authenticates the ingest paths.
 
-## What problem is being solved
+!!! tip "This is the server side only"
+    Getting a collector onto each of your other hosts is the fleet control
+    plane's job, and it has its own site:
+    **[Fleet Automation](https://harshitruwali.github.io/homelab-infra/ansible/)**.
+    Install the central stack first, because a collector with nowhere to push
+    is not useful.
 
-There are about ten Linux machines here: VMs, LXC containers, a couple of
-Raspberry Pis. Every one of them needs the same handful of things done to it:
+## Pick a deployment shape
 
-- a monitoring agent installed and configured identically
-- security updates applied on a schedule
-- a script and a timer that report what needs patching
+| Shape | When | Guide |
+|---|---|---|
+| **Direct LXC** | a Debian or Ubuntu LXC on Proxmox, native systemd units. What this fleet actually runs. | [Central stack install](install.md#direct-lxc) |
+| **Docker Compose** | anywhere with Docker, and the quicker way to try it. | [Central stack install](install.md#docker-compose) |
 
-Doing that by hand ten times means ten chances to typo something, and no
-record of what was done. Six months later nobody can answer "is this
-configured the same as that one?"
+Both end in the same place: services bound to `127.0.0.1`, state that survives
+a teardown, and configuration that Ansible subsequently owns.
 
-Ansible answers that by putting the desired state in files. You describe what
-a host should look like; Ansible connects over SSH and makes it so. Run it
-again tomorrow and it changes nothing, because everything already matches.
+## Prerequisites
 
-## The mental model
+- A host that will stay up. Everything else reports **to** this one, so when it
+  is down you are blind, and nothing else in the fleet notices.
+- **Disk sized for retention.** Prometheus writes roughly 28 MB per host per
+  day, so a 12-host fleet is about 2.4 GB at the default `7d`, and 10 GB at
+  `30d`. See [Retention](../operations/retention.md).
+- A **TLS reverse proxy** if you will expose it. Nothing here binds to a public
+  interface, and nothing here terminates TLS for you on the Compose path.
+- Two strong passwords: `GRAFANA_ADMIN_PASSWORD` and
+  `COLLECTOR_BASIC_AUTH_PASSWORD`. The second is shared by every collector in
+  the fleet.
 
-```mermaid
-flowchart LR
-    subgraph you["Your laptop, the control node"]
-        P["playbooks/*.yml<br/>what should be true"]
-        I["inventory<br/>which machines"]
-    end
-    P --> A["ansible-playbook"]
-    I --> A
-    A -->|"SSH"| H1["rpi5"]
-    A -->|"SSH"| H2["ubuntu-dev"]
-    A -->|"SSH"| H3["matrix"]
-```
+!!! danger "Never expose the raw ports"
+    Grafana, Prometheus, Loki and Alloy have no meaningful authentication on
+    their own ports, and Prometheus's remote-write receiver will accept
+    anything that reaches it. Everything public goes through nginx with Basic
+    Auth. See [Security](../security.md).
 
-Three things worth internalising immediately:
+## What comes up
 
-**Nothing is installed on the machines you manage.** No agent, no daemon.
-Ansible is just SSH plus Python, both of which a Linux box already has. This
-is why it is called *agentless*.
+| Service | Bind | Purpose |
+|---|---|---|
+| Grafana | `127.0.0.1:3000` | dashboards and unified alerting |
+| Prometheus | `127.0.0.1:9090` | metrics, and the remote-write receiver |
+| Loki | `127.0.0.1:3100` | logs |
+| Alloy | `127.0.0.1:12345` | this node's own telemetry |
+| nginx | `:80` | reverse proxy, Basic Auth on the ingest paths |
+| matrix-webhook | `127.0.0.1:4785` | the Grafana to Matrix relay |
 
-**Your laptop is the control node.** The machines it configures are *managed
-nodes*. Ansible runs entirely from the control node and pushes outward.
+!!! note "The two ingest paths do not behave the same way"
+    `/prometheus/` **strips** its prefix while `/loki/` **preserves** it. So a
+    Loki query URL is `/loki/api/v1/label/host/values`, and `/loki/ready` is a
+    404 rather than a health check. This trips up every first verification
+    attempt.
 
-**You describe the destination, not the journey.** You do not write "run
-`apt install alloy`". You write "the package `alloy` should be present".
-Ansible checks; if it is already there, it does nothing.
+## Next
 
-## Read these in order
-
-<div class="grid cards" markdown>
-
-- :material-numeric-1-circle: **[Ansible concepts](ansible-basics.md)**
-
-    Inventory, playbooks, roles, tasks, modules, idempotency. Every term
-    explained with an example from this repo.
-
-- :material-numeric-2-circle: **[Your first run](first-run.md)**
-
-    A read-only command, then a real one, with the actual output and what
-    each line means.
-
-- :material-numeric-3-circle: **[Reading the output](reading-output.md)**
-
-    `ok`, `changed`, `skipping`, `failed`, and what `PLAY RECAP` is telling
-    you.
-
-- :material-numeric-4-circle: **[Glossary](glossary.md)**
-
-    Every term in one place, including the non-Ansible ones.
-
-</div>
-
-## The single most important idea
-
-**Idempotency.** A run that changes nothing is the normal, healthy outcome.
-
-```text
-PLAY RECAP ****************************************************
-rpi5    : ok=18   changed=0   unreachable=0   failed=0
-```
-
-`changed=0` does not mean it did not work. It means the host already matched
-the description, so there was nothing to do. Running the same playbook twenty
-times in a row produces the same result as running it once.
-
-This is what makes it safe to run these playbooks whenever you are unsure
-about the state of something. You are not "re-installing"; you are asking
-Ansible to confirm reality matches the files.
-
-!!! tip "The corollary"
-    A task that reports `changed` on **every** run is a bug, even if it works.
-    It means you can no longer tell a real change from noise, and an Ansible
-    run that is never green is one nobody reads. There is a real example of
-    this being fixed in [Troubleshooting](../fleet/troubleshooting.md).
-
-## What you will not have to learn
-
-This repo is already written. You do not need to author roles to use it. In
-practice you will:
-
-- run `ansible-playbook playbooks/site.yml` and read the output
-- occasionally edit a value in `group_vars/` or `hosts.local.yml`
-- occasionally run one playbook against one host with `--limit`
-
-The concepts page covers the rest so the files make sense when you open them.
+1. [Central stack install](install.md), the LXC or Compose path end to end.
+2. [Architecture](../architecture/index.md), what is actually moving and where.
+3. [The push model](../architecture/push-model.md), why a dead host is not
+   `up == 0` and what to do about it.
+4. [Collectors](../monitoring/collectors.md), what Alloy ships once hosts start
+   reporting.

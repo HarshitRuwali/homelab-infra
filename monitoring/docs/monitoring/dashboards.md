@@ -112,7 +112,7 @@ is one row with a large Count rather than 32 near-identical rows.
 !!! note "The host picker only lists hosts with the process exporter enabled"
     It is driven by `label_values(namedprocess_namegroup_num_procs, host)`, so
     it cannot offer a host that has no data. The exporter is opt-in; see
-    [`alloy_enable_process`](../reference/variables.md#collector).
+    [`alloy_enable_process`](https://harshitruwali.github.io/homelab-infra/ansible/reference/variables/#collector).
 
 ## GPU
 
@@ -184,7 +184,7 @@ cgroup alongside real containers.
 ## Editing
 
 ```bash
-cd ansible
+cd ansible                 # from the repository root
 ansible-playbook playbooks/dashboards.yml
 ```
 

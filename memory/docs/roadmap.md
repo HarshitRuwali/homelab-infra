@@ -1,6 +1,6 @@
 # Jarvis-Inspired Local AI Operating System — Detailed Roadmap
 
-## Vision
+### Vision
 
 This project is inspired by the idea of persistent assistants like JARVIS and operator-style AI systems seen in fiction, but grounded in practical, self-hosted engineering.
 
@@ -34,9 +34,9 @@ It is being built as a long-term personal AI infrastructure project.
 
 ---
 
-# Why Build This?
+## Why Build This?
 
-## 1. Privacy and Ownership
+### 1. Privacy and Ownership
 
 Most AI assistants today:
 
@@ -56,7 +56,7 @@ All conversations, memories, embeddings, workflows, and infrastructure awareness
 
 ---
 
-## 2. Persistent Long-Term Memory
+### 2. Persistent Long-Term Memory
 
 Most chatbots are stateless.
 
@@ -79,7 +79,7 @@ The assistant should eventually behave more like a persistent operating companio
 
 ---
 
-## 3. Infrastructure Awareness
+### 3. Infrastructure Awareness
 
 The assistant should understand:
 
@@ -106,7 +106,7 @@ Operational Intelligence Layer
 
 ---
 
-## 4. Human-Readable Memory
+### 4. Human-Readable Memory
 
 A major design principle of this architecture is:
 
@@ -130,7 +130,7 @@ Instead of storing important long-term memory only inside embeddings or hidden d
 
 ---
 
-## 5. Separation of Responsibilities
+### 5. Separation of Responsibilities
 
 The architecture intentionally separates:
 
@@ -160,9 +160,9 @@ This separation keeps the system:
 
 ---
 
-# Final Architecture
+## Final Architecture
 
-## Core Request/Response Flow (Text)
+### Core Request/Response Flow (Text)
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
@@ -233,7 +233,7 @@ This separation keeps the system:
 
 > **Telegram/Discord security:** The OpenClaw VM needs outbound internet access *only* to `api.telegram.org` (port 443) and/or Discord's API (`discord.com`, port 443). All other outbound traffic from the OpenClaw VM must be blocked by OPNsense. Incoming messages arrive via long-polling or webhook — no inbound internet port needs to be opened on the OpenClaw VM for Telegram (long-poll is purely outbound). For Discord, the bot uses a persistent outbound WebSocket — also no inbound port required.
 
-## Full System — All Services at a Glance
+### Full System — All Services at a Glance
 
 ```text
 ┌──────────────────────────── Proxmox Host ──────────────────────────────────┐
@@ -279,7 +279,7 @@ This separation keeps the system:
   └────────────────────────────────────────────────────────┘
 ```
 
-## Future Voice-Enabled Architecture
+### Future Voice-Enabled Architecture
 
 ```text
 ┌────────────────────────────────────────────────────────────────┐
@@ -324,11 +324,11 @@ This separation keeps the system:
 
 ---
 
-# Infrastructure Layout
+## Infrastructure Layout
 
-## Physical Infrastructure
+### Physical Infrastructure
 
-### Primary Host Machine
+#### Primary Host Machine
 
 The entire platform will run on a dedicated workstation/server configured as the central AI and homelab node.
 
@@ -347,13 +347,13 @@ Avoid installing AI workloads directly on the Proxmox host.
 
 ---
 
-# Hypervisor Layer
+## Hypervisor Layer
 
-## Proxmox
+### Proxmox
 
 The system uses Proxmox as the virtualization platform.
 
-### Why Proxmox?
+#### Why Proxmox?
 
 Because it provides:
 
@@ -377,7 +377,7 @@ into isolated services.
 
 ---
 
-# Recommended VM and LXC Layout
+## Recommended VM and LXC Layout
 
 | Instance       | Type    | Purpose                  |
 | -------------- | ------- | ------------------------ |
@@ -389,9 +389,9 @@ into isolated services.
 
 ---
 
-# Recommended Resource Allocation
+## Recommended Resource Allocation
 
-## AI VM
+### AI VM
 
 | Resource | Recommendation | Notes                                              |
 | -------- | -------------- | -------------------------------------------------- |
@@ -412,7 +412,7 @@ This VM should remain inference-focused only.
 
 ---
 
-## OpenClaw VM
+### OpenClaw VM
 
 | Resource | Recommendation | Notes                                              |
 | -------- | -------------- | -------------------------------------------------- |
@@ -428,7 +428,7 @@ Purpose:
 
 ---
 
-## Memory LXC
+### Memory LXC
 
 | Resource | Recommendation     | Notes                                           |
 | -------- | ------------------ | ----------------------------------------------- |
@@ -446,7 +446,7 @@ Purpose:
 
 ---
 
-## FastAPI LXC
+### FastAPI LXC
 
 | Resource | Recommendation | Notes                                           |
 | -------- | -------------- | ----------------------------------------------- |
@@ -465,13 +465,13 @@ Purpose:
 
 ---
 
-# Networking Architecture
+## Networking Architecture
 
-## Internal AI VLAN
+### Internal AI VLAN
 
 Create a dedicated internal VLAN/subnet for AI workloads.
 
-### Service IP and Port Map
+#### Service IP and Port Map
 
 | Service                | IP           | Port(s)           | Protocol | Notes                                |
 | ---------------------- | ------------ | ----------------- | -------- | ------------------------------------ |
@@ -495,7 +495,7 @@ This VLAN should:
 
 ---
 
-# OPNsense Configuration
+## OPNsense Configuration
 
 Use OPNsense as the firewall and routing layer.
 
@@ -510,9 +510,9 @@ Responsibilities:
 
 ---
 
-# Firewall Philosophy
+## Firewall Philosophy
 
-## Allow Rules (OPNsense — explicit allowlist)
+### Allow Rules (OPNsense — explicit allowlist)
 
 | Source              | Destination                   | Port(s) | Purpose                                      |
 | ------------------- | ----------------------------- | ------- | -------------------------------------------- |
@@ -535,7 +535,7 @@ Responsibilities:
 
 > **Discord:** Uses a persistent outbound WebSocket to `gateway.discord.gg`. No inbound port needed.
 
-## Deny Rules (default-deny for everything else)
+### Deny Rules (default-deny for everything else)
 
 | Source              | Destination                          | Reason                                          |
 | ------------------- | ------------------------------------ | ----------------------------------------------- |
@@ -573,9 +573,9 @@ https://openclaw.local
 
 ---
 
-# GPU Passthrough Setup
+## GPU Passthrough Setup
 
-## Goal
+### Goal
 
 Pass the NVIDIA A5000 directly into the AI VM.
 
@@ -588,9 +588,9 @@ This provides:
 
 ---
 
-# Recommended GPU Workflow
+## Recommended GPU Workflow
 
-## On Proxmox Host
+### On Proxmox Host
 
 Enable:
 
@@ -606,7 +606,7 @@ Bind GPU to VFIO.
 
 ---
 
-## On AI VM
+### On AI VM
 
 Install:
 
@@ -625,11 +625,11 @@ nvidia-smi
 
 ---
 
-# Storage Design
+## Storage Design
 
-## Recommended Layout
+### Recommended Layout
 
-### NVMe SSD
+#### NVMe SSD
 
 Use for:
 
@@ -639,7 +639,7 @@ Use for:
 * embeddings
 * active memory
 
-### HDD / Archive Storage
+#### HDD / Archive Storage
 
 Use for:
 
@@ -651,9 +651,9 @@ Use for:
 
 ---
 
-# Backup Strategy
+## Backup Strategy
 
-## Critical Data
+### Critical Data
 
 Back up:
 
@@ -666,29 +666,29 @@ Back up:
 
 ---
 
-# Recommended Backup Layers
+## Recommended Backup Layers
 
-## Daily
+### Daily
 
 * markdown memory repo
 * database dumps
 
-## Weekly
+### Weekly
 
 * Proxmox snapshots
 * VM backups
 
-## Monthly
+### Monthly
 
 * offline archive export
 
 ---
 
-# Monitoring Stack
+## Monitoring Stack
 
 Deploy a dedicated Monitoring LXC (192.0.2.6) for aggregation and dashboards.
 
-## Service Placement
+### Service Placement
 
 | Service                        | Runs On         | Port  | Notes                                |
 | ------------------------------ | --------------- | ----- | ------------------------------------ |
@@ -700,7 +700,7 @@ Deploy a dedicated Monitoring LXC (192.0.2.6) for aggregation and dashboards.
 
 > **Important:** The NVIDIA DCGM Exporter must run on the AI VM (where the GPU is physically present). Prometheus in the Monitoring LXC scrapes it remotely at `http://192.0.2.2:9400/metrics`. Placing it in the Monitoring LXC would yield no GPU data.
 
-## Prometheus Scrape Config Example
+### Prometheus Scrape Config Example
 
 ```yaml
 scrape_configs:
@@ -723,7 +723,7 @@ scrape_configs:
           - 192.0.2.6:9221   # PVE exporter (queries Proxmox API)
 ```
 
-## Key Metrics to Dashboard
+### Key Metrics to Dashboard
 
 | Metric                      | Source                  | Alert Threshold          |
 | --------------------------- | ----------------------- | ------------------------ |
@@ -738,9 +738,9 @@ scrape_configs:
 
 ---
 
-# Internal Service Communication
+## Internal Service Communication
 
-## Communication Philosophy
+### Communication Philosophy
 
 All services should communicate over:
 
@@ -756,9 +756,9 @@ Avoid:
 
 ---
 
-# Containerization Strategy
+## Containerization Strategy
 
-## Prefer Docker Compose Inside LXCs
+### Prefer Docker Compose Inside LXCs
 
 For:
 
@@ -777,7 +777,7 @@ Benefits:
 
 ---
 
-# Infrastructure Growth Strategy
+## Infrastructure Growth Strategy
 
 The architecture is intentionally modular.
 
@@ -796,13 +796,13 @@ The infrastructure should support incremental evolution without redesigning the 
 
 ---
 
-# Component Responsibilities
+## Component Responsibilities
 
-## OpenClaw VM
+### OpenClaw VM
 
 Primary entry point and brain of the system.
 
-### Internal Architecture
+#### Internal Architecture
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
@@ -886,11 +886,11 @@ Memory directory layout on disk:
 
 ---
 
-## FastAPI LXC
+### FastAPI LXC
 
 Acts as middleware, abstraction, and security boundary between OpenClaw and all backend services.
 
-### Internal Request Routing
+#### Internal Request Routing
 
 ```text
 Incoming request from OpenClaw
@@ -910,7 +910,7 @@ Incoming request from OpenClaw
   /infra/status   → query Proxmox API + Docker APIs → aggregate
 ```
 
-### Authentication
+#### Authentication
 
 * Service-to-service: short-lived JWT tokens signed with HMAC-SHA256
 * Token lifespan: 15 minutes, refreshed by OpenClaw before expiry
@@ -933,15 +933,15 @@ GET    /health               Liveness check
 
 ---
 
-## Memory LXC
+### Memory LXC
 
-### Services
+#### Services
 
 * Qdrant
 * PostgreSQL
 * Redis
 
-### Qdrant
+#### Qdrant
 
 Semantic retrieval engine running as a Docker container.
 
@@ -971,7 +971,7 @@ Point {
 }
 ```
 
-### PostgreSQL
+#### PostgreSQL
 
 Structured metadata layer running as a Docker container.
 
@@ -1019,7 +1019,7 @@ CREATE TABLE entity_mentions (
 );
 ```
 
-### Redis
+#### Redis
 
 Caching layer and asynchronous retry queue running as a Docker container.
 
@@ -1036,11 +1036,11 @@ infra:status          Cached infra status snapshot (TTL: 30s)
 
 ---
 
-## AI VM
+### AI VM
 
 Dedicated inference machine. GPU-exclusive. No orchestration logic.
 
-### Services
+#### Services
 
 * `llama-server` — OpenAI-compatible LLM API on `:8080`
 * embedding model server — on `:8081` (e.g. `nomic-embed-text-v1.5` via llama.cpp)
@@ -1048,14 +1048,14 @@ Dedicated inference machine. GPU-exclusive. No orchestration logic.
 * (Phase 7) `faster-whisper` server — STT on `:8082`
 * (Phase 7) `piper` TTS server — on `:8083`
 
-### Responsibilities
+#### Responsibilities
 
 * LLM inference (all `/v1/chat/completions` calls)
 * embedding generation (all `/embed` calls)
 * GPU workload management (VRAM budget, concurrent request limits)
 * model loading and hot-swap between models (if needed)
 
-### llama-server startup example
+#### llama-server startup example
 
 ```bash
 llama-server \
@@ -1072,13 +1072,13 @@ No orchestration or automation logic should exist on the AI VM. It serves reques
 
 ---
 
-# Core Memory Design
+## Core Memory Design
 
-## Markdown Files = Source of Truth
+### Markdown Files = Source of Truth
 
 OpenClaw writes structured markdown memory. Files are human-readable, version-controllable, and independent of any database.
 
-### Frontmatter Schema
+#### Frontmatter Schema
 
 Every memory file must include a YAML frontmatter block:
 
@@ -1092,7 +1092,7 @@ summary:    "One-sentence summary used in search result snippets"
 ---
 ```
 
-### File Examples
+#### File Examples
 
 **Project memory** (`/memory/projects/local-ai-os.md`):
 
@@ -1175,7 +1175,7 @@ summary: "Complete Phase 3 memory infrastructure by end of May 2026."
 
 ---
 
-# Why Use a Vector Database?
+## Why Use a Vector Database?
 
 Markdown files are excellent for:
 
@@ -1208,9 +1208,9 @@ The vector database exists to retrieve relevant memories quickly and naturally.
 
 ---
 
-# Memory Pipeline
+## Memory Pipeline
 
-## Write Flow — Full Detail
+### Write Flow — Full Detail
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
@@ -1260,7 +1260,7 @@ The vector database exists to retrieve relevant memories quickly and naturally.
 
 ---
 
-## Retrieval Flow — Full Detail
+### Retrieval Flow — Full Detail
 
 ```text
 ┌──────────────────────────────────────────────────────────────┐
@@ -1328,7 +1328,7 @@ The vector database exists to retrieve relevant memories quickly and naturally.
 
 ---
 
-## Inference-Only Flow (no memory retrieval)
+### Inference-Only Flow (no memory retrieval)
 
 For simple queries that do not require memory lookup (e.g. math, code generation):
 
@@ -1349,7 +1349,7 @@ OpenClaw decides whether to skip retrieval based on query classification (simple
 
 ---
 
-## Agentic RAG Flow — LLM-Triggered Memory Search
+### Agentic RAG Flow — LLM-Triggered Memory Search
 
 > **Why the LLM doesn't have a direct line to Qdrant:** In standard RAG, the LLM never contacts Qdrant at runtime. FastAPI retrieves context *before* the LLM sees the request, and injects the chunks as plain text into the prompt. The LLM reads that text and responds — it has no awareness of Qdrant at all.
 >
@@ -1419,13 +1419,13 @@ OpenClaw decides whether to skip retrieval based on query classification (simple
 > - `write_memory(content, type, tags)` — persist a new memory (always requires confirmation)
 > - `run_workflow(name, params)` — trigger a named automation (requires approval gate)
 
-## Phase 0 — OpenClaw Core Development
+### Phase 0 — OpenClaw Core Development
 
-## Goals
+### Goals
 
 Design and build the OpenClaw orchestration application. This is the most critical phase because every other phase depends on it. No deployment can happen until this software exists.
 
-### Architecture Decisions to Make First
+#### Architecture Decisions to Make First
 
 | Decision                  | Options                                      | Recommendation                          |
 | ------------------------- | -------------------------------------------- | --------------------------------------- |
@@ -1437,7 +1437,7 @@ Design and build the OpenClaw orchestration application. This is the most critic
 | Filesystem watcher        | watchdog, inotifywait                        | watchdog (cross-platform Python)        |
 | Token counting            | tiktoken, transformers tokenizer             | tiktoken or model-specific tokenizer    |
 
-### Tasks
+#### Tasks
 
 * define OpenClaw internal architecture (agent loop, memory writer, workflow executor)
 * implement the agent loop with intent classification (conversational / RAG / tool / automation)
@@ -1461,7 +1461,7 @@ Design and build the OpenClaw orchestration application. This is the most critic
 * write unit tests for memory write/read cycle
 * write integration tests against mock FastAPI + mock Qdrant
 
-### Deliverables
+#### Deliverables
 
 * deployable OpenClaw Python application package (with Dockerfile)
 * `docker-compose.yml` for the OpenClaw VM
@@ -1475,13 +1475,13 @@ Design and build the OpenClaw orchestration application. This is the most critic
 
 ---
 
-## Phase 1 — Infrastructure Foundation
+### Phase 1 — Infrastructure Foundation
 
-## Goals
+### Goals
 
 Establish the physical and virtual infrastructure that all other phases run on top of.
 
-### Tasks
+#### Tasks
 
 * install and configure Proxmox on the host machine
 * configure IOMMU and VFIO kernel parameters for GPU passthrough
@@ -1494,7 +1494,7 @@ Establish the physical and virtual infrastructure that all other phases run on t
 * configure Prometheus scrape jobs for all services
 * validate GPU passthrough with `nvidia-smi` inside AI VM
 
-### Deliverables
+#### Deliverables
 
 * stable Proxmox virtualization platform
 * isolated AI VLAN with firewall rules enforced
@@ -1503,13 +1503,13 @@ Establish the physical and virtual infrastructure that all other phases run on t
 
 ---
 
-## Phase 2 — Local Inference Stack
+### Phase 2 — Local Inference Stack
 
-## Goals
+### Goals
 
 Run local LLMs reliably on GPU with a stable OpenAI-compatible API.
 
-### Tasks
+#### Tasks
 
 * install Ubuntu 22.04 LTS on the AI VM
 * install NVIDIA drivers (driver version ≥ 535 for CUDA 12.x)
@@ -1523,7 +1523,7 @@ Run local LLMs reliably on GPU with a stable OpenAI-compatible API.
 * benchmark inference: tokens/second, VRAM usage, context fill time
 * document final model choice and quantization level
 
-### Model Selection Reference
+#### Model Selection Reference
 
 | Model                    | Quant   | Est. VRAM | Notes                                  |
 | ------------------------ | ------- | --------- | -------------------------------------- |
@@ -1532,7 +1532,7 @@ Run local LLMs reliably on GPU with a stable OpenAI-compatible API.
 | Qwen2.5-32B-Instruct     | Q4_K_M  | ~20GB     | Near 24GB limit, monitor VRAM headroom |
 | nomic-embed-text-v1.5    | F16     | ~0.6GB    | Embedding model, always loaded         |
 
-### Deliverables
+#### Deliverables
 
 * GPU-accelerated local LLM inference confirmed
 * OpenAI-compatible API on `:8080` returning streaming completions
@@ -1541,15 +1541,15 @@ Run local LLMs reliably on GPU with a stable OpenAI-compatible API.
 
 ---
 
-## Phase 3 — Memory Infrastructure
+### Phase 3 — Memory Infrastructure
 
-## Goals
+### Goals
 
 Build the full semantic memory retrieval stack that OpenClaw will rely on.
 
 > **Dependency:** Phase 3 requires Phase 2 to be complete. The embedding pipeline calls the AI VM (llama.cpp with an embedding model) to generate vectors. Ensure the AI VM inference API is operational and benchmarked before building the embedding pipeline.
 
-### Tasks
+#### Tasks
 
 * deploy Qdrant in Docker on Memory LXC, create `memory` collection with correct vector dimensions
 * deploy PostgreSQL in Docker on Memory LXC, run schema migrations (memory_chunks, memory_files, entities, entity_mentions tables)
@@ -1561,7 +1561,7 @@ Build the full semantic memory retrieval stack that OpenClaw will rely on.
 * implement Redis retry queue with exponential backoff for failed writes
 * write tests: ingest a file, search for it, verify results
 
-### Deliverables
+#### Deliverables
 
 * semantic memory retrieval working end-to-end
 * searchable memory corpus via Qdrant
@@ -1570,15 +1570,15 @@ Build the full semantic memory retrieval stack that OpenClaw will rely on.
 
 ---
 
-## Phase 4 — OpenClaw Integration
+### Phase 4 — OpenClaw Integration
 
-## Goals
+### Goals
 
 Deploy OpenClaw and wire it to all backend services to produce a working memory-aware assistant.
 
 > **Dependency:** Requires Phase 0 (OpenClaw software built), Phase 2 (inference running), and Phase 3 (memory stack running).
 
-### Tasks
+#### Tasks
 
 * provision OpenClaw VM with resources per allocation table
 * deploy OpenClaw application package (Docker Compose)
@@ -1594,7 +1594,7 @@ Deploy OpenClaw and wire it to all backend services to produce a working memory-
 * tune `top_k` and chunk size for retrieval quality
 * verify agentic RAG tool calls loop correctly and respect the iteration limit
 
-### Deliverables
+#### Deliverables
 
 * working persistent AI assistant reachable via Telegram and Discord
 * memory-aware responses using RAG retrieval
@@ -1604,13 +1604,13 @@ Deploy OpenClaw and wire it to all backend services to produce a working memory-
 
 ---
 
-## Phase 5 — Infrastructure Awareness
+### Phase 5 — Infrastructure Awareness
 
-## Goals
+### Goals
 
 Allow the assistant to answer questions about and observe the state of the homelab.
 
-### Tasks
+#### Tasks
 
 * implement Proxmox API client in FastAPI (`GET /infra/status`, `GET /infra/vm/{id}`)
   — use Proxmox API token (not root password) with read-only permissions
@@ -1621,7 +1621,7 @@ Allow the assistant to answer questions about and observe the state of the homel
 * cache infra status in Redis (TTL 30s) to avoid hammering APIs on every query
 * write infrastructure context summarizer: formats raw API responses into human-readable status
 
-### Deliverables
+#### Deliverables
 
 * assistant can answer: "what's the VRAM usage right now?", "are all containers running?", "what's the Proxmox CPU load?"
 * infrastructure status cached and refreshed automatically
@@ -1629,13 +1629,13 @@ Allow the assistant to answer questions about and observe the state of the homel
 
 ---
 
-## Phase 6 — Automation Layer
+### Phase 6 — Automation Layer
 
-## Goals
+### Goals
 
 Enable the assistant to perform controlled actions on the infrastructure, with human approval gates.
 
-### Tasks
+#### Tasks
 
 * design tool execution framework: each tool is a Python function wrapped with metadata (name, description, parameters, risk_level)
 * implement approval gate: high-risk tools require explicit user confirmation before execution
@@ -1645,7 +1645,7 @@ Enable the assistant to perform controlled actions on the infrastructure, with h
 * implement monitoring-based triggers: alert + suggest action when threshold breached (e.g. VRAM > 90%)
 * implement audit log: every tool execution written to PostgreSQL with timestamp, tool name, parameters, outcome
 
-### Risk Classification
+#### Risk Classification
 
 | Risk Level | Examples                              | Gate Required |
 | ---------- | ------------------------------------- | ------------- |
@@ -1654,7 +1654,7 @@ Enable the assistant to perform controlled actions on the infrastructure, with h
 | High       | delete VM, modify firewall, rm -rf    | Explicit yes/no prompt with summary |
 | Critical   | destroy dataset, push to production   | Never allow without multi-step approval |
 
-### Deliverables
+#### Deliverables
 
 * semi-autonomous workflow execution with approval gates
 * audit trail of all automated actions
@@ -1662,13 +1662,13 @@ Enable the assistant to perform controlled actions on the infrastructure, with h
 
 ---
 
-## Phase 7 — Voice Interface
+### Phase 7 — Voice Interface
 
-## Goals
+### Goals
 
 Enable real-time voice interaction with end-to-end streaming.
 
-### Tasks
+#### Tasks
 
 * deploy faster-whisper on AI VM in server mode on `:8082` (streaming transcription)
 * deploy Piper TTS on AI VM in server mode on `:8083`
@@ -1679,17 +1679,17 @@ Enable real-time voice interaction with end-to-end streaming.
 * validate full pipeline end-to-end: speak → transcribe → retrieve → infer → synthesize → speak
 * measure and document end-to-end latency (target: < 2 seconds time-to-first-audio)
 
-### Planned Stack
+#### Planned Stack
 
-#### STT
+##### STT
 
 faster-whisper (CTranslate2-optimized Whisper) — runs on AI VM GPU
 
-#### Wake Word
+##### Wake Word
 
 openWakeWord (lightweight, runs on CPU in OpenClaw VM)
 
-#### TTS
+##### TTS
 
 Piper (fast neural TTS, CPU-capable, runs on AI VM or separate LXC)
 
@@ -1697,7 +1697,7 @@ Piper (fast neural TTS, CPU-capable, runs on AI VM or separate LXC)
 
 > **GPU Contention:** faster-whisper and llama-server both use the A5000. During a voice query, both run sequentially (STT first, then LLM, then TTS). They should not run simultaneously. Implement a simple GPU lock (Redis semaphore) if contention is observed.
 
-### Deliverables
+#### Deliverables
 
 * voice assistant with wake-word activation
 * streaming conversational interaction (< 2s time-to-first-audio target)
@@ -1705,13 +1705,13 @@ Piper (fast neural TTS, CPU-capable, runs on AI VM or separate LXC)
 
 ---
 
-## Phase 8 — Advanced Memory and Intelligence
+### Phase 8 — Advanced Memory and Intelligence
 
-## Goals
+### Goals
 
 Improve contextual understanding, memory quality, and long-term intelligence.
 
-### Tasks
+#### Tasks
 
 * build knowledge graph using Neo4j (preferred for Cypher queries and persistence)
   — extract entities (people, projects, concepts) from memory files using LLM-based NER
@@ -1723,7 +1723,7 @@ Improve contextual understanding, memory quality, and long-term intelligence.
 * implement memory pruning: archive or compress old low-priority chunks to reduce Qdrant collection size
 * add cross-memory relationship modeling using entity_mentions table (Phase 3 schema)
 
-### Knowledge Graph Schema (Neo4j)
+#### Knowledge Graph Schema (Neo4j)
 
 ```cypher
 (:Person {name, first_mentioned, last_mentioned})
@@ -1737,7 +1737,7 @@ Improve contextual understanding, memory quality, and long-term intelligence.
 (:Project)-[:DEPENDS_ON]->(:Project)
 ```
 
-### Deliverables
+#### Deliverables
 
 * richer memory system with entity relationships
 * memory ranking producing better retrieval quality
@@ -1746,15 +1746,15 @@ Improve contextual understanding, memory quality, and long-term intelligence.
 
 ---
 
-# Security Principles
+## Security Principles
 
-## Core Principle
+### Core Principle
 
 The assistant should never have unrestricted system access. Every capability that touches infrastructure must be explicitly scoped and gated.
 
 ---
 
-## Authentication and Secrets
+### Authentication and Secrets
 
 * All service-to-service calls authenticated via short-lived JWT (HMAC-SHA256, 15-minute TTL)
 * Secrets stored as environment variables, never hardcoded in application code
@@ -1764,7 +1764,7 @@ The assistant should never have unrestricted system access. Every capability tha
 
 ---
 
-## Never Allow
+### Never Allow
 
 * unrestricted shell execution on any host
 * direct Docker socket exposure to the LLM or agent
@@ -1775,7 +1775,7 @@ The assistant should never have unrestricted system access. Every capability tha
 
 ---
 
-## Always Require Approval
+### Always Require Approval
 
 For:
 
@@ -1789,7 +1789,7 @@ Approval must be an explicit user confirmation step in the OpenClaw workflow exe
 
 ---
 
-# Long-Term Goal
+## Long-Term Goal
 
 The long-term objective is not merely to build a chatbot.
 

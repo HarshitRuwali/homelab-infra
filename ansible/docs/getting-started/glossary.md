@@ -117,7 +117,7 @@ Every term used in these docs, including the ones that are not Ansible.
 
 **or-chain**
 : The PromQL pattern that makes host-down detection work in a push model. See
-  [The push model](../architecture/push-model.md).
+  [The push model](https://harshitruwali.github.io/homelab-infra/monitoring/architecture/push-model/).
 
 **Textfile collector**
 : A directory where scripts drop `.prom` files that node_exporter then
@@ -136,7 +136,7 @@ Every term used in these docs, including the ones that are not Ansible.
 **cAdvisor**
 : Container Advisor. Produces per-container CPU, memory and filesystem
   metrics. Needs root here, see
-  [Container metrics](../monitoring/container-metrics.md).
+  [Container metrics](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/container-metrics/).
 
 **Contact point**
 : Where Grafana sends a notification. Here, a webhook to the Matrix relay.
@@ -172,7 +172,7 @@ Every term used in these docs, including the ones that are not Ansible.
 **Pull vs push**
 : Prometheus normally *pulls* by scraping targets. This stack *pushes* via
   remote-write, which changes what `up` means. See
-  [The push model](../architecture/push-model.md).
+  [The push model](https://harshitruwali.github.io/homelab-infra/monitoring/architecture/push-model/).
 
 **`remote_write`**
 : Prometheus's protocol for accepting metrics pushed to it.

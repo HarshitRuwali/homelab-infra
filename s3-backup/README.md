@@ -1,8 +1,13 @@
-# s3-backup-automation
+# S3 Backup Automation
 
 Nightly off-site backup of the **Immich** and **Nextcloud** data on the HDD to
 **Amazon S3**, so a drive failure costs you a weekend rather than a decade of
 photos.
+
+**📖 Documentation: <https://harshitruwali.github.io/homelab-infra/s3-backup/>**
+
+Source under [`docs/`](docs/index.md); build it locally with
+[Building the docs](docs/tooling.md).
 
 ```
 restic  ->  Immich DB + Nextcloud DB + Nextcloud data/config   (encrypted, deduped, snapshots)
@@ -52,7 +57,8 @@ config/backup.env.example    every option, documented
 docker/                      pinned restic + rclone + jq runner image
 systemd/                     nightly backup timer, monthly restore-drill timer
 aws/                         IAM policies, lifecycle rules, TLS-only bucket policy
-docs/                        setup, architecture, secrets, restore, operations, costs
+docs/                        the MkDocs site published to GitHub Pages
+docs/requirements.txt        pinned MkDocs toolchain
 tests/                       smoke test (mocked docker) + secret-parser test (real image)
 ```
 
@@ -77,6 +83,26 @@ The third suite is what stops the docs drifting away from the code: it checks
 that every command and flag shown to a user exists, that referenced files and
 links resolve, that every config key with a default is documented, and that the
 installer's output and `docs/setup.md` agree on the order of the steps.
+
+## Documentation
+
+Built with MkDocs Material and published as one section of the repository's
+GitHub Pages site.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r docs/requirements.txt
+.venv/bin/mkdocs serve             # live preview on http://127.0.0.1:8000
+```
+
+| Section | Start at |
+|---|---|
+| From nothing to a nightly backup | [Setup](docs/setup.md) |
+| Where credentials live | [Secrets](docs/secrets.md) |
+| What runs, in what order | [Architecture](docs/architecture.md) |
+| Getting data back | [Restore](docs/restore.md) |
+| Daily running and tuning | [Operations](docs/operations.md) |
+| What this costs per month | [Costs](docs/costs.md) |
 
 ## Design notes
 

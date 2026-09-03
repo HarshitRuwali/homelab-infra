@@ -17,5 +17,25 @@ ansible/**/*.local.yml
 ansible/collections/
 ansible/roles/**/files/*.local
 
+# MkDocs build output and local docs virtualenv for the fleet site. The pinned
+# toolchain in ansible/docs/requirements.txt IS committed; the environment and
+# the rendered site are not. The other stacks carry the same rules in their own
+# .gitignore files.
+ansible/site/
+ansible/.venv/
+ansible/venv/
+
 # Combined MkDocs output built by .github/workflows/deploy-docs.yml.
 /site/
+
+# AI coding-agent scratch and config. This repository is public and these files
+# are working notes, not documentation: the one that was committed carried a
+# real tailnet address and a stale plan. Keep them out of git entirely.
+.agent/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.cursorrules
+.cursor/
+.aider*
+.claude/

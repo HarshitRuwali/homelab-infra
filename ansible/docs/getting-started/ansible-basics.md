@@ -111,7 +111,7 @@ code. To stop a host patching, you move it between groups in the inventory.
 ### Seeing what the inventory contains
 
 ```bash
-cd ansible
+cd ansible                         # from the repository root
 ansible-inventory --graph          # the tree of groups and hosts
 ansible-inventory --host rpi5      # every variable that applies to rpi5
 ```
@@ -409,9 +409,11 @@ ansible-vault view inventory/group_vars/all/vault.yml
 ansible-vault edit inventory/group_vars/all/vault.yml
 ```
 
-1. **Required.** The password file location comes from `ansible.cfg`, which
-   is only found when your shell is inside `ansible/`. Run it from the repo
-   root and it silently produces nothing.
+1. **Required**, and `ansible/` is at the **repository root**, one level above
+   `monitoring/`. The password file location comes from `ansible.cfg`, which
+   Ansible reads only from the directory you invoke it in. Run `ansible-vault`
+   from anywhere else and it cannot find the password, then fails in a way that
+   looks like the file is corrupt.
 
 The password itself lives at `~/.config/ansible/monitorting-vault-pass`,
 outside the repo. Encrypted values are used like any other variable:

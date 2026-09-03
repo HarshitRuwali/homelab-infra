@@ -194,7 +194,7 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | `vault_matrix_alert_room_id` | internal room ID, **not** the alias |
 
 ```bash
-cd ansible                                              # required
+cd ansible                                              # from the repository root
 ansible-vault edit inventory/group_vars/all/vault.yml
 ```
 
@@ -210,16 +210,37 @@ ansible-vault edit inventory/group_vars/all/vault.yml
     update_metrics_randomized_delay: 600   # SD-card IO
     ```
 
-=== "`proxmox`"
+=== "`metal`"
+
+    ```yaml
+    smart_metrics_enabled: true      # the only host with real disks
+    alloy_systemd_unit_exclude: '...(lxc|qemu|pve-container)@.+'   # cardinality
+    alloy_fs_mount_points_exclude: '...|etc/pve|rpool...'          # always-full FUSE
+    alloy_journal_max_age: 1h        # a hypervisor journal is enormous
+    alloy_enable_docker: false       # PVE uses its own tooling, not Docker
+    uu_remove_unused_kernels: false
+    ```
+
+    Platform-level: true because it is a real machine running PVE, not because
+    of anything installed on it. Note this group is **not** in `autoupdate`.
+
+=== "`tailscale-router` (host_vars)"
 
     ```yaml
     alloy_systemd_unit_exclude: '...(lxc|qemu|pve-container)@.+'   # cardinality
     alloy_fs_mount_points_exclude: '...|etc/pve|rpool...'          # always-full FUSE
     alloy_journal_max_age: 1h
+    alloy_enable_docker: false
     uu_remove_unused_kernels: false
     uu_clean_interval_days: 1        # 2.0 GB root
     journald_system_max_use: 64M
     ```
+
+    Not a group. This used to be `group_vars/proxmox`, a group of exactly one
+    host; see [why it is `host_vars`](../fleet/index.md#inventory-layout). The
+    block looks identical to `metal` above and is deliberately **not** factored
+    out: this host is an LXC that merely reports a `-pve` kernel and has no
+    `/etc/pve`, so changing one must not silently change the other.
 
 === "`central`"
 

@@ -69,6 +69,21 @@ The API comes up on `http://localhost:8088`, with interactive Swagger docs at
     [Prerequisites](getting-started/index.md#prerequisites). Without one,
     `/health` is green but every `/memory/store` returns **502**.
 
+## Reading these docs offline
+
+```bash
+cd memory                          # from the repository root
+python3 -m venv .venv
+.venv/bin/pip install -r docs/requirements.txt
+.venv/bin/mkdocs serve             # live preview on http://127.0.0.1:8000
+.venv/bin/mkdocs build             # render the static site into ./site
+```
+
+The repository-root `.github/workflows/deploy-docs.yml` publishes this site to
+GitHub Pages on push to `master`, and builds it without publishing on pull
+requests. It is the only workflow in the repository, it builds all three docs
+sites, and it holds no secret. See [Building the docs](reference/tooling.md).
+
 ## Design commitments
 
 These are the decisions the rest of the system follows from. Each one exists

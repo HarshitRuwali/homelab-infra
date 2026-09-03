@@ -118,5 +118,5 @@ consumers caused real incidents here:
 | stale apt cache on a Pi | 12 GB, 83% used | `apt-get clean` |
 | Docker image layers | grows by one image set per release | `docker image prune -f` after each update |
 
-See [Package patching](../fleet/patching.md#cache-growth) and
-[Container updates](../fleet/container-updates.md#pruning-is-dangling-only).
+See [Package patching](https://harshitruwali.github.io/homelab-infra/ansible/fleet/patching/#cache-growth) and
+[Container updates](https://harshitruwali.github.io/homelab-infra/ansible/fleet/container-updates/#pruning-is-dangling-only).

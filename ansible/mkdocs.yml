@@ -1,0 +1,129 @@
+site_name: Fleet Automation
+site_description: >-
+  Ansible control plane for a Proxmox and Tailscale homelab: collectors,
+  package patching, container updates, host onboarding and provisioned
+  alerting, across every machine in the estate.
+site_author: Harshit Ruwali
+
+# Required for a correct sitemap.xml and canonical <link> tags. GitHub Pages
+# serves a project repo under /<repo>/, and this site is published into a
+# subdirectory of it, so the trailing path matters: without
+# it every canonical URL points at the domain root and the sitemap is wrong.
+# Change this if you move the site behind your own domain.
+site_url: https://harshitruwali.github.io/homelab-infra/ansible/
+
+repo_url: https://github.com/HarshitRuwali/homelab-infra
+repo_name: HarshitRuwali/homelab-infra
+edit_uri: edit/master/ansible/docs/
+
+# Serve locally without installing anything globally, from this directory:
+#   uvx --with mkdocs-material mkdocs serve
+# Build a static site into ./site:
+#   uvx --with mkdocs-material mkdocs build
+#
+# Pinned deps live in docs/requirements.txt for CI.
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - navigation.indexes
+    - toc.follow
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Follow system theme
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.keys
+
+plugins:
+  - search
+
+# Themes Mermaid diagrams to the indigo palette in both colour schemes. This
+# file is byte-identical across memory/, monitoring/ and s3-backup/.
+extra_css:
+  - stylesheets/extra.css
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HarshitRuwali/homelab-infra
+
+nav:
+  - Home: index.md
+
+  - Getting started:
+      - getting-started/index.md
+      - Ansible concepts: getting-started/ansible-basics.md
+      - Your first run: getting-started/first-run.md
+      - Reading the output: getting-started/reading-output.md
+      - Glossary: getting-started/glossary.md
+
+  - Fleet management:
+      - fleet/index.md
+      - Controller setup: fleet/setup.md
+      - Onboarding a new host: fleet/onboarding.md
+      - What runs when: fleet/schedules.md
+      - Rollout order: fleet/rollout.md
+      - Package patching: fleet/patching.md
+      - Container updates: fleet/container-updates.md
+      - Verification: fleet/verification.md
+      - Troubleshooting: fleet/troubleshooting.md
+
+  - Reference:
+      - reference/index.md
+      - Playbooks: reference/playbooks.md
+      - Variables: reference/variables.md
+      - Building the docs: reference/tooling.md

@@ -2,7 +2,7 @@
 
 Starting, stopping and inspecting the central stack.
 
-## Lifecycle Script
+## The lifecycle script
 
 Use `scripts/monitoring.sh` for normal setup and lifecycle commands. It creates required external Docker volumes, validates environment variables, and runs the correct Compose file.
 
@@ -26,7 +26,7 @@ export MONITOR_HOSTNAME=<vm-name>
 scripts/monitoring.sh collector up
 ```
 
-## Start and Stop Manually
+## Starting and stopping by hand
 
 The script is preferred, but the equivalent central commands are:
 
@@ -64,7 +64,7 @@ docker compose logs -f loki
 docker compose logs -f collector
 ```
 
-## Health Checks
+## Health checks
 
 ```bash
 curl http://127.0.0.1:3000/api/health
@@ -77,7 +77,7 @@ curl -u collector:<collector-password> https://monitor.example.com/loki/api/v1/l
 
 The Docker Compose stack binds Grafana, Prometheus, Loki, and the Alloy debug UI to `127.0.0.1` by default. Put a TLS reverse proxy in front for public-domain access.
 
-## Query Smoke Tests
+## Query smoke tests
 
 ```bash
 curl 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=node_uname_info'

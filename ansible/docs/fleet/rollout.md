@@ -20,8 +20,15 @@ host that stopped answering.
 ## The sequence
 
 ```bash
-cd ansible
+cd ansible                 # from the repository root; every ansible-playbook
+                           # below runs from here
 ```
+
+!!! warning "One step below runs from `monitoring/`, not from `ansible/`"
+    `scripts/lxc-update.sh` belongs to the monitoring stack, so it is
+    `monitoring/scripts/lxc-update.sh` from the repository root, or
+    `../monitoring/scripts/lxc-update.sh` from `ansible/`. It is marked inline
+    where it appears. Everything else in this sequence runs from `ansible/`.
 
 ### 1. Central ingest capacity, before any collector exists
 
@@ -29,7 +36,10 @@ Onboarding several hosts at once backfills a lot of journal history through
 one path. Raise the limits **first** or the first fleet start will `429`.
 
 ```bash
+# On the central box itself, from monitoring/:
 scripts/lxc-update.sh central --config-only && systemctl restart loki
+
+# Back in ansible/:
 ansible-playbook playbooks/rotate-collector-password.yml
 ```
 
@@ -69,7 +79,7 @@ ansible-playbook playbooks/central-alerting.yml
 ```
 
 Do not proceed until the host-down test has actually fired **and** resolved.
-See [Testing alerts](../monitoring/alerting.md#testing-the-chain).
+See [Testing alerts](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/alerting/#testing-the-chain).
 
 ### 5. Package patching, staged
 

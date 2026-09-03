@@ -28,7 +28,7 @@ You also need an embedding model reachable at `AI_VM_HOST:EMBED_PORT` exposing
 llama.cpp's native `POST /embedding` — the stack embeds nothing itself. Without
 one, `/health` is green but every write returns 502.
 
-Full walkthrough: [Getting started](https://harshitruwali.github.io/homelab-infra/memory/getting-started/).
+Full walkthrough: [Getting started](docs/getting-started/index.md).
 
 ## What's here
 
@@ -49,7 +49,7 @@ POST   /embed           POST /memory/search   DELETE /memory/delete
 POST   /llm/infer
 ```
 
-Details in the [API reference](https://harshitruwali.github.io/homelab-infra/memory/api/).
+Details in the [API reference](docs/api/index.md).
 
 ## Multi-agent scoping
 
@@ -58,7 +58,7 @@ two agents storing the same `file_path` do not clobber each other. Requests that
 omit a scope get the sentinel `("legacy", "default")` and keep the original
 pre-scope chunk IDs, so nothing had to be re-embedded when scoping was added.
 
-See [Memory scoping](https://harshitruwali.github.io/homelab-infra/memory/architecture/scoping/).
+See [Memory scoping](docs/architecture/scoping.md).
 
 ## Development
 
@@ -74,12 +74,19 @@ Add dependencies with `uv add`; commit `pyproject.toml` and `uv.lock` together.
 ## Docs
 
 ```bash
-uvx --with mkdocs-material mkdocs serve    # preview on :8000
+cd memory                          # from the repository root
+python3 -m venv .venv
+.venv/bin/pip install -r docs/requirements.txt
+.venv/bin/mkdocs serve             # preview on http://127.0.0.1:8000
 ```
 
-`.github/workflows/deploy-docs.yml` builds with `--strict` on pull requests and
-publishes to GitHub Pages on push to `master`. Pages must be enabled once by
-hand: **Settings → Pages → Source: GitHub Actions**.
+See [Building the docs](docs/reference/tooling.md).
+
+The repository-root `.github/workflows/deploy-docs.yml` builds with `--strict`
+on pull requests and publishes to GitHub Pages on push to `master`. One
+workflow builds all three docs sites in this repository, so a change here
+rebuilds the others too. Pages must be enabled once by hand:
+**Settings → Pages → Source: GitHub Actions**.
 
 ## Notes
 

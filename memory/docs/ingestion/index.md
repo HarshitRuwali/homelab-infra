@@ -42,7 +42,9 @@ Output is a JSON summary on the last line:
 The script has no configuration file — the constants at the top of
 `scripts/ingest_daily_data.py` are the knobs:
 
-- `MEMORY_API_URL` — FastAPI endpoint (default `http://localhost:8080`)
+- `MEMORY_API_URL` — FastAPI endpoint (default `http://localhost:8080`; the
+  all-in-one Compose stack publishes **8088**, so edit this or set
+  `FASTAPI_PORT=8080`)
 - `MAX_CHUNK_CHARS` — chunk size limit (default 500)
 - `MAX_CONSECUTIVE_FAILURES` — abort threshold (default 3)
 - Source paths (`HERMES_HOME`, `OBSIDIAN_HOME`, `PROJECTS_HOME`)

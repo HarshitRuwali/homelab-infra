@@ -4,7 +4,7 @@ Getting a machine from "it exists" to "its metrics and logs are in central
 Grafana". One playbook does the work and proves it landed:
 
 ```bash
-cd ansible
+cd ansible                                                 # from the repository root
 ansible-playbook playbooks/preflight.yml --limit newhost   # read-only
 ansible-playbook playbooks/onboard.yml   --limit newhost
 ```

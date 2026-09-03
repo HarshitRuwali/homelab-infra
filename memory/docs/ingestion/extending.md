@@ -1,4 +1,4 @@
-# Extending the Pipeline
+# Extending the pipeline
 
 The ingestion script is designed to be extended with new data sources.
 

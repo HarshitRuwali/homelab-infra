@@ -1,4 +1,4 @@
-# VM and LXC Collector Rollout
+# Collectors
 
 !!! tip "Prefer Ansible"
     For an existing fleet use `ansible-playbook playbooks/site.yml --limit <host>`.
@@ -14,7 +14,7 @@ Use `docker-compose.collector.yml` on Docker-based VMs. Use `scripts/lxc-install
 - A root shell inside a systemd-based Debian/Ubuntu LXC for the direct LXC collector path.
 - Docker socket access only when the collector host also runs Docker containers.
 
-## Docker Install
+## Docker install
 
 Copy these files to the VM:
 
@@ -38,7 +38,7 @@ scripts/monitoring.sh collector up
 
 The script creates the external `monitoring-alloy-data` Docker volume, validates config, and starts Alloy. If you are not using public HTTPS ingest paths, you can still use `MONITORING_SERVER=<central-server-ip-or-dns>` for private LAN deployments.
 
-## Direct LXC Install
+## Direct LXC install
 
 Copy the repository to the LXC and run the direct installer in collector mode:
 

@@ -1,4 +1,4 @@
-# Health Endpoint
+# Health endpoint
 
 ## `GET /health`
 

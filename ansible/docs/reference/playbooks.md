@@ -22,7 +22,7 @@ A reference list. For what a playbook or a role *is*, see
 ### Common invocations
 
 ```bash
-cd ansible
+cd ansible                                                 # from the repository root
 
 ansible-playbook playbooks/site.yml                        # everything
 ansible-playbook playbooks/site.yml --limit rpi5           # one host
@@ -47,7 +47,7 @@ on every native install.
 |---|---|
 | Adds the Grafana APT repo and installs `alloy` | `state: present`, never `latest` |
 | Grants `alloy` the groups it needs | `systemd-journal`, `adm`, `docker` |
-| Runs Alloy as root **on Docker hosts** | drop-in, for [cAdvisor](../monitoring/container-metrics.md) |
+| Runs Alloy as root **on Docker hosts** | drop-in, for [cAdvisor](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/container-metrics/) |
 | Templates the config | `validate: alloy fmt %s`: a bad config never lands |
 | Writes `/etc/alloy/.ansible-managed` | stops `lxc-install.sh` reverting it |
 | Caps the journal where set | `journald_system_max_use` |

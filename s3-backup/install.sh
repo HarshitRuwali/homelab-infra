@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# install.sh - deploy s3-backup-automation onto the server that has the HDD.
+# install.sh - deploy the s3-backup automation onto the server with the HDD.
 #
 #   sudo ./install.sh                  # secrets on disk (default)
 #   sudo ./install.sh --secrets aws    # secrets in AWS Secrets Manager

@@ -14,11 +14,12 @@ What is collected, where it is displayed, and what alerts on it.
 
 - :material-view-dashboard: **[Dashboards](dashboards.md)**
 
-    The three provisioned dashboards and what each panel is for.
+    The seven fleet dashboards, the per-host Servers folder, and what each
+    panel is for.
 
 - :material-bell-alert: **[Alerting](alerting.md)**
 
-    26 rules, the Matrix relay, and how to test the chain.
+    47 rules, the Matrix relay, and how to test the chain.
 
 </div>
 
@@ -36,9 +37,6 @@ What is collected, where it is displayed, and what alerts on it.
 
 ## What is deliberately not collected
 
-- **The Proxmox hypervisor itself.** Its guests are monitored; the host is
-  not. Host-level CPU, RAM, disk and ZFS pressure on the machine everything
-  runs on is invisible here.
 - **OPNsense.** Would need the `os-node_exporter` plugin, scraped rather than
   pushed.
 - **The central LXC being down.** Grafana dies with it. Needs an external
@@ -51,7 +49,7 @@ Every series carries these, applied by Alloy as external labels:
 | Label | Source | Notes |
 |---|---|---|
 | `host` | `MONITOR_HOSTNAME` | **never rename**, it forks history |
-| `role` | `MONITOR_ROLE` | `server`, `workstation`, `pi`, `router`, `service`, `central` |
+| `role` | `MONITOR_ROLE` | `server`, `workstation`, `pi`, `router`, `service`, `central`, `hypervisor` |
 | `job` | set by the exporter | `integrations/unix`, `integrations/cadvisor`, `alloy` |
 
 `role` is genuinely useful in rules. `fleet-container-disappeared` excludes

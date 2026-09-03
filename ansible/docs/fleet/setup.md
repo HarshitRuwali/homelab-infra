@@ -75,6 +75,11 @@ scp ~/.config/ansible/monitorting-vault-pass ubuntu-dev:~/.config/ansible/
 ssh ubuntu-dev 'chmod 600 ~/.config/ansible/monitorting-vault-pass'
 ```
 
+!!! note "`monitorting` is not a typo to fix"
+    The filename carries the pre-merge repository's own misspelling, and it is
+    what `ansible/ansible.cfg` reads. Correcting the spelling in one place and
+    not the other is a confusing way to lose access to the vault.
+
 !!! danger "Back this file up"
     Without it, `inventory/group_vars/all/vault.yml` is unrecoverable.
 

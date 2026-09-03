@@ -1,4 +1,4 @@
-# Running Several Agents
+# Running several agents
 
 Multiple agents can share the same memory stack safely. Each agent's writes are
 scoped by `(agent_id, project)`, so they cannot overwrite each other's chunks.

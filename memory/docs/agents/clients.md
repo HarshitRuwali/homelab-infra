@@ -1,4 +1,4 @@
-# Client Configuration
+# Client configuration
 
 Each MCP client connects as a distinct agent. The key configuration is the
 `(agent_id, project)` pair that scopes all writes.
@@ -42,9 +42,14 @@ on one memory. Use it to trace which session last updated a chunk.
 
 ## API URL
 
-When the FastAPI service runs on a non-default port or a remote host, set
-`OPEN_MEMORY_API_URL` accordingly:
+The MCP server defaults to `http://localhost:8080`, which is the port the API
+listens on inside its container. Set `OPEN_MEMORY_API_URL` when it is anywhere
+else, which includes the all-in-one Compose stack:
 
 ```bash
+# The all-in-one stack, which publishes the API on host port 8088.
+OPEN_MEMORY_API_URL=http://localhost:8088 uv run open-memory-mcp
+
+# A remote host.
 OPEN_MEMORY_API_URL=http://memory-host.example.com:8088 uv run open-memory-mcp
 ```

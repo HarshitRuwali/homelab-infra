@@ -22,7 +22,8 @@ prefix. `/loki/` uses `proxy_pass http://addr:3100` **without** one, so nginx
 ## Is everyone reporting?
 
 ```bash
-cd ansible   # required: ansible.cfg resolves the vault password file
+cd ansible   # from the repository root; required, ansible.cfg resolves the
+             # vault password file only from here
 PW=$(ansible-vault view inventory/group_vars/all/vault.yml \
      | awk '/collector_basic_auth_password/{print $2}' | tr -d '"')
 
@@ -41,7 +42,7 @@ curl -sG -u "collector:$PW" https://monitor.example.com/prometheus/api/v1/query 
   | jq -r '.data.result[] | "\(.metric.host) \(.value[1])"'
 ```
 
-**Every value must be under 30.** See [The push model](../architecture/push-model.md)
+**Every value must be under 30.** See [The push model](https://harshitruwali.github.io/homelab-infra/monitoring/architecture/push-model/)
 for why this, and not `up == 0`, is the right question.
 
 ### Logs arriving
@@ -59,7 +60,7 @@ count by (host, name) (container_last_seen{name!=""})
 
 Expect one row per running container. Rows with an **empty** `name` mean
 cAdvisor is only seeing the root cgroup, see
-[Container metrics](../monitoring/container-metrics.md).
+[Container metrics](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/container-metrics/).
 
 ## Is patching working?
 

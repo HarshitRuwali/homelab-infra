@@ -1,5 +1,11 @@
 /* Diagram and nav polish on top of mkdocs-material.
  *
+ * This file is shared verbatim by every docs site in this repository
+ * (memory/, monitoring/, s3-backup/). The sites are separate MkDocs builds
+ * published under one GitHub Pages site, so a reader moving between them
+ * should not notice a seam. Keep the copies byte-identical: if you change one,
+ * change all of them.
+ *
  * Mermaid renders fine out of the box, but Material's stock diagram palette is
  * neutral grey and ignores the indigo scheme the rest of the site uses, so a
  * flowchart reads as undifferentiated boxes. Material exposes the diagram
@@ -53,4 +59,11 @@
 .mermaid .cluster-label .nodeLabel {
   font-weight: 600;
   fill: var(--md-mermaid-label-fg-color);
+}
+
+/* Some pages carry wide pre-formatted ASCII diagrams and directory trees from
+ * before these sites existed. Let them scroll in place rather than stretching
+ * the page. */
+.md-typeset pre > code {
+  overflow-x: auto;
 }

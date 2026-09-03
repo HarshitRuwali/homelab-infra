@@ -175,7 +175,7 @@ sudo s3-backup preflight
      your password manager **before** running `install.sh`, so it does not
      generate a new one.
 4. Write `/etc/s3-backup/backup.env` with the same bucket, region and paths.
-5. Follow C1–C7.
+5. Follow C1–C5.
 
 ## What this does not cover
 

@@ -45,15 +45,15 @@ theme:
         name: Follow system theme
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: teal
-      accent: teal
+      primary: indigo
+      accent: indigo
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: teal
-      accent: teal
+      primary: indigo
+      accent: indigo
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -90,7 +90,8 @@ markdown_extensions:
 plugins:
   - search
 
-# Themes Mermaid diagrams to the teal palette in both colour schemes.
+# Themes Mermaid diagrams to the indigo palette in both colour schemes. This
+# file is byte-identical across memory/, monitoring/ and s3-backup/.
 extra_css:
   - stylesheets/extra.css
 
@@ -141,7 +142,8 @@ nav:
       - Troubleshooting: operations/troubleshooting.md
 
   - Reference:
-      - reference/environment.md
+      - reference/index.md
+      - Environment variables: reference/environment.md
       - Database schema: reference/schema.md
       - Building the docs: reference/tooling.md
 

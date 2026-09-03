@@ -46,13 +46,13 @@ Failure modes this fleet has actually hit, and what each one looks like.
 ??? failure "An alert instance shows a host label of `-`"
     A `NoData` instance carries no labels. If a rule can go NoData and you
     need to know *which* host, it needs the or-chain treatment. See
-    [The push model](../architecture/push-model.md).
+    [The push model](https://harshitruwali.github.io/homelab-infra/monitoring/architecture/push-model/).
 
 ## Collectors
 
 ??? failure "Container panels empty, but Docker logs work"
     cAdvisor cannot reach `/run/containerd/containerd.sock`. Full explanation
-    in [Container metrics](../monitoring/container-metrics.md).
+    in [Container metrics](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/container-metrics/).
 
     ```bash
     journalctl -u alloy | grep -i "containerd.*permission denied"
@@ -171,7 +171,9 @@ Failure modes this fleet has actually hit, and what each one looks like.
 ??? failure "`lxc-update.sh central --config-only` reverted my config"
     It copies from the checkout at `/root/monitorting-stack` on the box, which
     may be **behind** the repo and may lack `grafana/provisioning/alerting/`
-    entirely. Update that checkout, or use `playbooks/central-alerting.yml`,
+    entirely. (`monitorting` is the pre-merge repository's own misspelling. The
+    deployed checkout was never renamed, so it is a real path, not a typo to
+    fix.) Update that checkout, or use `playbooks/central-alerting.yml`,
     which is the supported path.
 
     The Alloy config is protected from this by

@@ -114,4 +114,5 @@
       {{ matrix_webhook_listen_host }}:{{ matrix_webhook_listen_port }}
       (returned {{ mw_smoke.status | default('not probed, check mode') }} to an
       empty request, as expected).
-      Send a real test message with the curl in docs/fleet-ansible.md.
+      Send a real test message with the curl in
+      monitoring/docs/monitoring/alerting.md.

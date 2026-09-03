@@ -1,4 +1,4 @@
-# Memory Scoping
+# Memory scoping
 
 Every memory chunk belongs to a **scope**: `(agent_id, project)`. The scope is
 folded into the chunk's identity, so two agents storing the same `file_path`

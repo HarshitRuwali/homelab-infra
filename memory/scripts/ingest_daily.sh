@@ -4,18 +4,18 @@
 # Runs scripts/ingest_daily_data.py against the memory API, logs the run, and
 # reports a one-line result on stdout so a scheduler can deliver it.
 #
-# Locates the repository from its own path, so the checkout can live anywhere
-# and a scheduler can invoke this script directly:
-#   /path/to/open-memory-stack/scripts/ingest_daily.sh
+# Locates memory/ from its own path, so the checkout can live anywhere and a
+# scheduler can invoke this script directly:
+#   /path/to/homelab-infra/memory/scripts/ingest_daily.sh
 #
 # Override the interpreter with OPEN_MEMORY_PYTHON if the app venv is elsewhere.
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="${OPEN_MEMORY_PYTHON:-$REPO_ROOT/api-service/.venv/bin/python}"
-INGEST_SCRIPT="$REPO_ROOT/scripts/ingest_daily_data.py"
-LOG_DIR="$REPO_ROOT/logs"
+MEMORY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="${OPEN_MEMORY_PYTHON:-$MEMORY_ROOT/api-service/.venv/bin/python}"
+INGEST_SCRIPT="$MEMORY_ROOT/scripts/ingest_daily_data.py"
+LOG_DIR="$MEMORY_ROOT/logs"
 LOG_FILE="$LOG_DIR/ingest_$(date +%Y-%m-%d_%H-%M-%S).log"
 
 if [ ! -x "$PYTHON_BIN" ]; then

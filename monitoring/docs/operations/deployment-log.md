@@ -112,7 +112,7 @@ Three changes in one rollout:
 Every host was unreachable on the first attempt except `tailscale-router`:
 
 ```bash
-cd ansible
+cd ansible                 # from the repository root
 ansible monitored -m ping
 # 9 of 10 UNREACHABLE, "Operation timed out"
 ```

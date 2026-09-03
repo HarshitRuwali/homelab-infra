@@ -1,4 +1,4 @@
-# Request Flow
+# Request flow
 
 Every write and read path touches both Qdrant and PostgreSQL. This page walks
 through what happens inside a single request.

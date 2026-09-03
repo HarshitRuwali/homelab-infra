@@ -1,8 +1,8 @@
-# Security Notes
+# Security
 
 This stack can be used on a public domain, but do not expose Grafana, Prometheus, Loki, or Alloy debug ports directly to the internet. Publish only a reverse proxy, terminate TLS there, and keep the backend service ports private.
 
-## Public Domain Model
+## The public domain model
 
 Recommended public layout:
 
@@ -22,7 +22,7 @@ localhost/private only
 
 The Docker Compose stack now binds Grafana, Prometheus, and Loki to `127.0.0.1` by default. The direct-LXC installer writes an nginx reverse proxy that exposes Grafana and protects collector ingest paths with htpasswd Basic Auth.
 
-## Required Secrets
+## Required secrets
 
 Set real values before running a public deployment:
 
@@ -57,7 +57,7 @@ Do not expose these directly to the internet:
 12345/tcp Alloy debug UI
 ```
 
-## Remote Collectors
+## Remote collectors
 
 For public-domain collectors, point Alloy at the authenticated HTTPS paths:
 
@@ -70,7 +70,7 @@ export COLLECTOR_BASIC_AUTH_PASSWORD=<strong-collector-password>
 
 Alloy sends Basic Auth credentials to both remote-write targets. Keep the collector password different from the Grafana admin password.
 
-## Privileged Collector
+## The privileged collector
 
 Alloy runs with privileged host access in the Docker collector mode so it can collect accurate host, Docker, cgroup, disk, and journal telemetry. That means the collector has sensitive host visibility.
 
@@ -81,7 +81,7 @@ Reduce risk by:
 - Avoiding public exposure of the Docker socket or Alloy debug UI.
 - Limiting who can edit `alloy/config.alloy`, scripts, and Compose files.
 
-## Firewall Checklist
+## Firewall checklist
 
 - Allow public traffic only to the TLS reverse proxy.
 - Allow collector traffic only to the authenticated `/prometheus/*` and `/loki/*` proxy paths.

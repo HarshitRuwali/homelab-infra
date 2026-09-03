@@ -12,7 +12,7 @@
 #   ansible-playbook playbooks/collectors.yml --limit lan_guests \
 #     -e lan_use_jump_host=false
 #
-# See docs/fleet-ansible.md.
+# See docs/fleet/setup.md.
 lan_use_jump_host: true
 
 # `lan_jump_host` is deliberately NOT defaulted here. group_vars/<group> beats

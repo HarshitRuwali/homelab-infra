@@ -15,14 +15,14 @@ Six steps. Everything runs **on the server that has the HDD**.
 
 ```bash
 ssh youruser@server
-git clone https://github.com/HarshitRuwali/s3-backup-automation.git
-cd s3-backup-automation
+git clone https://github.com/HarshitRuwali/homelab-infra.git
+cd homelab-infra/s3-backup
 sudo ./install.sh --secrets aws
 ```
 
 Keep the checkout: it is how you update later. If the server cannot reach
-GitHub, `scp -r s3-backup-automation/ youruser@server:~/` instead and run
-`sudo ./install.sh --secrets aws` from that directory.
+GitHub, `scp -r homelab-infra/ youruser@server:~/` instead and run
+`sudo ./install.sh --secrets aws` from `~/homelab-infra/s3-backup`.
 
 This copies to `/opt/s3-backup`, symlinks the commands into `/usr/local/bin`,
 builds the pinned runner image, pulls the AWS CLI image, enables the timers,
@@ -114,10 +114,10 @@ the backup host and cannot create buckets or IAM users.
 If `--profile NAME` is not defined in your config, the command says so and
 lists the profiles that are, rather than failing inside the AWS CLI.
 
-> **Save the restic password offline now.** It exists only in AWS. Losing the
-> account loses the backups and the key to them. The command is in
-> [Secrets](secrets.md#disaster-recovery), and the reasoning is in
-> [the trade-off](secrets.md#the-trade-off-you-are-accepting).
+!!! danger "Save the restic password offline now"
+    It exists only in AWS. Losing the account loses the backups and the key to
+    them. The command is in [Secrets](secrets.md#disaster-recovery), and the
+    reasoning is in [the trade-off](secrets.md#the-trade-off-you-are-accepting).
 
 Migrating an existing repository from `SECRETS_BACKEND=file`? Pass
 `--restic-password-file /etc/s3-backup/restic-password` so the current password

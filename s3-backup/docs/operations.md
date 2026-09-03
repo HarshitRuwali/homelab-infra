@@ -89,8 +89,8 @@ redeploy is now visible rather than silent:
 
 ```
 [WARN ] the deployed copy in /opt/s3-backup is out of date with
-        /home/you/s3-backup-automation - you likely ran 'git pull' without
-        redeploying. Re-run: sudo /home/you/s3-backup-automation/install.sh --secrets aws
+        /home/you/homelab-infra/s3-backup - you likely ran 'git pull' without
+        redeploying. Re-run: sudo /home/you/homelab-infra/s3-backup/install.sh --secrets aws
 ```
 
 It compares a content fingerprint of `bin/ docker/ aws/ systemd/` between the
@@ -102,7 +102,7 @@ still warns even when the command goes on to fail for an unrelated reason.
 Fix it the same way either way:
 
 ```bash
-cd ~/s3-backup-automation
+cd ~/homelab-infra/s3-backup
 git pull
 sudo ./install.sh --check          # reports stale vs up to date, changes nothing
 sudo ./install.sh --secrets aws    # deploy
