@@ -1,0 +1,58 @@
+site_name: AI Box Model Queue
+site_description: Serializing proxy for inference requests sharing a single-GPU LM Studio host.
+site_author: Harshit Ruwali
+site_url: https://harshitruwali.github.io/homelab-infra/aibox-model-queue/
+
+repo_url: https://github.com/HarshitRuwali/homelab-infra
+repo_name: HarshitRuwali/homelab-infra
+edit_uri: edit/master/aibox-model-queue/docs/
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HarshitRuwali/homelab-infra
+
+nav:
+  - Home: index.md
