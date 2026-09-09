@@ -2,10 +2,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>homelab-infra docs</title>
-<meta name="description" content="Documentation for the stacks in the homelab-infra repository: monitoring, memory, S3 backup and fleet automation.">
+<meta name="description" content="Documentation for the stacks in the homelab-infra repository: monitoring, memory, S3 backup, fleet automation and the AI box model queue.">
 <!--
   Deliberately a single static file with no build step and no dependencies: it
-  only has to link onward to the MkDocs sites, and giving it a fifth theme
+  only has to link onward to the MkDocs sites, and giving it another theme
   install would be waste. It is copied to site/index.html by
   .github/workflows/deploy-docs.yml.
 
@@ -69,6 +69,12 @@
     <strong>S3 Backup</strong>
     <span>Nightly off-site backup of Immich and Nextcloud to Amazon S3: restic
     for the databases, rclone for the photo originals, restores drilled monthly.</span>
+  </a>
+
+  <a class="card" href="aibox-model-queue/">
+    <strong>AI Box Model Queue</strong>
+    <span>Serializes inference requests for a shared single-GPU LM Studio host
+    without model-swap races or silent model fallback.</span>
   </a>
 
   <footer>
