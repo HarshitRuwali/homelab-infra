@@ -38,6 +38,26 @@ Failure modes this fleet has actually hit, and what each one looks like.
     the YAML and re-run the playbook, a silence expires and has to be renewed
     by hand, an exclusion in git does not.
 
+??? failure "A Grafana silence does not silence anything"
+    Always a matcher on a label the alert instance does not carry. Check the
+    Silences list first: **Alert rule targeted: None** and **Alerts silenced:
+    0** mean the silence matches nothing.
+
+    If the silence came from the link in a **Matrix alert**, this was a bug in
+    the notification template, fixed in `templates.yaml`. The relay renders the
+    body as markdown, where `__x__` means bold, so `__alert_rule_uid__` in the
+    silence URL arrived as `alert_rule_uid` with the underscores eaten. Delete
+    any silence created from an old notification and make a new one.
+
+    Otherwise it is a matcher on a dropped label: the rules aggregate with
+    `max by (host)`, so `role`, `instance`, `job` and a dropped container
+    `name` are not on the instance. Silence on `alertname` (the rule **title**,
+    not its uid) plus `host`.
+
+    [Silences that do not silence](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/alerting/#silences-that-do-not-silence)
+    lists the silenceable labels per rule and gives the Alertmanager API call
+    that shows whether an instance is `suppressed` or still `active`.
+
 ??? failure "`Host Down` fires forever for a host that is fine"
     It is in `monitored` in the inventory but has no collector, so it sits in
     the host-down or-chain with nothing ever pushing for it. Either onboard it

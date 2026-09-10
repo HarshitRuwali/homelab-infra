@@ -236,6 +236,15 @@ groups:
       # unattended process that changes what is running has to be able to tell
       # you when it went wrong, or "it updates itself" quietly becomes "it
       # broke itself three weeks ago".
+      #
+      # `role!="workstation"` excludes ubuntu-dev, for the same reason
+      # fleet-container-disappeared does. Both halves of this expression are
+      # noise on a dev box: half-built compose projects fail `up -d`, and a
+      # crashing container left in `restarting` at 04:00 sets the same flag.
+      # Neither is news there, and a critical page that is usually wrong is one
+      # you stop reading. The update still runs on that host and still writes
+      # its metrics, so the dashboards and fleet-docker-update-stale continue
+      # to cover it; only the page is suppressed.
       - uid: fleet-docker-update-failed
         title: Container Update Failed
         condition: C
@@ -257,9 +266,9 @@ groups:
               instant: true
               range: false
               expr: |
-                max by (host) (fleet_docker_update_failed)
+                max by (host) (fleet_docker_update_failed{role!="workstation"})
                   or
-                max by (host) (clamp_max(fleet_docker_containers_restarting, 1))
+                max by (host) (clamp_max(fleet_docker_containers_restarting{role!="workstation"}, 1))
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}
