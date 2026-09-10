@@ -51,7 +51,7 @@ down-detection.
     | `fleet-container-memory-near-limit` | warning | 15m | over 90% of its own limit |
     | `fleet-container-unhealthy` | warning | 10m | was healthy, now failing ([why that matters](container-metrics.md#container_health_state-does-not-mean-what-it-looks-like)) |
     | `fleet-container-disappeared` | warning | 10m | container gone, non-workstation hosts |
-    | `fleet-docker-update-failed` | critical | 0m | nightly update failed or left restarts |
+    | `fleet-docker-update-failed` | critical | 0m | nightly update failed or left restarts, non-workstation hosts |
     | `fleet-docker-update-stale` | warning | 1h | no successful update in 50h |
 
 === "Services (3)"
@@ -142,6 +142,99 @@ would have caught a real failure.
 
 Thresholds were raised deliberately: a homelab routinely runs boxes in the
 high 80s, and a warning that is always on is a warning nobody reads.
+
+## Silences that do not silence
+
+A Grafana silence matches on the **alert instance's** labels, and an instance
+carries far fewer labels than the metrics behind it. Every rule here ends in an
+aggregation, and `max by (host) (...)` throws away every label except `host`. A
+matcher on anything the aggregation dropped matches nothing, and Grafana does
+not warn you: the silence is created, sits there looking active, and suppresses
+nothing.
+
+The labels you can actually match on are:
+
+| Label | Comes from | Example |
+|---|---|---|
+| `alertname` | the rule's **title**, not its uid | `Container Update Failed` |
+| `grafana_folder` | the provisioning folder | `Fleet` |
+| `__alert_rule_uid__` | Grafana, reserved | `fleet-docker-update-failed` |
+| `__alert_rule_namespace_uid__` | Grafana, reserved | the folder's uid |
+| `severity` | the rule's own `labels:` block | `critical` |
+| whatever survives the final `by (...)` | the query | `host`, and sometimes `name`, `device`, `mountpoint`, `uuid`, `cpu` |
+
+!!! bug "Markdown used to eat the underscores in the silence link"
+    The rule uid label is `__alert_rule_uid__`, with two underscores each side.
+    `matrix-webhook` renders the notification body with Python-Markdown, where
+    `__x__` means bold, so the silence URL arrived with
+    `<strong>alert_rule_uid</strong>` in it and all four underscores gone.
+    Following that link pre-filled a silence matching a label that does not
+    exist. The silence saved happily, showed **Active**, and suppressed nothing.
+
+    Fixed by emitting the URL as a markdown autolink, `<{{ .SilenceURL }}>`,
+    whose contents markdown leaves alone. See `templates.yaml`.
+
+    Any silence created from an old notification is still broken. Delete and
+    recreate it. You can spot one from two columns of the Silences list:
+
+    | Column | Healthy | Broken |
+    |---|---|---|
+    | **Alert rule targeted** | the rule's name | `None` |
+    | **Alerts silenced** | 1 or more while firing | `0` |
+
+    `None` means Grafana could not resolve a `__alert_rule_uid__` matcher, so
+    there isn't one.
+
+!!! bug "`role` is never silenceable"
+    It is an Alloy external label, so it exists on the raw series and works
+    inside a rule expression, which is how `role!="workstation"` filters work.
+    But `max by (host)` drops it before the alert instance is created, so a
+    silence matching `role=workstation` never fires.
+
+!!! tip "Two reliable ways to get the matchers right"
+    **Alert rule → ⋮ → Silence notifications** in the Grafana UI, which never
+    goes through the Matrix relay and so is never mangled. Or silence on
+    `alertname` plus `host`, which contain no underscores and cannot be
+    corrupted by any renderer.
+
+### Proving whether a silence matched
+
+Ask the embedded Alertmanager directly, on the central box. An instance that a
+silence caught has `state: suppressed` and a populated `silencedBy`:
+
+```bash
+curl -s -u admin:PASS \
+  http://127.0.0.1:3000/api/alertmanager/grafana/api/v2/alerts \
+  | jq '.[] | {alertname: .labels.alertname, labels, state: .status.state,
+               silencedBy: .status.silencedBy}'
+```
+
+If `state` is `active` rather than `suppressed`, compare the `labels` printed
+there against your silence's matchers; they disagree somewhere.
+
+```bash
+curl -s -u admin:PASS \
+  http://127.0.0.1:3000/api/alertmanager/grafana/api/v2/silences \
+  | jq '.[] | {id, state: .status.state, startsAt, endsAt,
+               matchers: [.matchers[] | "\(.name)\(if .isEqual then "=" else "!=" end)\(.value)"]}'
+```
+
+!!! warning "Two more ways a silence quietly does nothing"
+    **It expired, or never started.** Silences are absolute timestamps. If the
+    central box's clock has drifted, a silence created "now" in the browser can
+    start in the future. `fleet-clock-unsynced` exists for this; check
+    `timedatectl` on the box before blaming Grafana.
+
+    **It was lost in a restart.** Silence state lives in Grafana's database and
+    is flushed periodically, not on every write. `central-alerting.yml`
+    restarts Grafana every run, so a silence created minutes before a playbook
+    run can disappear with it.
+
+This is the practical argument behind the tip above. A silence is the right
+tool for something genuinely temporary, like a maintenance window. For a host
+that will *always* be noisy, exclude it in the rule expression, where it is
+reviewable and cannot expire. `fleet-container-disappeared` and
+`fleet-docker-update-failed` both do this with `role!="workstation"`.
 
 ## Routing
 

@@ -169,6 +169,15 @@ Metrics written to `fleet-docker.prom`:
 Two alerts consume them: `fleet-docker-update-failed` (critical) and
 `fleet-docker-update-stale` (warning at 50 hours).
 
+!!! note "`fleet-docker-update-failed` skips workstations"
+    It excludes `role="workstation"`, today just `ubuntu-dev`. Both halves of
+    that alert are noise on a dev box: half-built compose projects fail
+    `up -d`, and a crashing container left `restarting` at 04:00 sets the same
+    flag. The update still runs there and still writes every metric above, so
+    the dashboards and `fleet-docker-update-stale` still cover it. If you need
+    to know why a run failed on a workstation, read the journal:
+    `journalctl -u fleet-docker-update.service -n 200`.
+
 !!! info "Why 50 hours, not 25"
     The timer is daily with up to 30 minutes of jitter, and a host powered off
     for an evening should not page anyone.

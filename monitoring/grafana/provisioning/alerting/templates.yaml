@@ -3,6 +3,22 @@ apiVersion: 1
 # `host` is promoted to a first-class field because every metric and log line
 # in this fleet carries it via Alloy's external_labels. An alert that does not
 # say which machine it is about is close to useless.
+#
+# MARKDOWN IS NOT OPTIONAL HERE. The relay is the `matrix-webhook` PyPI package,
+# which runs this message body through Python-Markdown and sends the result as
+# `formatted_body`. Two consequences, both load-bearing below:
+#
+#   1. `.SilenceURL` contains `__alert_rule_uid__`, and `__x__` is markdown for
+#      bold. Emitted bare, it renders as <strong>alert_rule_uid</strong> and the
+#      four underscores are eaten, so the link pre-fills a silence with a
+#      matcher on a label that does not exist. The silence then shows Active,
+#      "Alert rule targeted: None", and silences nothing. Wrapping it in <>
+#      makes it an autolink, whose contents markdown leaves alone.
+#   2. Runbooks contain placeholders like <name>, <device> and <unit>. Bare,
+#      markdown passes them through as raw HTML tags and the Matrix client drops
+#      them, so `journalctl -u <unit>` arrives as `journalctl -u`. A code span
+#      escapes them and renders the command as monospace, which it should be.
+#      No annotation currently contains a backtick; keep it that way.
 templates:
   - orgId: 1
     name: fleet.message
@@ -13,7 +29,7 @@ templates:
       * {{ .Labels.alertname }} on {{ .Labels.host }}{{ with .Labels.mountpoint }} (mount {{ . }}){{ end }}{{ with .Labels.name }} (unit {{ . }}){{ end }}
         {{ .Annotations.summary }}
         value: {{ range $ref, $v := .Values }}{{ $ref }}={{ $v }} {{ end }}
-        {{ with .Annotations.runbook }}fix: {{ . }}
-        {{ end }}{{ with .SilenceURL }}silence: {{ . }}{{ end }}
+        {{ with .Annotations.runbook }}fix: `{{ . }}`
+        {{ end }}{{ with .SilenceURL }}silence: <{{ . }}>{{ end }}
       {{ end }}
       {{ end }}
