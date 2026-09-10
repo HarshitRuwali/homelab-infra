@@ -1,0 +1,5 @@
+name: aibox-model-queue
+version: 1.0.0
+description: "Serializes inference across a single-GPU LM Studio host so profiles bound to different models queue instead of racing. Two concurrent requests for different models otherwise kill one with 'Model is unloaded'; a model fallback would 'fix' that by silently answering on the weaker model, which defeats the point of binding a room to a stronger one."
+author: harshit
+kind: standalone

@@ -10,7 +10,7 @@
 [![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)](https://harshitruwali.github.io/homelab-infra/monitoring/)
 [![Proxmox](https://img.shields.io/badge/Proxmox-E57000?logo=proxmox&logoColor=white)](https://www.proxmox.com/)
 
-Five independent modules covering a Proxmox and Tailscale estate: Debian VMs,
+Six independent modules covering a Proxmox and Tailscale estate: Debian VMs,
 LXC containers, Raspberry Pis and one bare-metal hypervisor. Every machine is
 configured, patched and observed the same way, and every automated action
 writes a metric, so **"it updates itself" can never quietly become "it broke
@@ -24,6 +24,7 @@ itself three weeks ago"**.
 | 📊 | [**`monitoring/`**](monitoring/README.md) | Central Grafana, Prometheus, Loki and Alloy. Dashboards, 47 alert rules, Matrix notifications. | [site](https://harshitruwali.github.io/homelab-infra/monitoring/) |
 | 🧠 | [**`memory/`**](memory/README.md) | Self-hosted semantic memory for AI agents. PostgreSQL and Qdrant behind FastAPI, with an MCP server. | [site](https://harshitruwali.github.io/homelab-infra/memory/) |
 | 💾 | [**`s3-backup/`**](s3-backup/README.md) | Nightly off-site backup of Immich and Nextcloud to Amazon S3, with restores drilled monthly. | [site](https://harshitruwali.github.io/homelab-infra/s3-backup/) |
+| 🤖 | [**`aibox-model-queue/`**](aibox-model-queue/README.md) | Serializing proxy so one GPU's LM Studio host is shared without model-swap races. | [README](aibox-model-queue/README.md) |
 | 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, Suricata, AdGuard Home, Authelia, OpenBao, ntopng and Greenbone across six small guests. All free and open source. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
 
 Each module stands alone. Nothing here requires you to run the others, and
@@ -139,6 +140,8 @@ ansible/        Playbooks, roles, inventory. At the root, not under monitoring/,
 monitoring/     Central stack, dashboards, alert rules, install scripts
 memory/         api-service/, memory-service/, mcp-server/, ingestion scripts
 s3-backup/      restic and rclone automation, installer, restore drills
+aibox-model-queue/
+                Serializing proxy for a shared LM Studio host
 docs-landing/   The static index page of the published docs site
 .github/        One workflow: it builds and publishes the docs, nothing else
 ```
@@ -154,18 +157,19 @@ Five MkDocs Material sites plus a landing page, on one GitHub Pages site:
 | [`/monitoring/`](https://harshitruwali.github.io/homelab-infra/monitoring/) | `monitoring/mkdocs.yml` |
 | [`/memory/`](https://harshitruwali.github.io/homelab-infra/memory/) | `memory/mkdocs.yml` |
 | [`/s3-backup/`](https://harshitruwali.github.io/homelab-infra/s3-backup/) | `s3-backup/mkdocs.yml` |
+| [`/aibox-model-queue/`](https://harshitruwali.github.io/homelab-infra/aibox-model-queue/) | `aibox-model-queue/mkdocs.yml` |
 | [`/security/`](https://harshitruwali.github.io/homelab-infra/security/) | `security/mkdocs.yml` |
 
 ```bash
-cd ansible                                  # or monitoring, memory, s3-backup, security
+cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security
 python3 -m venv .venv
 .venv/bin/pip install -r docs/requirements.txt
 .venv/bin/mkdocs serve                      # live preview on :8000
 ```
 
-The four configs differ only in name, URL and nav; the theme, extensions,
-stylesheet and pinned versions are identical copies, so a reader crossing
-between sites does not hit a seam. **Change one, change all four.** Pull
+The five configs share the same Material theme and pinned dependencies, with
+each site's name, URL and navigation tailored to its module. **Keep shared
+theme and dependency changes aligned across all five.** Pull
 requests build every site with `--strict`, which turns a broken link or a page
 missing from the nav into a failure rather than a warning nobody reads.
 
