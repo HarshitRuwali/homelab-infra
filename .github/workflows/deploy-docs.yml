@@ -8,6 +8,7 @@ name: Deploy docs
 #   /homelab-infra/ansible/     built from ansible/mkdocs.yml
 #   /homelab-infra/memory/      built from memory/mkdocs.yml
 #   /homelab-infra/s3-backup/   built from s3-backup/mkdocs.yml
+#   /homelab-infra/security/    built from security/mkdocs.yml
 #
 # Every module has its own dedicated site; none is folded into another. Adding
 # or removing a stack means touching four places in this file: the path filters
@@ -42,6 +43,8 @@ on:
       - ansible/mkdocs.yml
       - s3-backup/docs/**
       - s3-backup/mkdocs.yml
+      - security/docs/**
+      - security/mkdocs.yml
       - docs-landing/**
       - .github/workflows/deploy-docs.yml
   push:
@@ -56,6 +59,8 @@ on:
       - ansible/mkdocs.yml
       - s3-backup/docs/**
       - s3-backup/mkdocs.yml
+      - security/docs/**
+      - security/mkdocs.yml
       - docs-landing/**
       - .github/workflows/deploy-docs.yml
   workflow_dispatch:
@@ -87,6 +92,7 @@ jobs:
             monitoring/docs/requirements.txt
             ansible/docs/requirements.txt
             s3-backup/docs/requirements.txt
+            security/docs/requirements.txt
 
       # All four files pin the identical set (mkdocs 1.6.1, mkdocs-material
       # 9.7.7, pymdown-extensions 11.0.1, markdown 3.10.3), so one environment
@@ -98,7 +104,8 @@ jobs:
           python -m pip install -r memory/docs/requirements.txt \
                                 -r monitoring/docs/requirements.txt \
                                 -r ansible/docs/requirements.txt \
-                                -r s3-backup/docs/requirements.txt
+                                -r s3-backup/docs/requirements.txt \
+                                -r security/docs/requirements.txt
 
       # --strict turns broken internal links and pages missing from the nav
       # into build failures rather than warnings nobody reads.
@@ -116,6 +123,9 @@ jobs:
 
       - name: Build the s3-backup docs
         run: mkdocs build --strict -f s3-backup/mkdocs.yml -d ../site/s3-backup
+
+      - name: Build the security docs
+        run: mkdocs build --strict -f security/mkdocs.yml -d ../site/security
 
       # Plain static file, no MkDocs build: it only has to link onward to the
       # four sites, and giving it a fifth theme install would be waste.

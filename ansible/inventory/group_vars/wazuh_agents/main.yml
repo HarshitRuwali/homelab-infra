@@ -1,0 +1,10 @@
+---
+# Where the Wazuh manager lives. This file is committed, and the repository is
+# PUBLIC, so the real address belongs in hosts.local.yml (gitignored) or an
+# encrypted vault, not here.
+#
+# The manager is the `sec-wazuh` guest from security/. Give it a DHCP
+# reservation or a static address first: an agent that loses its manager does
+# not fail loudly, it just stops reporting, which is the worst failure mode a
+# monitoring agent has.
+wazuh_manager_address: ""

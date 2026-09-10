@@ -1,0 +1,51 @@
+---
+# This role is applied by GROUP MEMBERSHIP (`wazuh_agents`), never by an
+# in-role `when:`, for the same reason unattended_upgrades is: a conditional
+# here would be one typo away from enrolling the hypervisor or the firewall
+# by accident. See inventory/hosts.example.yml.
+#
+# The manager itself is provisioned separately, by security/. This role only
+# puts agents on hosts and points them at it.
+
+- name: Require a manager address
+  ansible.builtin.assert:
+    that:
+      - wazuh_manager_address | length > 0
+    fail_msg: >-
+      wazuh_manager_address is empty. Set it in
+      inventory/group_vars/wazuh_agents/main.yml. It is deliberately not
+      defaulted in the role: this repository is public.
+    quiet: true
+
+- name: Add the Wazuh APT repository
+  ansible.builtin.import_tasks: repo.yml
+
+- name: Install the agent
+  ansible.builtin.apt:
+    name: wazuh-agent
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Configure the agent
+  ansible.builtin.template:
+    src: ossec.conf.j2
+    dest: /var/ossec/etc/ossec.conf
+    owner: root
+    group: wazuh
+    mode: "0640"
+  notify: Restart wazuh-agent
+
+# Held so an apt upgrade cannot move an agent past the manager's major
+# version. Unpin deliberately when upgrading the manager, not incidentally.
+- name: Hold the agent at its installed version
+  ansible.builtin.dpkg_selections:
+    name: wazuh-agent
+    selection: hold
+
+- name: Enable and start the agent
+  ansible.builtin.systemd:
+    name: wazuh-agent
+    enabled: true
+    state: started
+    daemon_reload: true

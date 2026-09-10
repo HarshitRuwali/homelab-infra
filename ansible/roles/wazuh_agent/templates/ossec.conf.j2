@@ -1,0 +1,39 @@
+{{ ansible_managed | comment }}
+<ossec_config>
+  <client>
+    <server>
+      <address>{{ wazuh_manager_address }}</address>
+      <port>{{ wazuh_manager_event_port }}</port>
+      <protocol>tcp</protocol>
+    </server>
+    <enrollment>
+      <enabled>yes</enabled>
+      <manager_address>{{ wazuh_manager_address }}</manager_address>
+      <port>{{ wazuh_manager_enrollment_port }}</port>
+      <agent_name>{{ inventory_hostname }}</agent_name>
+      <groups>{{ wazuh_agent_group }}</groups>
+    </enrollment>
+  </client>
+
+  <syscheck>
+    <disabled>no</disabled>
+    <frequency>43200</frequency>
+    <scan_on_start>yes</scan_on_start>
+{% for d in wazuh_fim_directories %}
+    <directories check_all="yes" realtime="yes">{{ d }}</directories>
+{% endfor %}
+  </syscheck>
+
+  <rootcheck>
+    <disabled>no</disabled>
+  </rootcheck>
+
+  <!-- Package inventory, which is what gives the manager CVE correlation. -->
+  <wodle name="syscollector">
+    <disabled>no</disabled>
+    <interval>1h</interval>
+    <packages>yes</packages>
+    <os>yes</os>
+    <ports all="no">yes</ports>
+  </wodle>
+</ossec_config>

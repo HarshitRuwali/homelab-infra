@@ -1,0 +1,39 @@
+---
+# Mirrors roles/alloy_collector/tasks/repo.yml deliberately: same keyring
+# location, same armoured-key approach, same module. apt_repository is
+# deprecated upstream in favour of deb822_repository, but every role in this
+# repository uses it. Migrating one role alone would leave two styles behind;
+# do it across all of them in one change when ansible-core 2.25 nears.
+
+- name: Install APT prerequisites for the Wazuh repository
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - gnupg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Ensure the APT keyring directory exists
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the Wazuh APT signing key
+  ansible.builtin.get_url:
+    url: "{{ wazuh_apt_key_url }}"
+    dest: "{{ wazuh_apt_keyring }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the Wazuh APT repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by={{ wazuh_apt_keyring }}] {{ wazuh_apt_url }} stable main"
+    filename: wazuh
+    state: present
+    update_cache: true

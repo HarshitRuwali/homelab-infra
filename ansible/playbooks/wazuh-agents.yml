@@ -1,0 +1,29 @@
+---
+# Wazuh agent rollout.
+#
+# Scope is `wazuh_agents`, an overlay group, exactly like `autoupdate`.
+# Membership is the ONLY thing that enables the agent; the role carries no
+# host conditional. Remove a host from the group and re-run to stop managing
+# it.
+#
+# The MANAGER is not deployed here. It is the `sec-wazuh` guest, provisioned
+# by security/provision-security-stack.sh and installed with
+# security/install/install-sec-wazuh.sh. This playbook only puts agents on
+# fleet hosts and points them at it.
+#
+# Staged rollout, for the same reason patching is staged: an untuned default
+# ruleset across the whole fleet at once produces an alert volume nobody
+# reads, which is the documented failure mode of this phase.
+#
+#   --limit ubuntu-dev            # first, lowest risk
+#   --limit t7920                 # the hypervisor, highest value
+#   --limit rpi5,rpi4b
+#   --limit lan_guests
+#
+# Tune the alert volume after the first two hosts, BEFORE going wider.
+
+- name: Install and enrol Wazuh agents
+  hosts: wazuh_agents
+  become: true
+  roles:
+    - wazuh_agent

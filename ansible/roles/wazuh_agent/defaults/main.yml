@@ -1,0 +1,34 @@
+---
+# Address of the Wazuh manager (the `sec-wazuh` guest from security/).
+# Set this in inventory, not here: this repository is public and an address is
+# part of the estate map. group_vars/wazuh_agents/main.yml is the right home.
+wazuh_manager_address: ""
+
+# Agent enrolment port (1515/tcp) and event port (1514/tcp). Defaults match
+# upstream; they are variables so a non-default deployment does not need a
+# role edit.
+wazuh_manager_enrollment_port: 1515
+wazuh_manager_event_port: 1514
+
+# Agent group. Wazuh applies shared configuration per group, so keeping the
+# fleet in a named group rather than `default` means centralised config
+# changes do not have to touch every agent.
+wazuh_agent_group: homelab
+
+# APT repository. Pinned to the 4.x line: Wazuh's manager and agents must stay
+# on the same major version, and an agent that silently jumps major behind the
+# manager's back stops reporting rather than failing loudly.
+wazuh_apt_url: "https://packages.wazuh.com/4.x/apt/"
+wazuh_apt_key_url: "https://packages.wazuh.com/key/GPG-KEY-WAZUH"
+wazuh_apt_keyring: /etc/apt/keyrings/wazuh.asc
+
+# File integrity monitoring. These are the paths where persistence actually
+# gets established, which is the point of FIM. Adding a noisy path here costs
+# you the whole signal, so extend deliberately.
+wazuh_fim_directories:
+  - /etc
+  - /bin
+  - /sbin
+  - /usr/bin
+  - /usr/sbin
+  - /root/.ssh

@@ -10,7 +10,7 @@
 [![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)](https://harshitruwali.github.io/homelab-infra/monitoring/)
 [![Proxmox](https://img.shields.io/badge/Proxmox-E57000?logo=proxmox&logoColor=white)](https://www.proxmox.com/)
 
-Four independent modules covering a Proxmox and Tailscale estate: Debian VMs,
+Five independent modules covering a Proxmox and Tailscale estate: Debian VMs,
 LXC containers, Raspberry Pis and one bare-metal hypervisor. Every machine is
 configured, patched and observed the same way, and every automated action
 writes a metric, so **"it updates itself" can never quietly become "it broke
@@ -24,6 +24,7 @@ itself three weeks ago"**.
 | 📊 | [**`monitoring/`**](monitoring/README.md) | Central Grafana, Prometheus, Loki and Alloy. Dashboards, 47 alert rules, Matrix notifications. | [site](https://harshitruwali.github.io/homelab-infra/monitoring/) |
 | 🧠 | [**`memory/`**](memory/README.md) | Self-hosted semantic memory for AI agents. PostgreSQL and Qdrant behind FastAPI, with an MCP server. | [site](https://harshitruwali.github.io/homelab-infra/memory/) |
 | 💾 | [**`s3-backup/`**](s3-backup/README.md) | Nightly off-site backup of Immich and Nextcloud to Amazon S3, with restores drilled monthly. | [site](https://harshitruwali.github.io/homelab-infra/s3-backup/) |
+| 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, Suricata, AdGuard Home, Authelia, OpenBao, ntopng and Greenbone across six small guests. All free and open source. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
 
 Each module stands alone. Nothing here requires you to run the others, and
 every directory's README is a complete quick start by itself.
@@ -41,10 +42,12 @@ flowchart TB
     end
 
     MON["<b>monitoring/</b><br/>Grafana · Prometheus · Loki"]
+    SEC["<b>security/</b><br/>Wazuh · CrowdSec · Suricata"]
     MTX["Matrix room"]
     S3["<b>s3-backup/</b><br/>Amazon S3"]
 
     ANS -->|"configures · patches · onboards"| fleet
+    fleet -->|"agent events<br/>FIM · logs · behaviour"| SEC
     ANS -->|"provisions dashboards<br/>and alert rules"| MON
     COL -->|"metrics + logs<br/>HTTPS, Basic Auth"| MON
     MON -->|"alerts"| MTX
@@ -142,7 +145,7 @@ docs-landing/   The static index page of the published docs site
 
 ## Documentation
 
-Four MkDocs Material sites plus a landing page, on one GitHub Pages site:
+Five MkDocs Material sites plus a landing page, on one GitHub Pages site:
 
 | Path | Source |
 |---|---|
@@ -151,9 +154,10 @@ Four MkDocs Material sites plus a landing page, on one GitHub Pages site:
 | [`/monitoring/`](https://harshitruwali.github.io/homelab-infra/monitoring/) | `monitoring/mkdocs.yml` |
 | [`/memory/`](https://harshitruwali.github.io/homelab-infra/memory/) | `memory/mkdocs.yml` |
 | [`/s3-backup/`](https://harshitruwali.github.io/homelab-infra/s3-backup/) | `s3-backup/mkdocs.yml` |
+| [`/security/`](https://harshitruwali.github.io/homelab-infra/security/) | `security/mkdocs.yml` |
 
 ```bash
-cd ansible                                  # or monitoring, memory, s3-backup
+cd ansible                                  # or monitoring, memory, s3-backup, security
 python3 -m venv .venv
 .venv/bin/pip install -r docs/requirements.txt
 .venv/bin/mkdocs serve                      # live preview on :8000

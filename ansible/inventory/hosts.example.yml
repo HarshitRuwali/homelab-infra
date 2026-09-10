@@ -55,6 +55,9 @@
 #   central        -> WHAT IT RUNS (the monitoring stack itself)
 #   autoupdate     -> ALSO gets unattended-upgrades (auto-apply, never reboot)
 #   no_autoupdate  -> monitored but NEVER auto-patched
+#   wazuh_agents   -> ALSO gets the Wazuh agent, reporting to the sec-wazuh
+#                     guest from security/. Membership is the only thing that
+#                     enables it, same contract as `autoupdate`.
 #
 # Membership in `autoupdate` is the ONLY thing that enables patching. The
 # unattended_upgrades role has no internal host conditional on purpose: a
@@ -173,6 +176,14 @@ all:
     # ---------------------------------------------------------------------
     # Patching policy
     # ---------------------------------------------------------------------
+    # Roll out in stages and tune the alert volume after the first two hosts.
+    # An untuned default ruleset across the whole fleet at once is the
+    # documented failure mode. See playbooks/wazuh-agents.yml.
+    wazuh_agents:
+      hosts:
+        # ubuntu-dev:
+        # t7920:
+
     autoupdate:
       hosts:
         server-01: {}
