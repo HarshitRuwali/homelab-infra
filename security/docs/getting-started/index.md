@@ -151,3 +151,93 @@ Existing guests use `install/configure-sec-wazuh.sh` or
 `install/configure-sec-crowdsec.sh` to apply these settings without reinstalling.
 Keep Wazuh enrollment blocked during the initial vendor installation, and
 prepare all CrowdSec clients for HTTPS before changing an existing LAPI.
+
+## Host monitoring in Grafana
+
+All four security guests use the same native Alloy collector as the rest of the
+fleet. It pushes CPU, memory, filesystem, network, uptime and systemd metrics to
+central Prometheus, and journal logs to Loki. Grafana reads those existing
+datasources. The onboarding play also installs the pending-package and
+reboot-status exporter.
+
+### Inventory
+
+Merge the security guest entries from `ansible/inventory/hosts.example.yml`
+into your private `ansible/inventory/hosts.local.yml`, replacing the example
+addresses with each guest's DHCP reservation:
+
+| Guest | Platform group under `monitored` | SSH user | VMID |
+|---|---|---|---|
+| `sec-wazuh` | `vm_debian` | `admin` | 200 |
+| `sec-scan` | `vm_debian` | `admin` | 201 |
+| `sec-crowdsec` | `lxc_debian` | `root` | 210 |
+| `sec-dns` | `lxc_debian` | `root` | 211 |
+
+Also add all four to the `security_guests` overlay under `monitored`. Its
+committed group variables set `monitor_role: security` and retain Docker
+autodetection. Keep the inventory names above: `monitor_hostname` defaults to
+that name, and the dedicated dashboards query those exact `host` labels.
+
+`sec-scan` belongs in `lan_guests` because it needs the jump host to reach the
+sandbox. Add any other guest there only if the controller needs a jump host to
+reach it. Keep `sec-wazuh` in `wazuh_manager` for agent enrollment checks.
+Monitoring membership does not enable automatic patching; that remains a
+separate `autoupdate` inventory choice.
+
+### Onboard and verify
+
+Use the same `monitoring_domain` and
+`vault_collector_basic_auth_password` as the existing fleet. Each guest needs
+DNS resolution and outbound HTTPS to the central ingest endpoint. There is no
+inbound exporter port to open: Alloy scrapes locally and pushes through the
+authenticated Prometheus and Loki endpoints.
+
+Run from the controller, once the guest's service installer has completed:
+
+```bash
+cd ansible                                     # from the repository root
+ansible-playbook playbooks/preflight.yml --limit sec-dns
+ansible-playbook playbooks/onboard.yml --limit sec-dns
+```
+
+Repeat for `sec-crowdsec`, `sec-wazuh` and `sec-scan`. Onboarding checks ingest
+reachability, installs the collectors, and queries central Prometheus and Loki
+to confirm that data arrived. On `sec-scan`, Docker autodetection adds Greenbone
+container CPU, memory and logs. If the collector was installed before Docker,
+rerun `playbooks/collectors.yml --limit sec-scan` after installing Greenbone.
+
+Load the committed dashboards and refresh inventory-derived host-down alerts
+after onboarding the guests:
+
+```bash
+ansible-playbook playbooks/dashboards.yml --limit central
+ansible-playbook playbooks/central-alerting.yml --limit central
+```
+
+The alerting play reloads Grafana provisioning and can restart Grafana. Its
+host-down rule includes every member of `monitored`, so add only guests ready
+to report telemetry to the private inventory.
+
+### Grafana views
+
+The **Servers** folder contains `sec-wazuh`, `sec-scan`, `sec-crowdsec` and
+`sec-dns`. Each has the standard resource, systemd, pending-update and log
+panels; `sec-scan` also has container panels. The existing fleet dashboards
+discover their host labels automatically.
+
+In Grafana Explore, confirm the four hosts in Prometheus:
+
+```promql
+count by (host, role) (
+  node_uname_info{host=~"sec-wazuh|sec-scan|sec-crowdsec|sec-dns"}
+)
+```
+
+And select each host's journal in Loki:
+
+```logql
+{host="sec-dns", job="systemd-journal"}
+```
+
+Detailed security alert forwarding is covered separately in
+[Wiring](../wiring/index.md).

@@ -95,6 +95,8 @@ own the dashboard.
 | Concern | Owned by | How |
 |---|---|---|
 | Manager guest | `security/` | `provision-security-stack.sh`, `install/install-sec-wazuh.sh` |
+| Guest host metrics and logs | `ansible/` | `monitored` platform groups plus `security_guests`; `playbooks/onboard.yml` installs Alloy and update metrics |
+| Per-guest resource dashboards | `monitoring/` | `grafana/dashboards/servers/sec-*.json`, installed by Ansible's dashboard role |
 | Agents on fleet hosts | `ansible/` | `roles/wazuh_agent`, gated by the `wazuh_agents` group |
 | Alert display and routing | `monitoring/` | Loki datasource, Grafana unified alerting |
 

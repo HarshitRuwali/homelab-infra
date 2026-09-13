@@ -450,6 +450,9 @@ main() {
   info "     ${BRIDGE_SANDBOX} sit behind the firewall; reach them through your jump host."
   info "  3. Add the firewall allow rules from docs/reference/index.md ABOVE any"
   info "     inter-VLAN block rules, in the same change."
+  info "  4. Add the guests to Ansible's monitored platform groups and security_guests."
+  info "     Follow docs/getting-started/index.md#host-monitoring-in-grafana to"
+  info "     onboard Alloy, verify telemetry and load the Servers dashboards."
   (( APPLY )) || info ""
   (( APPLY )) || info "This was a dry run. Re-run with --apply to create."
 }

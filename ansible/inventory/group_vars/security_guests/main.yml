@@ -1,0 +1,10 @@
+---
+# Standard fleet telemetry, using the existing authenticated ingest endpoints.
+# monitor_hostname defaults to the inventory name: the four Servers dashboards
+# query sec-wazuh, sec-scan, sec-crowdsec and sec-dns by that label.
+monitor_role: security
+
+# sec-scan runs Greenbone in Docker. Autodetection enables cAdvisor and Docker
+# logs when its socket exists; rerun collectors.yml after installing Greenbone
+# if this guest was onboarded before Docker was installed.
+alloy_enable_docker: auto

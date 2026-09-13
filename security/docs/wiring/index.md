@@ -12,6 +12,14 @@ way. This page is the *how*, with the actual configuration.
     point DHCP at the new resolver **only after** verifying it resolves. Both
     are explained below, and both fail quietly rather than loudly.
 
+## Guest host metrics and logs
+
+For CPU, memory, disk, network, uptime, systemd state and journal logs, use
+[Host monitoring in Grafana](../getting-started/index.md#host-monitoring-in-grafana).
+All four guests use the existing fleet Alloy role, authenticated push endpoints
+and Servers dashboards. `sec-scan` also contributes Docker metrics and logs
+through the collector's Docker autodetection.
+
 ## 1. Wazuh alerts into Loki
 
 The goal is Grafana as the single pane, with the Wazuh dashboard kept for deep

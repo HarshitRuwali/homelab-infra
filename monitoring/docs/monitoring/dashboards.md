@@ -140,6 +140,14 @@ hardcoded to that host rather than filtered through `$host`. These are
 detail views to jump into from an alert, not summaries; the fleet-wide
 dashboards above stay the "is everyone healthy" entry point.
 
+The security guests have four committed dashboards: `sec-wazuh`, `sec-scan`,
+`sec-crowdsec` and `sec-dns`. All show host resources, systemd state, pending
+updates and logs. `sec-scan` also shows Greenbone's Docker container metrics.
+They use the standard Alloy pipeline and existing Prometheus/Loki datasources.
+Add the guests to the appropriate `monitored` platform groups and the
+`security_guests` overlay, then use the regular Ansible onboarding play. See
+[Host monitoring in Grafana](https://harshitruwali.github.io/homelab-infra/security/getting-started/#host-monitoring-in-grafana).
+
 `ubuntu-ai` additionally has a GPU row: utilization, memory, temperature,
 power and fan, both as top-strip stats and as per-GPU time series (labelled
 by `uuid`, so a multi-GPU box gets one line per card). See

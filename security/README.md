@@ -68,6 +68,11 @@ the fleet or the dashboard:
 - **Agents** are deployed by `ansible/roles/wazuh_agent`, enabled solely by
   membership of the `wazuh_agents` inventory group. Same contract as
   `autoupdate` gating patching.
+- **Guest telemetry** uses the existing Alloy collector and update-metrics
+  exporter. The `security_guests` inventory overlay identifies all four guests;
+  their CPU, memory, disk, network, systemd metrics and logs feed the existing
+  Grafana stack. Each has a committed Servers dashboard. See
+  [Host monitoring](docs/getting-started/index.md#host-monitoring-in-grafana).
 - **Alerts** are forwarded into Loki so `monitoring/`'s Grafana stays the single
   pane. The Wazuh dashboard is kept for deep investigation only.
 
