@@ -2,7 +2,8 @@
 
 Six small guests that give a self-hosted estate intrusion detection, host
 integrity monitoring, DNS filtering, SSO, secrets management, flow visibility
-and vulnerability scanning. Every component is free and open source.
+and vulnerability scanning. Open source throughout, with one exception that is
+[flagged rather than buried](reference/index.md#caveats-worth-knowing-before-you-commit).
 
 ## The premise
 
@@ -47,6 +48,7 @@ So this stack deliberately pairs two kinds of sensor:
 | If you want to… | Go to |
 |---|---|
 | Create the guests | [Getting started](getting-started/index.md) |
+| See what each guest runs, and its configs | [What runs where](components/index.md) |
 | Understand why things sit where they do | [Architecture](architecture/index.md) |
 | Connect it to Grafana, Loki and the firewall | [Wiring](wiring/index.md) |
 | Size disks, set retention, keep it running | [Operations](operations/index.md) |

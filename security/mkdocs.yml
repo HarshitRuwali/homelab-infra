@@ -106,6 +106,9 @@ nav:
   - Getting started:
       - getting-started/index.md
 
+  - What runs where:
+      - components/index.md
+
   - Architecture:
       - architecture/index.md
 

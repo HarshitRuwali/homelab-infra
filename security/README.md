@@ -2,9 +2,14 @@
 
 Six small guests that give a homelab intrusion detection, host integrity
 monitoring, DNS filtering, SSO, secrets, flow visibility and vulnerability
-scanning. Everything here is free and open source, and every piece is chosen so
-a single-hypervisor estate can run it without a dedicated budget or a dedicated
-box.
+scanning. Every piece is chosen so a single-hypervisor estate can run it without
+a dedicated budget or a dedicated box.
+
+Open source throughout, with **one exception that is flagged rather than
+buried**: `nprobe`, which ntopng needs in order to collect NetFlow, is an ntop
+product under its own licence even though ntopng itself is GPLv3. Details and
+the alternatives are in
+[docs/reference](docs/reference/index.md#caveats-worth-knowing-before-you-commit).
 
 The design assumption is that **the network perimeter is not enough**. A
 firewall only sees traffic that crosses it, so anything sharing a layer 2
@@ -86,6 +91,7 @@ Full docs at
 or in [`docs/`](docs/index.md):
 
 - [Getting started](docs/getting-started/index.md), provisioning and install
+- [What runs where](docs/components/index.md), per-guest services, ports and config files
 - [Architecture](docs/architecture/index.md), placement and tool selection
 - [Wiring](docs/wiring/index.md), connecting it to Grafana, Loki and the firewall
 - [Operations](docs/operations/index.md), retention, sizing and maintenance
@@ -94,9 +100,9 @@ or in [`docs/`](docs/index.md):
 
 ## Licences
 
-Every component is free and open source: Suricata, CrowdSec, Wazuh, AdGuard
-Home, Authelia, OpenBao, ntopng and Greenbone. Per-tool licences, verified
-against primary sources, are in
+Suricata, CrowdSec, Wazuh, AdGuard Home, Authelia, OpenBao, ntopng and
+Greenbone are all open source. **`nprobe` is not**, and ntopng cannot collect
+NetFlow without it. Per-tool licences, verified against primary sources, are in
 [docs/reference](docs/reference/index.md#licences).
 
 **OpenBao, not HashiCorp Vault.** Vault moved to BUSL 1.1 in August 2023 and is

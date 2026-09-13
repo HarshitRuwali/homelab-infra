@@ -64,7 +64,7 @@ for anything wanting kernel tunables, raw sockets or its own memory locking.
 | admin | `sec-dns` | 3000/tcp | AdGuard UI |
 | firewall | `sec-ntopng` | 2055/udp | NetFlow export |
 | admin | `sec-ntopng` | 3000/tcp | ntopng UI |
-| admin | `sec-scan` | 443/tcp | Greenbone UI |
+| admin | `sec-scan` | 9392/tcp, 443/tcp | Greenbone UI, **bound to loopback**; reach it over an SSH tunnel |
 
 ## Firewall rules
 
@@ -114,7 +114,8 @@ space have changed licence recently.
 | Authelia | Apache-2.0 | |
 | OpenBao | MPL-2.0 | Linux Foundation fork of Vault 1.14.0 |
 | ntopng Community | GPLv3 | Pro and Enterprise add retention, LDAP, SNMP |
-| Greenbone GVM | GPLv2 | Community Feed is delayed relative to Enterprise Feed |
+| Greenbone GVM | GPLv2 | Community Feed is delayed relative to Enterprise Feed. Debian dropped the packages; runs from Greenbone's containers |
+| nprobe | **proprietary** | Not GPL, unlike ntopng. See the caveat below |
 
 ### Caveats worth knowing before you commit
 
@@ -124,6 +125,15 @@ space have changed licence recently.
 - **Greenbone Community Feed** is free but delayed and reduced relative to the
   Enterprise Feed. Fine for drift detection; not parity with a commercial
   scanner.
+- **Greenbone is no longer packaged by Debian.** `gvm` is in **sid only** and is
+  absent from bookworm, trixie and forky, so `apt-get install gvm` fails on any
+  stable release. `install-sec-scan.sh` uses Greenbone's published Community
+  Containers, which is the path their own documentation leads with.
+- **`nprobe` is not open source**, although `ntopng` is GPLv3. ntopng cannot
+  collect NetFlow without it, and collecting rather than sniffing is what keeps
+  `sec-ntopng` an unprivileged container. If the licence does not suit you, the
+  alternatives are to sniff instead (which needs `NET_ADMIN` and `NET_RAW`, so a
+  VM) or to drop flow visibility and lean on the Wazuh agents.
 - **Security Onion** is a tempting all-in-one bundle, and it is free, but its
   Elastic components ship under the Elastic Licence, which is source-available
   rather than OSI open source.

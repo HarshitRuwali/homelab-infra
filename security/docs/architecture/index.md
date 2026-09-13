@@ -113,6 +113,25 @@ gates patching. Nothing is installed on a fleet host by hand.
 | Flows | ntopng Community | GPLv3. Verifies that segmentation actually holds after you change a rule. |
 | Vuln scanning | Greenbone GVM | GPLv2. Detects drift: a new unauthenticated service, another multi-homed host. |
 
+### On Suricata rather than Snort
+
+Snort is the original network IDS and Snort 3 is a capable rewrite: multithreaded,
+faster than Snort 2, with high quality Cisco Talos rules. It is not the weaker
+tool, and the two are largely rule-compatible, so picking one does not lock you
+out of the other's rules. The choice here is about fit, not quality.
+
+- **OPNsense ships Suricata and only Suricata.** pfSense offers both as
+  plugins; OPNsense picked one. Suricata therefore costs no new guest, no extra
+  RAM and no hand-managed service, and gets inline IPS through netmap. Snort
+  would mean a seventh guest to do a job something already running does.
+- **Suricata emits EVE JSON natively.** That is the only reason shipping
+  `job="suricata"` into Loki is a few lines of collector config rather than a
+  parsing project. Snort 3 can emit JSON through `alert_json`, but it is less
+  standard and less well trodden.
+
+If you run pfSense, or no firewall that bundles either, the calculation changes
+and Snort 3 is a reasonable pick.
+
 ### On OpenBao rather than HashiCorp Vault
 
 Vault moved from MPL-2.0 to BUSL 1.1 in August 2023 and is no longer

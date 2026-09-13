@@ -7,6 +7,11 @@ require_root; banner
 [[ $(free -m | awk '/^Mem:/{print $2}') -ge 7000 ]] || warn "less than 7 GB RAM visible; the indexer may OOM"
 
 run apt-get update
+# The VM is created with --agent enabled=1, but Debian's genericcloud image does
+# not ship the agent. Without it PVE shows no IP for the guest, which is exactly
+# what you need to set the DHCP reservation in the provisioning script's step 1.
+run apt-get install -y qemu-guest-agent
+run systemctl enable --now qemu-guest-agent
 run apt-get install -y curl ca-certificates
 
 run curl -sO https://packages.wazuh.com/4.x/wazuh-install.sh

@@ -42,7 +42,10 @@ SSH_PUBKEY="${SSH_PUBKEY:-$HOME/.ssh/id_ed25519.pub}"
 LXC_TEMPLATE_FAMILY="${LXC_TEMPLATE_FAMILY:-debian-13-standard}"
 LXC_TEMPLATE="${LXC_TEMPLATE:-}"
 CLOUD_IMAGE_URL="${CLOUD_IMAGE_URL:-https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2}"
-CLOUD_IMAGE_CACHE="${CLOUD_IMAGE_CACHE:-/var/lib/vz/template/cache}"
+# The ISO dir, not template/cache: that one is the vztmpl directory and PVE's
+# vztmpl lister only globs tar.*, so a qcow2 parked there is invisible to the
+# UI and to `pvesm list`.
+CLOUD_IMAGE_CACHE="${CLOUD_IMAGE_CACHE:-/var/lib/vz/template/iso}"
 
 # guest spec: name:type:vmid:cores:memMB:diskGB:storage_tier
 # Sizes come from docs/reference/index.md, at 30 day retention.
@@ -69,6 +72,17 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# An unrecognised name in --only matched no guest, selected() filtered
+# everything out, and the script printed a green "RAM fits: 0 MB" and exited 0
+# having created nothing. A staged rollout is where a typo is most likely, and
+# exit 0 is the wrong answer to one.
+if [[ -n "$ONLY" ]]; then
+  for _n in ${ONLY//,/ }; do
+    printf '%s\n' "${GUESTS[@]}" | cut -d: -f1 | grep -qx "$_n" \
+      || { echo "--only: no such guest '$_n'. Known: $(printf '%s\n' "${GUESTS[@]}" | cut -d: -f1 | tr '\n' ' ')" >&2; exit 2; }
+  done
+fi
+
 c_red=$'\033[31m'; c_grn=$'\033[32m'; c_yel=$'\033[33m'; c_dim=$'\033[2m'; c_off=$'\033[0m'
 info() { printf '%s\n' "$*"; }
 ok()   { printf '%s  ok%s   %s\n' "$c_grn" "$c_off" "$*"; }
@@ -80,7 +94,7 @@ run() {
   if (( APPLY )); then
     "$@"
   else
-    printf '%s       + %s%s\n' "$c_dim" "$*" "$c_off"
+    printf '%s       + %s%s\n' "$c_dim" "$(printf '%q ' "$@")" "$c_off"
   fi
 }
 
@@ -166,19 +180,24 @@ preflight() {
   # Capacity. RAM is a hard gate, not advice: a hypervisor pushed into swap
   # degrades every guest on it, so a stack that "just fits" is a stack that
   # takes the estate down with it. CPU overcommit is normal and only warns.
-  local tot_c=0 tot_m=0 cores mem disk tier
-  declare -A tier_disk=()
+  # Keyed on the resolved storage ID, not the tier name. Both tiers default to
+  # one pool, and keying on the tier asked "does 64 GB fit?" and "does 56 GB
+  # fit?" as two separate questions of the same pool, never "does 120 GB fit?".
+  local tot_c=0 tot_m=0 cores mem disk tier sid
+  declare -A store_disk=()
   for spec in "${GUESTS[@]}"; do
     IFS=: read -r name _ _ cores mem disk tier <<<"$spec"
     selected "$name" || continue
     tot_c=$(( tot_c + cores ))
     tot_m=$(( tot_m + mem ))
-    tier_disk["$tier"]=$(( ${tier_disk["$tier"]:-0} + disk ))
+    sid="$(storage_for "$tier")"
+    store_disk["$sid"]=$(( ${store_disk["$sid"]:-0} + disk ))
   done
 
   local host_cpu avail_mb
   host_cpu="$(nproc)"
   avail_mb="$(free -m | awk '/^Mem:/{print $7}')"
+  [[ "$avail_mb" =~ ^[0-9]+$ ]] || die "could not parse available memory from 'free -m'"
 
   info "requested: ${tot_c} vCPU, ${tot_m} MB RAM"
   info "host now:  ${host_cpu} cores, ${avail_mb} MB RAM available"
@@ -196,15 +215,14 @@ preflight() {
   fi
 
   local avail_gb
-  for tier in "${!tier_disk[@]}"; do
-    st="$(storage_for "$tier")"
+  for st in "${!store_disk[@]}"; do
     avail_gb="$(pvesm status --storage "$st" | awk 'NR==2{print int($6/1048576)}')"
     if [[ -z "$avail_gb" ]]; then
       warn "could not read free space for storage '$st'"
-    elif (( tier_disk["$tier"] > avail_gb )); then
-      die "storage '$st': ${tier_disk[$tier]} GB requested, only ${avail_gb} GB free"
+    elif (( store_disk["$st"] > avail_gb )); then
+      die "storage '$st': ${store_disk[$st]} GB requested, only ${avail_gb} GB free"
     else
-      ok "storage '$st': ${tier_disk[$tier]} GB requested, ${avail_gb} GB free"
+      ok "storage '$st': ${store_disk[$st]} GB requested, ${avail_gb} GB free"
     fi
   done
 
@@ -260,7 +278,12 @@ ensure_cloud_image() {
   else
     warn "cloud image missing, will download"
     run mkdir -p "$CLOUD_IMAGE_CACHE"
-    run wget -q -O "$img" "$CLOUD_IMAGE_URL"
+    # Download to .part, then rename. Writing straight to $img means an
+    # interrupted 339 MB transfer leaves a truncated file that the -f test
+    # above accepts forever after, so the NEXT run says "cloud image present"
+    # and then dies inside qm with "Image is not in qcow2 format".
+    run wget -q -O "${img}.part" "$CLOUD_IMAGE_URL"
+    run mv -f "${img}.part" "$img"
   fi
   CLOUD_IMAGE_PATH="$img"
 }
@@ -281,19 +304,28 @@ create_lxc() {
 
   info "LXC  $name (vmid $vmid, ${cores} vCPU, ${mem} MB, ${disk} GB on $store)"
 
+  # A build is several commands, not a transaction. If one fails, `set -e`
+  # aborts with the VMID already created, and the next run's "already exists"
+  # check then SKIPS it and reports success over a half-built guest, forever.
+  # The header promises "never modified", which is what makes that dangerous.
+  if (( APPLY )); then
+    trap 'warn "$name failed mid-build, destroying the partial guest"; pct destroy "$vmid" --purge >/dev/null 2>&1 || true' ERR
+  fi
+
   run pct create "$vmid" "${STORAGE_TMPL}:vztmpl/${LXC_TEMPLATE}" \
       --hostname "$name" \
       --cores "$cores" \
       --memory "$mem" \
       --swap 512 \
       --rootfs "${store}:${disk}" \
-      --net0 "name=eth0,bridge=${BRIDGE},ip=dhcp" \
+      --net0 "name=eth0,bridge=${BRIDGE},firewall=1,ip=dhcp" \
       --ssh-public-keys "$SSH_PUBKEY" \
       --unprivileged 1 \
       --onboot 1 \
       --description "security stack: $name. Managed by provision-security-stack.sh"
 
   run pct start "$vmid"
+  trap - ERR
   ok "$name created"
 }
 
@@ -304,20 +336,33 @@ create_vm() {
 
   info "VM   $name (vmid $vmid, ${cores} vCPU, ${mem} MB, ${disk} GB on $store)"
 
+  # A build is several commands, not a transaction. If one fails, `set -e`
+  # aborts with the VMID already created, and the next run's "already exists"
+  # check then SKIPS it and reports success over a half-built guest, forever.
+  # The header promises "never modified", which is what makes that dangerous.
+  if (( APPLY )); then
+    trap 'warn "$name failed mid-build, destroying the partial guest"; qm destroy "$vmid" --purge >/dev/null 2>&1 || true' ERR
+  fi
+
   run qm create "$vmid" \
       --name "$name" \
       --cores "$cores" \
       --memory "$mem" \
-      --net0 "virtio,bridge=${BRIDGE}" \
+      --net0 "virtio,bridge=${BRIDGE},firewall=1" \
       --scsihw virtio-scsi-single \
       --ostype l26 \
       --agent enabled=1 \
       --onboot 1 \
       --description "security stack: $name. Managed by provision-security-stack.sh"
 
-  # import the cloud image as the root disk, then grow it
-  run qm importdisk "$vmid" "$img" "$store"
-  run qm set "$vmid" --scsi0 "${store}:vm-${vmid}-disk-0,discard=on,ssd=1"
+  # Import straight into scsi0. The old path was `qm importdisk` followed by
+  # `qm set --scsi0 ${store}:vm-${vmid}-disk-0`, which GUESSES the volume name,
+  # because qm disk import prints the volid but returns nothing scriptable.
+  # The guess holds on LVM-thin and ZFS and is WRONG on a directory storage,
+  # which allocates ${vmid}/vm-${vmid}-disk-0.qcow2. Point STORAGE_HDD at a dir
+  # pool and this failed with "volume does not exist" AFTER qm create had
+  # already made the guest. `qm importdisk` is also a deprecated PVE 9 alias.
+  run qm set "$vmid" --scsi0 "${store}:0,import-from=${img},discard=on,ssd=1"
   run qm disk resize "$vmid" scsi0 "${disk}G"
 
   # cloud-init: ssh key only, no password, DHCP
@@ -327,6 +372,7 @@ create_vm() {
   run qm set "$vmid" --ciuser admin --sshkeys "$SSH_PUBKEY" --ipconfig0 ip=dhcp
 
   run qm start "$vmid"
+  trap - ERR
   ok "$name created"
 }
 
