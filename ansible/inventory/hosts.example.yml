@@ -179,6 +179,11 @@ all:
     # Roll out in stages and tune the alert volume after the first two hosts.
     # An untuned default ruleset across the whole fleet at once is the
     # documented failure mode. See playbooks/wazuh-agents.yml.
+    # Manager access is used only to verify the enrollment group. Configure
+    # its address/SSH user in private inventory and harden it before agents.
+    wazuh_manager:
+      hosts: {}
+
     wazuh_agents:
       hosts:
         # ubuntu-dev:

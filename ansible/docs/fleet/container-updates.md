@@ -76,8 +76,8 @@ flowchart TD
     B --> C{"in skip list?"}
     C -->|yes| Z["next project"]
     C -->|no| D["record image IDs BEFORE"]
-    D --> E["docker compose pull<br/>--ignore-pull-failures"]
-    E --> F["docker compose up -d"]
+    D --> E["docker compose pull<br/>--ignore-buildable"]
+    E --> F["docker compose up -d<br/>--pull never --no-build --wait"]
     F --> G["record image IDs AFTER"]
     G --> H{"changed?"}
     H -->|yes| I["count recreated containers"]
@@ -97,15 +97,37 @@ and backups. The labels describe only what is **actually deployed right now**.
 the wrong file silently creates a **second** stack rather than updating the
 existing one.
 
-### `--ignore-pull-failures` is required, not defensive
+### Pull failures stop that project's update
 
-Locally built images have nothing to pull. Without the flag, one unpullable
-service aborts the pull for **every other service in the same project**.
+`--ignore-buildable` skips services with a local build definition. A registry
+failure for any other service marks the run failed and prevents that project's
+`up`. Authentication failures, missing tags and network errors are not treated
+as successful updates. `up` uses `--pull never --no-build --wait`, so it applies
+the images already fetched and checks service readiness within the configured
+timeout. A failed run retains old images by skipping pruning and returns a
+nonzero exit status as well as setting `fleet_docker_update_failed`.
+
+Every Compose file recorded in the container labels must still be readable,
+including overrides. A missing file stops the project before any pull or
+redeployment; falling back to a base file could change ports and volume mounts.
+The full configuration is reapplied, so editing it can recreate containers even
+when their image IDs have not changed.
+
+### Opting a host out
+
+Move the host from `autoupdate` to `no_autoupdate` and run `site.yml` for that
+host. The Docker play stops and disables existing updater units, removes their
+files and deletes stale updater metrics. Hosts that remain monitored but are
+removed from `autoupdate` are cleaned up too. Explicit `no_autoupdate` wins if a
+host is accidentally in both groups. Keep a decommissioning host in inventory
+until cleanup has run; Ansible cannot remove timers from a host it cannot target.
+The opt-out play stops an active updater as well, so schedule the change outside
+its update window to avoid interrupting a Compose operation.
 
 ### No `--remove-orphans`
 
-That deletes containers this project did not create, which on a shared host
-means deleting something a human started by hand.
+That removes containers carrying the same project label whose services are
+absent from the current Compose model. Preserve them for manual review.
 
 ### Change detection compares image IDs
 
@@ -127,7 +149,8 @@ docker image prune -a     # NO
 
 ## Verification after the run
 
-The script waits 60 seconds, then checks for containers stuck restarting. That
+Compose waits for running/healthy services, with a 60-second timeout by default.
+The script also checks for unhealthy containers and restart loops. That
 matters because a pull that succeeds and an `up -d` that returns `0` can still
 leave a container crash-looping on a new image, which is exactly the case
 worth alerting on.

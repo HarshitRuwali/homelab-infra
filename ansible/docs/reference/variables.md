@@ -236,9 +236,8 @@ ansible-vault edit inventory/group_vars/all/vault.yml
     journald_system_max_use: 64M
     ```
 
-    Not a group. This used to be `group_vars/proxmox`, a group of exactly one
-    host; see [why it is `host_vars`](../fleet/index.md#inventory-layout). The
-    block looks identical to `metal` above and is deliberately **not** factored
+    These are [host-specific overrides](../fleet/index.md#inventory-layout).
+    The block looks identical to `metal` above and is deliberately **not** factored
     out: this host is an LXC that merely reports a `-pve` kernel and has no
     `/etc/pve`, so changing one must not silently change the other.
 
@@ -253,3 +252,18 @@ ansible-vault edit inventory/group_vars/all/vault.yml
 
     Loopback, so the central node's own telemetry never depends on the WAN
     being up, which is exactly when you most need it.
+
+## Wazuh enrollment and log inputs
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `wazuh_manager_address` | empty | Address agents use for the manager |
+| `wazuh_manager_inventory_host` | first `wazuh_manager` member | Ansible delegate for group verification |
+| `wazuh_manager_ca_src` | empty | Trusted CA PEM on the controller |
+| `wazuh_manager_ca_path` | `/var/ossec/etc/manager-ca.pem` | Installed agent CA path |
+| `vault_wazuh_enrollment_password` | required secret | Manager enrollment password, in Ansible Vault |
+| `wazuh_enrollment_password_path` | `/var/ossec/etc/enrollment.pass` | Protected agent password file |
+| `wazuh_agent_group` | `homelab` | Must exist on the manager before rollout |
+| `wazuh_log_sources` | journald | List of `location` / `log_format` mappings |
+
+See [Wazuh rollout prerequisites](playbooks.md#wazuh-agents).

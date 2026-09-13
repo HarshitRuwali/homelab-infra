@@ -28,10 +28,42 @@ sandbox should not host the thing that watches it.
     ports must go in **the same change** as the block, positioned **above** it
     in the rule order. See [Reference](../reference/index.md#firewall-rules).
 
+## The scanner is the exception
+
+Everything above assumes the tool is agent-initiated. A vulnerability scanner
+is the inverse: it **originates** connections to its targets, so the question
+is not "can the targets reach it?" but "can it reach the targets?". Put it on
+the trusted segment and it has no route into the sandbox at all, which is where
+most of the estate lives.
+
+So `sec-scan` is the one guest on the **sandbox** bridge. From there it reaches
+the sandbox directly and the trusted segment through the firewall's ordinary
+outbound NAT, the same path every sandbox host already has.
+
+That placement has costs, and they are the price of a scanner that can see
+everything:
+
+- **It lives beside the workloads you trust least**, which cuts against "the
+  sandbox should not host the thing that watches it". A scanner does not watch
+  continuously, so the cost is smaller than for a manager, but it is real:
+  never give it privileged credentials for authenticated scans.
+- **Trusted-side targets see the firewall's address**, not the scanner's,
+  because of NAT.
+- **Suricata sees its scans** of the trusted side and alerts on them.
+- **A future sandbox-to-trusted block cuts it off** from the trusted side,
+  unless it gets its own pass rule above the block. That rule is exactly the
+  reach that makes a compromised scanner dangerous; decide it deliberately. See
+  [Reference](../reference/index.md#firewall-rules).
+
+The alternative was a pinhole the other way: a route and a firewall rule
+letting a trusted-side scanner reach into the sandbox. It works, but it punches
+a hole in the one direction the asymmetry exists to protect.
+
 ## Do not multi-home these guests
 
-Give every guest exactly one interface, on the trusted bridge. The sandbox
-reaches them through the firewall, which is the entire point.
+Give every guest exactly one interface. All but `sec-scan` sit on the trusted
+bridge. The sandbox reaches them through the firewall, which is the entire
+point.
 
 A multi-homed host is a hole in your segmentation whether or not you intended
 it, and it is invisible in the firewall's own logs because the traffic never
@@ -48,7 +80,7 @@ policy, because the runtime installs its own accept rules.
 flowchart TB
     subgraph edge["At the boundary"]
         SUR["Suricata<br/>on the firewall"]
-        NTOP["ntopng<br/>NetFlow collector"]
+        NTOP["ntopng<br/>on the firewall"]
     end
 
     subgraph hosts["On every machine"]
@@ -63,8 +95,7 @@ flowchart TB
 
     WAZ -->|"1514/tcp"| MGR
     CS -->|"8080/tcp"| LAPI
-    SUR -->|"EVE syslog"| LOKI
-    NTOP -.->|"flows crossing<br/>the boundary only"| GRAF
+    SUR -->|"EVE syslog,<br/>alerts only"| LOKI
     MGR -->|"alerts.json<br/>via Alloy"| LOKI
     LOKI --> GRAF
 ```
@@ -75,6 +106,13 @@ Security alerts are forwarded into Loki rather than left in a second dashboard.
 Suricata's EVE output goes to Loki as `job="suricata"`; Wazuh's
 `/var/ossec/logs/alerts/alerts.json` is tailed by the Alloy collector that
 every monitored host already runs, as `job="wazuh"`.
+
+These are the two security streams covered by the manual setup instructions
+in [Wiring](../wiring/index.md); they are not provisioned automatically. Each
+other service keeps its own interface: ntopng on the firewall, Greenbone's reports, CrowdSec's
+decisions and AdGuard's query log. OPNsense's syslog output also carries
+Suricata's **alerts only**; its HTTP and TLS metadata stays in `eve.json` on the
+firewall.
 
 The Wazuh dashboard stays, but for **deep investigation only**. The reason is
 operational rather than aesthetic: an alert stream that lives somewhere you do
@@ -108,44 +146,21 @@ gates patching. Nothing is installed on a fleet host by hand.
 | Blocking | CrowdSec | Behavioural rather than signature. MIT with no paywalled engine features, and its bouncers push decisions to a CDN edge so hostile traffic never reaches the origin. |
 | HIDS, FIM, SIEM | Wazuh | GPLv2, genuinely no feature paywall. The only tool here that covers segmentation bypasses, because it is agent-based. |
 | DNS | AdGuard Home | Single Go binary, GPLv3. Query logs are the cheapest detection data available. |
-| SSO | Authelia | Apache-2.0 throughout and simpler than a full IdP for a handful of services. |
-| Secrets | OpenBao | MPL-2.0 under the Linux Foundation. |
-| Flows | ntopng Community | GPLv3. Verifies that segmentation actually holds after you change a rule. |
+| Flows | ntopng Community | GPLv3, on the firewall. Verifies that segmentation actually holds after you change a rule. |
 | Vuln scanning | Greenbone GVM | GPLv2. Detects drift: a new unauthenticated service, another multi-homed host. |
 
-### On Suricata rather than Snort
+### Suricata on the firewall
 
-Snort is the original network IDS and Snort 3 is a capable rewrite: multithreaded,
-faster than Snort 2, with high quality Cisco Talos rules. It is not the weaker
-tool, and the two are largely rule-compatible, so picking one does not lock you
-out of the other's rules. The choice here is about fit, not quality.
+OPNsense bundles Suricata, so the network IDS runs on the firewall without a
+separate guest. Its EVE JSON output supplies the `job="suricata"` stream in
+Loki; see [Wiring](../wiring/index.md) for collector configuration.
 
-- **OPNsense ships Suricata and only Suricata.** pfSense offers both as
-  plugins; OPNsense picked one. Suricata therefore costs no new guest, no extra
-  RAM and no hand-managed service, and gets inline IPS through netmap. Snort
-  would mean a seventh guest to do a job something already running does.
-- **Suricata emits EVE JSON natively.** That is the only reason shipping
-  `job="suricata"` into Loki is a few lines of collector config rather than a
-  parsing project. Snort 3 can emit JSON through `alert_json`, but it is less
-  standard and less well trodden.
+### ntopng on the firewall
 
-If you run pfSense, or no firewall that bundles either, the calculation changes
-and Snort 3 is a reasonable pick.
+OPNsense's `os-ntopng` plugin captures directly on the firewall's interfaces.
+Capture on LAN to retain host identity before NAT rewrites source addresses.
 
-### On OpenBao rather than HashiCorp Vault
-
-Vault moved from MPL-2.0 to BUSL 1.1 in August 2023 and is no longer
-OSI-approved open source. OpenBao is the Linux Foundation fork of Vault 1.14.0,
-the last MPL-2.0 release. It speaks the same API and carries the same secrets
-engines and auth methods it inherited at the fork, and has since pulled several
-former Vault Enterprise features into open source. Features added to Vault
-after the fork are not automatically present.
-
-### On the one component that is free but not open source
-
-Edge authentication services such as Cloudflare Access are free at homelab
-scale but are SaaS, not open source. They are also the only thing that can stop
-an unauthenticated request *before* it reaches your origin, which no
-self-hosted tool can do for a tunnel whose edge you do not control. If that
-tradeoff is acceptable, use both: edge auth in front, Authelia behind it, so a
-misconfigured edge policy is not a total loss.
+ntopng and Redis share firewall RAM and CPU with Suricata. Budget an additional
+2 GB RAM and 2 vCPU, then measure. ntopng also adds a second deep packet parser
+beside Suricata, increasing the firewall's attack surface. Keep its management
+UI inaccessible from WAN.

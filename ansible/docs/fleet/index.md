@@ -157,20 +157,13 @@ ansible/inventory/
     tailscale-router.yml    PVE-safe overrides, small-rootfs caps
 ```
 
-`lxc`, `lxc_debian`, `vm`, `vm_debian` and `metal_debian` have no var files
-yet. They exist to
-be extended: the platform/distro seam is where the next override goes, rather
-than into a host_vars file that quietly grows a second copy of the same
-setting.
+`lxc`, `lxc_debian`, `vm`, `vm_debian` and `metal_debian` have no group
+variable files. Their hosts inherit the applicable parent-group settings.
 
-!!! note "Why `tailscale-router` is `host_vars`, not a group"
-    Those overrides used to be `group_vars/proxmox`, a group of exactly one
-    host described as "hosts running a PVE kernel". That was true but
-    misleading, and once `monitored` split into `lxc`/`vm`/`pi` a third thing
-    called `proxmox` sitting beside them was actively confusing. Every value
-    in it is justified by that host's 2.0 GB rootfs and exit-node role, so it
-    belongs to the host. Promoting any of it to `lxc` would be a real change
-    for plex, memory and monitor-lxc.
+!!! note "Host-specific overrides for `tailscale-router`"
+    Its `host_vars` contain settings for its 2.0 GB rootfs and exit-node role.
+    Keeping them scoped to this host avoids applying them to plex, memory and
+    monitor-lxc.
 
 !!! warning "The repo is public"
     All real domains, IPs and usernames live only in `hosts.local.yml`, which

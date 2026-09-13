@@ -15,3 +15,8 @@ __pycache__/
 # Editor and tooling noise.
 .vscode/
 .idea/
+
+# Vendor bootstrap output contains passwords and private certificates.
+wazuh-install-files.tar
+wazuh-install-files/
+security-bootstrap/

@@ -119,3 +119,36 @@ ansible autoupdate -m shell \
     `docker ps --format '{{.Names}}'` fails in `-m shell` because Ansible
     templates the argument first. Put the command in a file and use
     `-m script` instead.
+
+## Wazuh agents
+
+`wazuh-agents.yml` targets `wazuh_agents`. Before running it:
+
+1. Configure the manager with `security/install/configure-sec-wazuh.sh`; its
+   `WAZUH_AGENT_GROUP` must match `wazuh_agent_group` (both default to `homelab`).
+2. Add that manager to the `wazuh_manager` inventory group, or set
+   `wazuh_manager_inventory_host` to an inventory host reachable by Ansible.
+   The role verifies the group directory on this host before installing agents.
+3. Set `wazuh_manager_address` and `wazuh_manager_ca_src` in private inventory.
+   The latter is a controller-side PEM file from your trusted CA distribution.
+4. Set `vault_wazuh_enrollment_password` in Ansible Vault to the manager's
+   enrollment password (at least 20 characters, no whitespace).
+
+The role installs CA/password files as root:wazuh `0640` without logging the
+password, enables server verification during enrollment, and configures journald
+collection for SSH, sudo and system logs. Add application file inputs through
+`wazuh_log_sources` (`location` and `log_format`). This role owns the complete
+`ossec.conf`; express local log inputs in that variable rather than editing the
+managed file. Manager-shared configuration should be reviewed separately.
+
+After rollout, check `/var/ossec/bin/agent_control -l` on the manager and verify
+a known SSH or sudo event in Wazuh. A running agent alone does not prove either
+enrollment or log collection. Existing agents may continue using their existing
+client keys; the new credentials secure future enrollment as well.
+
+## Collector password handling
+
+The rotation play supplies the new password to `htpasswd -iB` over stdin. It is
+hidden from Ansible output and never placed in process arguments. Rotation still
+changes the central endpoint first; rerun `collectors.yml` for the fleet promptly
+in the same maintenance window so remote collectors stop receiving 401 responses.

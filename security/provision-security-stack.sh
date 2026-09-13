@@ -2,7 +2,7 @@
 #
 # provision-security-stack.sh
 #
-# Creates the six security-stack guests on Proxmox VE described in
+# Creates the four security-stack guests on Proxmox VE described in
 # docs/. Run this ON the Proxmox host.
 #
 # DRY RUN BY DEFAULT. Nothing is created until you pass --apply.
@@ -15,7 +15,7 @@
 # Idempotent: a guest whose VMID already exists is skipped, never modified.
 # No secrets are embedded. LXC guests get your SSH public key, no root password.
 
-set -euo pipefail
+set -Eeuo pipefail
 
 # ---------------------------------------------------------------- configuration
 
@@ -33,6 +33,12 @@ STORAGE_HDD="${STORAGE_HDD:-local-lvm}"
 STORAGE_TMPL="${STORAGE_TMPL:-local}"
 
 BRIDGE="${BRIDGE:-vmbr0}"
+# The firewall's LAN side, where the sandbox workloads live. Only sec-scan goes
+# here. A scanner ORIGINATES connections, the inverse of the agent tools, so on
+# BRIDGE it has no route into this segment at all. From here it reaches this
+# segment directly and BRIDGE through the firewall's outbound NAT. See
+# docs/architecture/index.md.
+BRIDGE_SANDBOX="${BRIDGE_SANDBOX:-vmbr1}"
 SSH_PUBKEY="${SSH_PUBKEY:-$HOME/.ssh/id_ed25519.pub}"
 
 # Leave LXC_TEMPLATE empty to resolve the newest build of LXC_TEMPLATE_FAMILY,
@@ -47,17 +53,15 @@ CLOUD_IMAGE_URL="${CLOUD_IMAGE_URL:-https://cloud.debian.org/images/cloud/trixie
 # UI and to `pvesm list`.
 CLOUD_IMAGE_CACHE="${CLOUD_IMAGE_CACHE:-/var/lib/vz/template/iso}"
 
-# guest spec: name:type:vmid:cores:memMB:diskGB:storage_tier
-# Sizes come from docs/reference/index.md, at 30 day retention.
+# guest spec: name:type:vmid:cores:memMB:diskGB:storage_tier:network
+# Sizes come from docs/reference/index.md, at 30 day retention. network is
+# "trusted" (BRIDGE) or "sandbox" (BRIDGE_SANDBOX).
 GUESTS=(
-  "sec-wazuh:vm:200:4:8192:40:ssd"
-  "sec-scan:vm:201:2:6144:40:hdd"
-  "sec-crowdsec:lxc:210:1:1024:8:ssd"
-  "sec-dns:lxc:211:1:512:8:ssd"
-  "sec-auth:lxc:212:1:1024:8:ssd"
-  "sec-ntopng:lxc:213:2:2048:16:hdd"
+  "sec-wazuh:vm:200:4:8192:40:ssd:trusted"
+  "sec-scan:vm:201:2:6144:40:hdd:sandbox"
+  "sec-crowdsec:lxc:210:1:1024:8:ssd:trusted"
+  "sec-dns:lxc:211:1:512:8:ssd:trusted"
 )
-
 # ---------------------------------------------------------------------- runtime
 
 APPLY=0
@@ -153,11 +157,23 @@ preflight() {
   check_storage "$STORAGE_HDD"  images,rootdir
   check_storage "$STORAGE_TMPL" vztmpl
 
-  if ip link show "$BRIDGE" >/dev/null 2>&1; then
-    ok "bridge '$BRIDGE' exists"
-  else
-    die "bridge '$BRIDGE' not found"
-  fi
+  # Every bridge a selected guest attaches to, not only BRIDGE: sec-scan sits
+  # on a different one from the rest.
+  local spec name vmid net br conflicts=0
+  declare -A bridges=()
+  for spec in "${GUESTS[@]}"; do
+    IFS=: read -r name _ _ _ _ _ _ net <<<"$spec"
+    selected "$name" || continue
+    br="$(bridge_for "$net")"
+    bridges["$br"]=1
+  done
+  for br in "${!bridges[@]}"; do
+    if ip link show "$br" >/dev/null 2>&1; then
+      ok "bridge '$br' exists"
+    else
+      die "bridge '$br' not found"
+    fi
+  done
 
   if [[ -r "$SSH_PUBKEY" ]]; then
     ok "ssh public key $SSH_PUBKEY"
@@ -166,9 +182,8 @@ preflight() {
   fi
 
   # VMID collisions
-  local spec name vmid conflicts=0
   for spec in "${GUESTS[@]}"; do
-    IFS=: read -r name _ vmid _ _ _ _ <<<"$spec"
+    IFS=: read -r name _ vmid _ _ _ _ _ <<<"$spec"
     selected "$name" || continue
     if qm status "$vmid" >/dev/null 2>&1 || pct status "$vmid" >/dev/null 2>&1; then
       warn "VMID $vmid already exists ($name will be SKIPPED)"
@@ -181,12 +196,12 @@ preflight() {
   # degrades every guest on it, so a stack that "just fits" is a stack that
   # takes the estate down with it. CPU overcommit is normal and only warns.
   # Keyed on the resolved storage ID, not the tier name. Both tiers default to
-  # one pool, and keying on the tier asked "does 64 GB fit?" and "does 56 GB
-  # fit?" as two separate questions of the same pool, never "does 120 GB fit?".
+  # one pool, and keying on the tier asked "does 56 GB fit?" and "does 40 GB
+  # fit?" as two separate questions of the same pool, never "does 96 GB fit?".
   local tot_c=0 tot_m=0 cores mem disk tier sid
   declare -A store_disk=()
   for spec in "${GUESTS[@]}"; do
-    IFS=: read -r name _ _ cores mem disk tier <<<"$spec"
+    IFS=: read -r name _ _ cores mem disk tier _ <<<"$spec"
     selected "$name" || continue
     tot_c=$(( tot_c + cores ))
     tot_m=$(( tot_m + mem ))
@@ -296,65 +311,75 @@ storage_for() {
   esac
 }
 
+bridge_for() {
+  case "$1" in
+    trusted) printf '%s' "$BRIDGE" ;;
+    sandbox) printf '%s' "$BRIDGE_SANDBOX" ;;
+    *) die "unknown network: $1" ;;
+  esac
+}
+
 # ---------------------------------------------------------------------- create
 
 create_lxc() {
-  local name=$1 vmid=$2 cores=$3 mem=$4 disk=$5 tier=$6
+  local name=$1 vmid=$2 cores=$3 mem=$4 disk=$5 tier=$6 net=$7
   local store; store=$(storage_for "$tier")
+  local bridge; bridge=$(bridge_for "$net")
 
-  info "LXC  $name (vmid $vmid, ${cores} vCPU, ${mem} MB, ${disk} GB on $store)"
+  info "LXC  $name (vmid $vmid, ${cores} vCPU, ${mem} MB, ${disk} GB on $store, $bridge)"
 
   # A build is several commands, not a transaction. If one fails, `set -e`
   # aborts with the VMID already created, and the next run's "already exists"
   # check then SKIPS it and reports success over a half-built guest, forever.
   # The header promises "never modified", which is what makes that dangerous.
-  if (( APPLY )); then
-    trap 'warn "$name failed mid-build, destroying the partial guest"; pct destroy "$vmid" --purge >/dev/null 2>&1 || true' ERR
-  fi
-
   run pct create "$vmid" "${STORAGE_TMPL}:vztmpl/${LXC_TEMPLATE}" \
       --hostname "$name" \
       --cores "$cores" \
       --memory "$mem" \
       --swap 512 \
       --rootfs "${store}:${disk}" \
-      --net0 "name=eth0,bridge=${BRIDGE},firewall=1,ip=dhcp" \
+      --net0 "name=eth0,bridge=${bridge},firewall=1,ip=dhcp" \
       --ssh-public-keys "$SSH_PUBKEY" \
       --unprivileged 1 \
       --onboot 1 \
       --description "security stack: $name. Managed by provision-security-stack.sh"
 
+  # Arm cleanup only after create succeeds: a concurrent VMID collision must
+  # never cause us to destroy a guest created by somebody else.
+  if (( APPLY )); then
+    trap 'trap - ERR; warn "$name failed mid-build, destroying the partial guest"; pct destroy "$vmid" --purge || warn "cleanup failed for VMID $vmid; inspect it manually"' ERR
+  fi
   run pct start "$vmid"
   trap - ERR
   ok "$name created"
 }
 
 create_vm() {
-  local name=$1 vmid=$2 cores=$3 mem=$4 disk=$5 tier=$6
+  local name=$1 vmid=$2 cores=$3 mem=$4 disk=$5 tier=$6 net=$7
   local store; store=$(storage_for "$tier")
+  local bridge; bridge=$(bridge_for "$net")
   local img="$CLOUD_IMAGE_PATH"
 
-  info "VM   $name (vmid $vmid, ${cores} vCPU, ${mem} MB, ${disk} GB on $store)"
+  info "VM   $name (vmid $vmid, ${cores} vCPU, ${mem} MB, ${disk} GB on $store, $bridge)"
 
   # A build is several commands, not a transaction. If one fails, `set -e`
   # aborts with the VMID already created, and the next run's "already exists"
   # check then SKIPS it and reports success over a half-built guest, forever.
   # The header promises "never modified", which is what makes that dangerous.
-  if (( APPLY )); then
-    trap 'warn "$name failed mid-build, destroying the partial guest"; qm destroy "$vmid" --purge >/dev/null 2>&1 || true' ERR
-  fi
-
   run qm create "$vmid" \
       --name "$name" \
       --cores "$cores" \
       --memory "$mem" \
-      --net0 "virtio,bridge=${BRIDGE},firewall=1" \
+      --net0 "virtio,bridge=${bridge},firewall=1" \
       --scsihw virtio-scsi-single \
       --ostype l26 \
       --agent enabled=1 \
       --onboot 1 \
       --description "security stack: $name. Managed by provision-security-stack.sh"
 
+  if (( APPLY )); then
+    trap 'trap - ERR; warn "$name failed mid-build, destroying the partial guest"; qm destroy "$vmid" --purge || warn "cleanup failed for VMID $vmid; inspect it manually"' ERR
+  fi
   # Import straight into scsi0. The old path was `qm importdisk` followed by
   # `qm set --scsi0 ${store}:vm-${vmid}-disk-0`, which GUESSES the volume name,
   # because qm disk import prints the volid but returns nothing scriptable.
@@ -389,9 +414,9 @@ main() {
 
   preflight
 
-  local need_lxc=0 need_vm=0 spec name type vmid cores mem disk tier
+  local need_lxc=0 need_vm=0 spec name type vmid cores mem disk tier net
   for spec in "${GUESTS[@]}"; do
-    IFS=: read -r name type _ _ _ _ _ <<<"$spec"
+    IFS=: read -r name type _ _ _ _ _ _ <<<"$spec"
     selected "$name" || continue
     [[ $type == lxc ]] && need_lxc=1
     [[ $type == vm  ]] && need_vm=1
@@ -401,7 +426,7 @@ main() {
   info ""
 
   for spec in "${GUESTS[@]}"; do
-    IFS=: read -r name type vmid cores mem disk tier <<<"$spec"
+    IFS=: read -r name type vmid cores mem disk tier net <<<"$spec"
     selected "$name" || continue
 
     if qm status "$vmid" >/dev/null 2>&1 || pct status "$vmid" >/dev/null 2>&1; then
@@ -410,17 +435,19 @@ main() {
     fi
 
     case "$type" in
-      lxc) create_lxc "$name" "$vmid" "$cores" "$mem" "$disk" "$tier" ;;
-      vm)  create_vm  "$name" "$vmid" "$cores" "$mem" "$disk" "$tier" ;;
+      lxc) create_lxc "$name" "$vmid" "$cores" "$mem" "$disk" "$tier" "$net" ;;
+      vm)  create_vm  "$name" "$vmid" "$cores" "$mem" "$disk" "$tier" "$net" ;;
       *)   die "unknown guest type: $type" ;;
     esac
     info ""
   done
 
   info "next steps"
-  info "  1. Give every guest a DHCP reservation on your router. Leases move; see"
-  info "     docs/operations/index.md."
-  info "  2. Run install/install-<service>.sh inside each guest."
+  info "  1. Give every guest a DHCP reservation. Leases move; see"
+  info "     docs/operations/index.md. A guest on ${BRIDGE_SANDBOX} gets its lease"
+  info "     from whatever serves DHCP there, usually the firewall, not your router."
+  info "  2. Run install/install-<service>.sh inside each guest. Guests on"
+  info "     ${BRIDGE_SANDBOX} sit behind the firewall; reach them through your jump host."
   info "  3. Add the firewall allow rules from docs/reference/index.md ABOVE any"
   info "     inter-VLAN block rules, in the same change."
   (( APPLY )) || info ""

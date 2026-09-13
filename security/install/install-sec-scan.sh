@@ -25,12 +25,12 @@ run apt-get install -y docker.io docker-compose curl ca-certificates
 run systemctl enable --now docker
 
 run mkdir -p "$GVM_DIR"
-run sh -c "curl -fsSL '$COMPOSE_URL' -o '$GVM_DIR/compose.yaml.part' && mv -f '$GVM_DIR/compose.yaml.part' '$GVM_DIR/compose.yaml'"
+download_file "$COMPOSE_URL" "$GVM_DIR/compose.yaml"
 
 # 21 services, all bound to 127.0.0.1 by the shipped compose file. Pull first
 # so a slow registry does not look like a broken start.
-run sh -c "cd '$GVM_DIR' && docker compose pull"
-run sh -c "cd '$GVM_DIR' && docker compose up -d"
+run docker compose --project-directory "$GVM_DIR" -f "$GVM_DIR/compose.yaml" pull
+run docker compose --project-directory "$GVM_DIR" -f "$GVM_DIR/compose.yaml" up -d
 
 ok "Greenbone containers started from $GVM_DIR/compose.yaml"
 cat <<'NOTE'
@@ -40,29 +40,46 @@ cat <<'NOTE'
   rather than an error, which reads exactly like a clean estate:
 
       cd /opt/greenbone
-      docker compose run --rm greenbone-feed-sync greenbone-feed-sync --type all
+      docker compose pull                 # data images carry the Community Feed
+      docker compose up -d                # copies feed data into shared volumes
+      docker compose ps                   # data services must become healthy
       docker compose logs -f gvmd          # watch it settle
 
-  SET THE ADMIN PASSWORD. There is no default login:
+  CHANGE THE ADMIN PASSWORD FIRST. The containers create admin / admin:
 
       docker compose exec -u gvmd gvmd gvmd --user=admin --new-password='<pick one>'
 
   THE UI BINDS TO LOCALHOST ONLY: 127.0.0.1:9392 (http) and 127.0.0.1:443
   (https, self-signed). That is deliberate, so reach it over an SSH tunnel
-  rather than republishing it:
+  rather than republishing it. This guest sits behind the firewall, so the
+  tunnel goes through your jump host:
 
-      ssh -N -L 9392:127.0.0.1:9392 admin@<sec-scan>
+      ssh -J <jump-host> -N -L 9392:127.0.0.1:9392 admin@<sec-scan>
 
-  To serve it on the LAN instead, set NGINX_HOST on the gvm-config service in
-  compose.yaml and put Authelia in front. Do not expose it directly.
+  Keep the UI bound to loopback and use the SSH tunnel for access.
 
   SCANNING SCOPE IS A ROUTING QUESTION, not a Greenbone one. A scanner
   ORIGINATES connections to its targets, unlike the Wazuh and CrowdSec agents
   which dial out to their managers. It can only scan a segment it has a route
-  to. Confirm before you trust an empty report:
+  to, which is why this guest sits on the sandbox bridge: from there it
+  reaches the sandbox directly and the trusted segment through the firewall's
+  outbound NAT. Confirm before you trust an empty report:
 
       ip route
       nmap -sn <target-segment>          # hosts it can actually see
+
+  Three consequences of sitting on the sandbox side:
+    - Trusted-side targets log the FIREWALL's address as the scanner, not
+      this guest's. That is NAT, not a bug.
+    - Suricata sees every scan of the trusted side and will alert on it.
+      Accept the alerts or add a pass rule for this guest's address, and
+      know that the pass rule also blinds Suricata to this guest.
+    - If you add a sandbox-to-trusted block rule, this guest needs its own
+      pass rule above it, or it can only scan the sandbox.
+
+  For authenticated scans, use an unprivileged account on each target. Reading
+  the package list needs no root, and this guest lives beside the workloads
+  you trust least.
 
   Take a baseline now and diff monthly. What you are looking for is DRIFT: a
   new unauthenticated service, another multi-homed host, an interface nobody

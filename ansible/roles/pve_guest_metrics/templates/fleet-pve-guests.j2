@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+# Managed by ansible/roles/pve_guest_metrics. Do not edit by hand.
+#
+# Writes one info series per Proxmox guest NIC to
+# {{ pve_guest_metrics_dir }}/{{ pve_guest_metrics_file }}, for the
+# node_exporter textfile collector that Alloy already reads.
+#
+# WHY: Proxmox gives every running guest NIC a device on the host, tap<vmid>i<n>
+# for a VM and veth<vmid>i<n> for a container, so node_exporter already reports
+# per-guest traffic as node_network_*_bytes_total with device="tap102i0". A
+# VMID is not a name. This file is the join key: device to guest, vmid, type,
+# nic and bridge.
+#
+# DIRECTION, which everyone gets wrong once: that device is the HOST's end of
+# the guest's virtual cable. What the host receives on it is what the guest
+# sent. The dashboard swaps receive and transmit to talk about the guest.
+#
+# WHY pvesh AND NOT PARSING /etc/pve: a guest's .conf file also holds snapshot
+# and pending sections that look like the live config. The API returns the
+# running configuration (--current) in a stable JSON shape, which is the same
+# reason roles/smart_metrics reads smartctl --json.
+
+import json
+import os
+import re
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+
+OUT_DIR = "{{ pve_guest_metrics_dir }}"
+OUT_FILE = "{{ pve_guest_metrics_file }}"
+
+PVESH = "/usr/bin/pvesh"
+NET_KEY = re.compile(r"^net(\d+)$")
+# The host-side device prefix Proxmox uses for each guest type.
+PREFIX = {"qemu": "tap", "lxc": "veth"}
+API_ERRORS = (OSError, ValueError, subprocess.SubprocessError)
+
+
+def pvesh(path, *args):
+    """GET an API path and return the parsed JSON. Raises on any failure."""
+    p = subprocess.run(
+        [PVESH, "get", path, "--output-format", "json"] + list(args),
+        capture_output=True, text=True, timeout=60, check=True,
+    )
+    return json.loads(p.stdout)
+
+
+def esc(s):
+    """Escape a Prometheus label value."""
+    return str(s).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def bridge_of(netspec):
+    """'virtio=BC:24:11:00:00:01,bridge=vmbr0,firewall=1' -> 'vmbr0'."""
+    for part in netspec.split(","):
+        key, _, value = part.partition("=")
+        if key == "bridge":
+            return value
+    return ""
+
+
+def main():
+    node = socket.gethostname().split(".")[0]
+    try:
+        guests = pvesh("/cluster/resources", "--type", "vm")
+    except API_ERRORS as e:
+        # Keep the previous file. Its timestamp going stale is the signal that
+        # something broke; an empty file would silently unname every guest.
+        print("pvesh failed, keeping the previous file: " + str(e), file=sys.stderr)
+        return 1
+
+    samples = []
+    for g in guests:
+        gtype, vmid = g.get("type"), g.get("vmid")
+        # Templates never run, so they never have a device to name. Guests on
+        # other cluster nodes have their devices on those nodes.
+        if gtype not in PREFIX or vmid is None or g.get("template") or g.get("node") != node:
+            continue
+        path = "/nodes/" + node + "/" + gtype + "/" + str(vmid) + "/config"
+        try:
+            cfg = pvesh(path, "--current", "1")
+        except API_ERRORS as e:
+            print("skipping " + gtype + " " + str(vmid) + ": " + str(e), file=sys.stderr)
+            continue
+        name = cfg.get("name") or cfg.get("hostname") or g.get("name") or str(vmid)
+        for key, spec in cfg.items():
+            m = NET_KEY.match(key)
+            if not m:
+                continue
+            samples.append({
+                "bridge": bridge_of(str(spec)),
+                "device": PREFIX[gtype] + str(vmid) + "i" + m.group(1),
+                "guest": name,
+                "nic": key,
+                "type": gtype,
+                "vmid": str(vmid),
+            })
+
+    lines = []
+    if samples:
+        lines.append("# HELP fleet_pve_guest_nic_info The guest NIC behind each host-side"
+                     " tap or veth device, via roles/pve_guest_metrics.")
+        lines.append("# TYPE fleet_pve_guest_nic_info gauge")
+        for lbl in sorted(samples, key=lambda s: (int(s["vmid"]), s["nic"])):
+            rendered = ",".join(k + '="' + esc(v) + '"' for k, v in sorted(lbl.items()))
+            # NOTE: built by concatenation on purpose, as in roles/smart_metrics.
+            # Ansible renders this file as a Jinja template before installing it,
+            # and an opening brace immediately followed by a percent sign is a
+            # Jinja statement tag. Never let those two characters become
+            # adjacent anywhere in this file, comments included.
+            lines.append("fleet_pve_guest_nic_info" + "{" + rendered + "}" + " 1")
+
+    # Emitted unconditionally, so a node with no guests reads as zero rather
+    # than as a dead exporter.
+    lines.append("# HELP fleet_pve_guest_nics_total Guest NICs named on this node.")
+    lines.append("# TYPE fleet_pve_guest_nics_total gauge")
+    lines.append("fleet_pve_guest_nics_total " + str(len(samples)))
+    lines.append("# HELP fleet_pve_guests_collection_timestamp_seconds When this ran.")
+    lines.append("# TYPE fleet_pve_guests_collection_timestamp_seconds gauge")
+    lines.append("fleet_pve_guests_collection_timestamp_seconds " + str(int(time.time())))
+
+    # Write-then-rename in the SAME directory, so the rename is atomic. The
+    # collector will happily read a half-written file otherwise.
+    os.makedirs(OUT_DIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=OUT_DIR, prefix=".fleet-pve-guests.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, os.path.join(OUT_DIR, OUT_FILE))
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

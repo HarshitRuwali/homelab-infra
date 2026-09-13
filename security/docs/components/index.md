@@ -17,16 +17,49 @@ something drifts:
 
 | Guest | Runs | Does | Config owned by |
 |---|---|---|---|
-| [`sec-wazuh`](#sec-wazuh) | Wazuh manager, indexer, dashboard | Host intrusion detection, file integrity, log analysis | vendor |
+| [`sec-wazuh`](#sec-wazuh) | Wazuh manager, indexer, dashboard | Host intrusion detection, file integrity, log analysis | vendor + authenticated enrollment |
 | [`sec-scan`](#sec-scan) | Greenbone Community containers | Vulnerability scanning, drift detection | this repo (compose) |
-| [`sec-crowdsec`](#sec-crowdsec) | CrowdSec Local API | Behavioural detection, shared blocklist decisions | this repo (one edit) |
+| [`sec-crowdsec`](#sec-crowdsec) | CrowdSec Local API | Behavioural detection, shared blocklist decisions | vendor + authenticated HTTPS LAPI |
 | [`sec-dns`](#sec-dns) | AdGuard Home | Recursive resolver, filtering, query logs | vendor (UI) |
-| [`sec-auth`](#sec-auth) | Authelia, OpenBao | SSO in front of UIs, secrets underneath services | vendor |
-| [`sec-ntopng`](#sec-ntopng) | ntopng, nprobe | NetFlow collection, flow visibility | this repo |
 | *the firewall* | [Suricata](#suricata) | Network IDS at the boundary | your firewall |
+| *the firewall* | [ntopng](#ntopng) | Live flow visibility across the boundary | your firewall |
 
-Suricata is not a guest. It runs on OPNsense or pfSense, which already bundles
-it, so there is nothing here to provision. See [Wiring](../wiring/index.md).
+Suricata and ntopng are not guests. Both run on the firewall itself: OPNsense
+bundles Suricata and offers ntopng as a plugin, so there is nothing here to
+provision. See [Wiring](../wiring/index.md).
+
+## Logging in
+
+No guest has a password. Every login is your SSH key, the one passed to the
+provisioning script as `SSH_PUBKEY`.
+
+| Guest | Kind | Log in as | Bridge |
+|---|---|---|---|
+| `sec-wazuh` (200) | VM | `admin`, with passwordless `sudo` | trusted |
+| `sec-scan` (201) | VM | `admin`, with passwordless `sudo` | sandbox, so through your jump host |
+| `sec-crowdsec` (210) | LXC | `root` | trusted |
+| `sec-dns` (211) | LXC | `root` | trusted |
+
+When SSH fails:
+
+- **An LXC** has a way in that needs no credentials at all: `pct enter <vmid>`
+  on the Proxmox host gives a root shell.
+- **A VM does not.** There is no password, so the serial console cannot log you
+  in, and `qm guest exec` only works once the installer has added the guest
+  agent. Until then SSH is the only door. If you want a fallback, set one with
+  `qm set <vmid> --cipassword` before you need it.
+
+The services have their own logins, created at install time:
+
+| Service | User | First password | Then |
+|---|---|---|---|
+| Wazuh dashboard | `admin` | Random, printed at the end of the install | Also saved, with every internal password and the TLS certificates, in `wazuh-install-files.tar`. [Move it off the guest](#sec-wazuh). |
+| Greenbone | `admin` | **`admin`** | Change it before anything else. [How](#first-run) |
+| ntopng | `admin` | **`admin`** | ntopng forces a change at first login |
+| AdGuard Home | yours | Chosen in the setup wizard | Whoever reaches the wizard first sets it, so finish it straight after install |
+| CrowdSec | none | No UI | Credentials are issued per agent and per bouncer, [below](#enrol-an-agent) |
+
+Keep them in a password manager.
 
 ---
 
@@ -48,6 +81,27 @@ Three services in one guest, which is why it is the largest:
 
 **Installed by** `install/install-sec-wazuh.sh`, which runs upstream's
 `wazuh-install.sh -a -i` (all-in-one, ignore-check).
+
+!!! danger "The admin password is not only in your scrollback"
+    It is printed at the end of the install, and it is also written, with
+    every internal password and the TLS certificates, to
+    `wazuh-install-files.tar` in `WAZUH_WORKDIR` (default `/root/wazuh-install`):
+
+    ```bash
+    cd /root/wazuh-install
+    tar -O -xvf wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt
+    ```
+
+    Put the admin password in your password manager, then move the tar off the
+    guest. It holds every credential the stack uses.
+
+### Enrollment configuration
+
+`configure-sec-wazuh.sh` requires a prepared password and matching certificate/key,
+sets password authentication on the enrollment service, and creates the requested
+agent group (`homelab` by default). The Ansible role verifies that group before
+installing agents and supplies both the password and trusted CA. See
+[Bootstrap inputs](../security.md#bootstrap-inputs) for initial setup and migration.
 
 ### Configs (vendor)
 
@@ -103,6 +157,20 @@ multi-homed host, an interface nobody declared.
     reads exactly like a clean estate. Check `ip route` and a quick
     `nmap -sn <segment>` before you believe a clean result.
 
+**It is the one guest on the sandbox bridge**, for exactly that reason. From
+the trusted side it has no route into the sandbox at all. From the sandbox it
+reaches the sandbox directly, and the trusted side through the firewall's
+outbound NAT. [Architecture](../architecture/index.md#the-scanner-is-the-exception)
+has the reasoning and the costs; the ones you will notice:
+
+- Trusted-side targets log **the firewall's address** as the scanner, not
+  `sec-scan`'s. That is NAT, not a bug.
+- **Suricata sees every scan of the trusted side** and will alert on it. Either
+  accept the alerts, or add a pass rule for `sec-scan`'s address and accept that
+  it also blinds Suricata to this guest.
+- If you add a sandbox-to-trusted block rule, `sec-scan` needs **its own pass
+  rule above it**, or it can only scan the sandbox.
+
 !!! bug "`apt-get install gvm` does not work on Debian stable"
     Debian dropped the GVM/OpenVAS stack. `gvm` is in **sid only**, and is
     absent from bookworm, trixie and forky, so the apt path fails with
@@ -130,14 +198,14 @@ Ports come from that file and are bound to loopback deliberately:
       - 127.0.0.1:9392:9392
 ```
 
-Reach it over an SSH tunnel rather than republishing it:
+Reach it over an SSH tunnel rather than republishing it. The guest is behind
+the firewall, so the tunnel goes through your jump host:
 
 ```bash
-ssh -N -L 9392:127.0.0.1:9392 admin@<sec-scan>
+ssh -J <jump-host> -N -L 9392:127.0.0.1:9392 admin@<sec-scan>
 ```
 
-To serve it on the LAN instead, set `NGINX_HOST` on the `gvm-config` service
-and put [Authelia](#sec-auth) in front.
+Keep the UI bound to loopback and use the SSH tunnel for access.
 
 ### Data
 
@@ -154,12 +222,20 @@ Seventeen named Docker volumes. The ones that grow:
 
 ```bash
 cd /opt/greenbone
-docker compose run --rm greenbone-feed-sync greenbone-feed-sync --type all
+docker compose pull                 # includes the feed data images
+docker compose up -d                # refreshes data volumes
+docker compose ps                   # data services should be healthy
 docker compose exec -u gvmd gvmd gvmd --user=admin --new-password='<pick one>'
 ```
 
-The feed sync takes **several hours** and must not be interrupted. There is no
-default login; the second command creates one.
+The feed sync takes **several hours** and must not be interrupted.
+
+The containers create `admin` with the password **`admin`**. The second command
+changes it; run it before anything else, not after the feed finishes.
+
+For authenticated scans, give Greenbone an **unprivileged** account on each
+target. Reading the installed package list needs no root, and this guest lives
+beside the workloads you trust least.
 
 ---
 
@@ -177,24 +253,26 @@ hostile traffic is dropped at the edge rather than at the origin.
 
 **Installed by** `install/install-sec-crowdsec.sh`.
 
-### Configs (this repo edits one line)
+### Configs managed by this repo
 
-`/etc/crowdsec/config.yaml`, so that agents on other hosts can reach the LAPI
-rather than only localhost:
+`configure-sec-crowdsec.sh` updates the YAML structurally, preserves unrelated
+settings, and tests the result before starting CrowdSec. It configures:
 
 ```yaml
 api:
   server:
-    listen_uri: 0.0.0.0:8080      # default is 127.0.0.1:8080
+    listen_uri: 0.0.0.0:8080
+    tls:
+      cert_file: /etc/crowdsec/tls/server.crt
+      key_file: /etc/crowdsec/tls/server.key
 ```
 
-!!! bug "That edit used to fail silently"
-    `listen_uri` is nested **four** spaces deep under `api:` → `server:`. The
-    installer's original `sed` anchored on a two-space indent, so it matched
-    nothing, reported success, and left the LAPI on localhost. Every agent
-    enrolment then failed later, a long way from the cause. The installer now
-    matches any indentation **and asserts the result**, so a future upstream
-    change fails loudly instead.
+The local API credentials retain their login/password but switch to HTTPS and
+the trusted CA. Supply the certificate, private key, CA and a DNS name matching
+the certificate as described in [Security](../security.md#bootstrap-inputs).
+The configure command can harden an existing installation without reinstalling
+packages. It stops the service before writing configuration and leaves it
+stopped if validation fails.
 
 ### Configs (vendor)
 
@@ -213,7 +291,8 @@ cscli machines add <agent-hostname> --auto      # on sec-crowdsec, prints creden
 
 ```yaml
 # /etc/crowdsec/local_api_credentials.yaml, on the agent
-url: http://<sec-crowdsec>:8080
+url: https://<sec-crowdsec-certificate-dns-name>:8080
+ca_cert_path: /etc/crowdsec/tls/ca.crt
 login: <from above>
 password: <from above>
 ```
@@ -281,119 +360,6 @@ before you rely on it:
 
 ---
 
-## sec-auth
-
-Two unrelated services that share a guest because both are small and both are
-about credentials.
-
-**Installed by** `install/install-sec-auth.sh`. Neither is configured by it;
-both need a config file written before they do anything.
-
-### Authelia
-
-**What it does.** Sits in front of internal web UIs and demands a login before
-the request reaches them. That is what lets the management planes here stay
-unpublished without becoming unusable.
-
-| Path | What it controls |
-|---|---|
-| `/etc/authelia/configuration.yml` | Everything: session, storage, access control rules |
-| `/etc/authelia/users_database.yml` | Users and password hashes, for the file backend |
-
-Put it in front of Grafana, the Wazuh dashboard, ntopng and Greenbone.
-
-### OpenBao
-
-**What it does.** Holds the credentials every other service needs, so they stop
-living in `.env` files. MPL-2.0, the Linux Foundation fork of Vault 1.14.0.
-See [Architecture](../architecture/index.md#on-openbao-rather-than-hashicorp-vault)
-for why not Vault.
-
-```bash
-bao operator init          # record the unseal keys somewhere physical
-bao operator unseal        # three times
-```
-
-!!! danger "Keep the unseal keys and root token off this machine"
-    Auto-unseal that stores the keys beside the vault defeats the vault. Print
-    them, or put them in a password manager.
-
----
-
-## sec-ntopng
-
-**What it does.** Answers "did that firewall rule actually do what I think?"
-It shows which hosts talk to which, over what, and how much. It is the fastest
-way to verify segmentation still holds after a change.
-
-**It collects NetFlow rather than sniffing packets**, and that is the whole
-reason it can stay an unprivileged container. Sniffing needs `NET_ADMIN` and
-`NET_RAW`, which would push it to a VM for no benefit. Your firewall exports
-the flows; ntopng just receives them.
-
-| Process | Role | Listens on |
-|---|---|---|
-| `nprobe` | NetFlow collector, feeds ntopng over ZMQ | 2055/udp |
-| `ntopng` | Web UI and analysis | 3000/tcp |
-
-**Installed by** `install/install-sec-ntopng.sh`, from ntop's own apt repo.
-
-!!! bug "The repo URL is indexed by codename, not version"
-    `packages.ntop.org/apt-stable/trixie/` exists; `.../13/` is a 404. The
-    installer originally built the URL from `lsb_release -rs`, which returns
-    `13` on Debian 13, so the download failed and `dpkg` then choked on the
-    error page. It now uses `lsb_release -cs`. ntop indexes its *Ubuntu* repo by
-    version number, which is where the confusion comes from.
-
-### Configs (this repo)
-
-`/etc/nprobe/nprobe.conf`:
-
-```ini
---collector-port=2055
---zmq=tcp://127.0.0.1:5556
---interface=none
-```
-
-`--interface=none` is the line that makes this a collector. It tells nprobe not
-to open a capture interface at all.
-
-`/etc/ntopng/ntopng.conf`:
-
-```ini
--i=tcp://127.0.0.1:5556
--w=3000
---community
-```
-
-`-i` is an ZMQ endpoint rather than a network interface, which is the same
-decision from the other side.
-
-### Export flows to it
-
-On OPNsense, install the **softflowd** plugin, set the target to
-`<sec-ntopng>:2055` and pick the interfaces you want flows from.
-
-### Verify
-
-```bash
-tcpdump -ni any port 2055 -c 5      # on sec-ntopng
-```
-
-Confirm packets arrive before believing an empty UI.
-
-!!! warning "An empty ntopng is not evidence of no lateral traffic"
-    This sees only what **crosses the firewall**. Two hosts on the same segment,
-    or a multi-homed host, never appear here at all. That gap is exactly what
-    the Wazuh agents cover.
-
-!!! info "nprobe is not GPL like ntopng"
-    ntopng Community is GPLv3. `nprobe` is a separate ntop product under its own
-    licence. Confirm the terms apply to your use before depending on this path.
-    See [Licences](../reference/index.md#licences).
-
----
-
 ## Suricata
 
 **What it does.** Signature-based network intrusion detection at the boundary,
@@ -407,6 +373,68 @@ See [Wiring](../wiring/index.md#2-suricata-eve-into-loki).
 
 ---
 
+## ntopng
+
+**What it does.** Answers "did that firewall rule actually do what I think?"
+It shows which hosts talk to which, over what, and how much, live. It is the
+fastest way to verify segmentation still holds after a change.
+
+**It runs on the firewall**, from OPNsense's `os-ntopng` plugin, and captures
+packets on the firewall's own interfaces. It builds flow summaries and
+identifies applications from the captured traffic.
+
+**Installed from** the OPNsense UI, not this repo:
+
+1. **System → Firmware → Plugins**: install `os-redis`, then enable it under
+   **Services → Redis**. ntopng needs Redis running, and the plugin warns you if
+   it is missing.
+2. Install `os-ntopng`, then **Services → Ntopng**: enable it, pick the
+   interfaces, and either leave HTTP on port 3000 or set an HTTPS port with a
+   certificate.
+
+!!! tip "Capture on LAN, not WAN"
+    On the WAN interface every sandbox host appears as the firewall's own
+    address, because NAT has already rewritten it. The LAN interface sees the
+    real addresses, which is the whole point.
+
+### Configs (generated by the plugin)
+
+| Path | What it controls |
+|---|---|
+| `/usr/local/etc/ntopng.conf` | Generated from the UI: `-i` per interface, `-w` port, `-n` DNS mode |
+| `/etc/rc.conf.d/ntopng` | Whether the service starts |
+| `/var/db/ntopng/` | Timeseries and runtime data |
+
+Change settings in the UI, not in the file. OPNsense regenerates the file from
+its own configuration, which also means the firewall's configuration backup
+carries these settings.
+
+The UI listens on **every firewall interface**, not only LAN. The WAN is closed
+by default; keep it that way. First login is `admin` / `admin`, and ntopng
+forces a change.
+
+### Verify
+
+Generate traffic from one sandbox host, then find that host under **Hosts** in
+the ntopng UI with a recent last-seen time. On the firewall's shell:
+
+```bash
+/usr/local/etc/rc.d/ntopng status
+```
+
+!!! warning "An empty ntopng is not evidence of no lateral traffic"
+    This sees only what **crosses the firewall**. Two hosts on the same segment,
+    or a multi-homed host, never appear here at all. That gap is exactly what
+    the Wazuh agents cover.
+
+!!! note "Budget firewall resources for it"
+    ntopng and Redis share the firewall with Suricata. As a starting point,
+    give the firewall VM an additional 2 GB of RAM and 2 vCPU, then measure. It is also a second deep packet parser on the
+    firewall beside Suricata, which is more attack surface on the one box that
+    must not fall.
+
+---
+
 ## Where the configs come from
 
 ```mermaid
@@ -415,12 +443,16 @@ flowchart LR
     INST["install/install-sec-*.sh<br/>inside each guest"]
     VEND["vendor installers<br/>and setup wizards"]
 
-    PROV -->|"creates the guest,<br/>cloud-init ssh key only"| G["six guests"]
+    PROV -->|"creates the guest,<br/>cloud-init ssh key only"| G["four guests"]
     G --> INST
-    INST -->|"writes nprobe.conf,<br/>ntopng.conf, compose.yaml,<br/>one crowdsec line"| CFG["config in this repo's control"]
+    INST -->|"writes compose.yaml"| CFG["config in this repo's control"]
     INST -->|"invokes"| VEND
-    VEND -->|"writes ossec.conf,<br/>AdGuardHome.yaml,<br/>authelia config"| OTH["config this repo does not manage"]
+    INST -->|"invokes"| AUTH["configure-sec-wazuh.sh<br/>configure-sec-crowdsec.sh"]
+    AUTH -->|"enrollment and TLS settings"| CFG
+    VEND -->|"initialises service configuration"| BASE["vendor defaults and UI settings"]
+    FW["the firewall's UI"] -->|"Suricata and<br/>ntopng settings"| FWC["the firewall's own config.xml"]
 ```
 
-Anything in the right-hand box survives only on the guest's own disk. That is
-what [Operations](../operations/index.md#backups) covers.
+Anything in the right-hand boxes survives only where it was written: a guest's
+own disk, or the firewall's configuration. That is what
+[Operations](../operations/index.md#backups) covers.
