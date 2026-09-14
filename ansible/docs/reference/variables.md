@@ -77,6 +77,33 @@ For how variable precedence works at all, see
     `Encountered unknown tag 's'`. The script builds that line by
     concatenation instead. This applies to comments too.
 
+## Proxmox guest NIC names
+
+`roles/pve_guest_metrics/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `pve_guest_metrics_enabled` | `false` | **the only switch**; set `true` in `group_vars/metal` |
+| `pve_guest_metrics_oncalendar` | `*:0/5` | every 5 minutes, so a new guest is named quickly |
+| `pve_guest_metrics_randomized_delay` | `60` | seconds of jitter |
+
+node_exporter on a Proxmox VE node already reports every guest NIC, because
+each one has a host-side device: `tap<vmid>i<n>` for a VM, `veth<vmid>i<n>` for
+a container. This role writes `fleet_pve_guest_nic_info`, the join key that
+names those counters, for the Guest Traffic dashboard. The metric reference is
+in the monitoring docs, under
+[Proxmox guest NICs](https://harshitruwali.github.io/homelab-infra/monitoring/reference/metrics/#proxmox-guest-nics).
+
+!!! note "It checks the switch rather than trusting it"
+    Enabled on a host without `/usr/bin/pvesh`, the role fails the play with a
+    message saying so, instead of installing a timer that fails every five
+    minutes on a host that cannot answer.
+
+!!! danger "Same Jinja trap as the SMART exporter"
+    `templates/fleet-pve-guests.j2` is a Python script rendered as Jinja, so it
+    too builds each exposition line by concatenation. Never let `{` and `%`
+    become adjacent in it, comments included.
+
 ## GPU exporter
 
 `roles/gpu_exporter/defaults/main.yml`
@@ -127,7 +154,7 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | `docker_update_randomized_delay` | `1800` | registry rate limits are per source IP |
 | `docker_update_skip_projects` | `[]` | by Compose project name |
 | `docker_update_prune` | `true` | dangling images only |
-| `docker_update_health_wait_seconds` | `60` | before checking for restart loops |
+| `docker_update_health_wait_seconds` | `60` | settle time before the host-wide unhealthy/restarting check; skipped when no image changed |
 | `docker_update_run_now` | unset | `-e docker_update_run_now=true` for a supervised run |
 
 ## Update metrics
@@ -214,6 +241,7 @@ ansible-vault edit inventory/group_vars/all/vault.yml
 
     ```yaml
     smart_metrics_enabled: true      # the only host with real disks
+    pve_guest_metrics_enabled: true  # the only host with guests to name
     alloy_systemd_unit_exclude: '...(lxc|qemu|pve-container)@.+'   # cardinality
     alloy_fs_mount_points_exclude: '...|etc/pve|rpool...'          # always-full FUSE
     alloy_journal_max_age: 1h        # a hypervisor journal is enormous

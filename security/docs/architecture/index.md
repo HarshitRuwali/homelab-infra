@@ -114,6 +114,11 @@ decisions and AdGuard's query log. OPNsense's syslog output also carries
 Suricata's **alerts only**; its HTTP and TLS metadata stays in `eve.json` on the
 firewall.
 
+Traffic *volume* is the exception: how much each guest, the firewall included,
+sends and receives is already in Grafana, read from the hypervisor's side of
+each guest NIC. See
+[Guest Traffic](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/dashboards/#guest-traffic).
+
 The Wazuh dashboard stays, but for **deep investigation only**. The reason is
 operational rather than aesthetic: an alert stream that lives somewhere you do
 not habitually look is an alert stream you do not read. One pane for "something

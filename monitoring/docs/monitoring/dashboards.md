@@ -90,6 +90,54 @@ drops, TCP retransmit share, conntrack usage, and an interface inventory.
     would actually name: `ens18`, `eth0`, `eth1`, `nic0`, `nic1`, `tailscale0`,
     `tun0`, `wlan0`.
 
+Per-guest traffic lives on exactly the `tap` and `veth` devices this dashboard
+drops, which is why it has its own: [Guest Traffic](#guest-traffic).
+
+## Guest Traffic
+
+`uid: guest-traffic`: how much each Proxmox guest sends and receives, read from
+the hypervisor's side of each guest NIC and named by
+`ansible/roles/pve_guest_metrics`.
+
+| Panel | Query intent |
+|---|---|
+| Hypervisor NICs In / Out | the machine's physical NICs, tunnels excluded |
+| Busiest Guest Now | the guest with the most sent plus received |
+| **Guest Names Refreshed** | age of the naming file; yellow past 10 minutes, red past 20 |
+| Physical NICs | in above the line, out below, per NIC |
+| Sent by Guest / Received by Guest | per guest NIC, from the guest's point of view |
+| Sent per Bridge | what the guests put onto each segment |
+| Dropped Packets per Guest NIC | a guest not keeping up with its traffic |
+| Most Data Sent / Received, Selected Range | totals over the time picker |
+| Per Guest NIC Totals | 24 hours and 7 days, one row per NIC |
+
+It sees what no other dashboard here can: guests that run no collector (the
+firewall VM, Windows), and traffic between two guests on the same bridge, which
+never reaches a firewall. The `$guest` and `$bridge` pickers filter every panel
+except the physical NICs.
+
+!!! warning "Empty until the naming role is deployed"
+    The traffic counters are already in Prometheus; the names are not. Until
+    `update-metrics.yml` has run on the hypervisor with
+    `pve_guest_metrics_enabled` set, the host picker is empty and so is every
+    panel. **Guest Names Refreshed** reads "No data" in exactly that state.
+
+!!! info "Seven days is the longest total"
+    The central Prometheus keeps 7 days (`PROMETHEUS_RETENTION` in
+    `scripts/lxc-install.sh`), so the totals table stops at 7 days, and a
+    wider time picker quietly shows less than its label says. Monthly figures
+    need longer retention first.
+
+!!! note "Tunnels are excluded from the physical NICs"
+    `tailscale0`, `wg*` and `tun*` carry traffic that has already crossed a
+    physical NIC, encrypted. Counting both would count it twice, so this
+    dashboard drops them, unlike the Network dashboard.
+
+!!! tip "A router guest double-counts, and that is correct"
+    The firewall VM receives every forwarded byte on one NIC and sends it on
+    another, so it usually tops **Busiest Guest Now** and shows traffic on both
+    bridges. It is doing exactly that much work.
+
 ## Disk Health
 
 `uid: disk-health`: SMART inventory, temperature, wear, bad sectors over time,

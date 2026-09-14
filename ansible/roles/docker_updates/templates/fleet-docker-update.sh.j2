@@ -149,8 +149,15 @@ while IFS='|' read -r proj workdir configs; do
 
   # Apply the complete recorded configuration and downloaded images. Preserve
   # orphan containers; do not build or perform another implicit pull here.
+  #
+  # Deliberately no --wait. Compose's --wait treats ANY exited container as a
+  # failure, exit code 0 included, unless another service depends on it with
+  # service_completed_successfully. One-shot containers are normal (Greenbone
+  # ships seven that copy feed data and exit), so --wait turns a healthy
+  # project into a nightly failure. Readiness is checked below instead, across
+  # the whole host: restarting or unhealthy containers after the wait.
   log "applying $proj"
-  if ! docker compose "${compose_args[@]}" up -d --pull never --no-build --wait --wait-timeout "$((HEALTH_WAIT > 0 ? HEALTH_WAIT : 1))" 2>&1 | sed "s/^/  [$proj] /"; then
+  if ! docker compose "${compose_args[@]}" up -d --pull never --no-build 2>&1 | sed "s/^/  [$proj] /"; then
     log "ERROR $proj: up -d failed"
     failed=1
     continue

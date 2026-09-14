@@ -427,6 +427,11 @@ the ntopng UI with a recent last-seen time. On the firewall's shell:
     or a multi-homed host, never appear here at all. That gap is exactly what
     the Wazuh agents cover.
 
+ntopng answers *who and what*, live. *How much*, per guest over a day or a
+week, including guest-to-guest traffic on one bridge, is on Grafana's
+[Guest Traffic](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/dashboards/#guest-traffic)
+dashboard, read from the hypervisor rather than the firewall.
+
 !!! note "Budget firewall resources for it"
     ntopng and Redis share the firewall with Suricata. As a starting point,
     give the firewall VM an additional 2 GB of RAM and 2 vCPU, then measure. It is also a second deep packet parser on the

@@ -77,7 +77,7 @@ flowchart TD
     C -->|yes| Z["next project"]
     C -->|no| D["record image IDs BEFORE"]
     D --> E["docker compose pull<br/>--ignore-buildable"]
-    E --> F["docker compose up -d<br/>--pull never --no-build --wait"]
+    E --> F["docker compose up -d<br/>--pull never --no-build"]
     F --> G["record image IDs AFTER"]
     G --> H{"changed?"}
     H -->|yes| I["count recreated containers"]
@@ -102,10 +102,26 @@ existing one.
 `--ignore-buildable` skips services with a local build definition. A registry
 failure for any other service marks the run failed and prevents that project's
 `up`. Authentication failures, missing tags and network errors are not treated
-as successful updates. `up` uses `--pull never --no-build --wait`, so it applies
-the images already fetched and checks service readiness within the configured
-timeout. A failed run retains old images by skipping pruning and returns a
-nonzero exit status as well as setting `fleet_docker_update_failed`.
+as successful updates. `up` uses `--pull never --no-build`, so it applies only
+the images already fetched. A failed run retains old images by skipping pruning
+and returns a nonzero exit status as well as setting
+`fleet_docker_update_failed`.
+
+!!! warning "No `--wait`, on purpose"
+    Compose's `up --wait` treats **any** exited container as a failure, exit
+    code 0 included, unless another service depends on it with
+    `service_completed_successfully`. One-shot containers are normal (Greenbone
+    ships seven that copy feed data and exit), so `--wait` turns a healthy
+    project into a nightly failure. Readiness is checked after the health wait
+    instead, across the host: any container restarting or unhealthy fails the
+    run, including one this update did not touch.
+
+The nonzero exit leaves `fleet-docker-update.service` in the `failed` state.
+**Systemd Unit Failed** excludes that unit, because **Container Update Failed**
+already pages for the same failure with more detail. One failure, one page.
+On a workstation, no page: **Container Update Failed**
+[skips workstations](#verification-after-the-run) on purpose, and without this
+exclusion **Systemd Unit Failed** would page there instead.
 
 Every Compose file recorded in the container labels must still be readable,
 including overrides. A missing file stops the project before any pull or
@@ -149,11 +165,20 @@ docker image prune -a     # NO
 
 ## Verification after the run
 
-Compose waits for running/healthy services, with a 60-second timeout by default.
-The script also checks for unhealthy containers and restart loops. That
-matters because a pull that succeeds and an `up -d` that returns `0` can still
-leave a container crash-looping on a new image, which is exactly the case
-worth alerting on.
+When any image changed, the script waits `docker_update_health_wait_seconds`
+(60 by default) for containers to settle. Then, on every run, it checks the
+whole host for unhealthy and restarting containers. That matters because a pull
+that succeeds and an `up -d` that returns `0` can still leave a container
+crash-looping on a new image, which is exactly the case worth alerting on.
+
+!!! warning "A healthcheck that can never pass fails every run"
+    The check is host-wide and runs even when nothing changed, so a container
+    whose **healthcheck** is broken, not its service, fails the update every
+    night. The qdrant image ships no `curl`, so a `curl` healthcheck on it reads
+    `unhealthy` forever while the database serves normally, and
+    `fleet-container-unhealthy` never fires because it was never healthy to
+    begin with. Fix the check rather than skip the host: `memory/docker-compose.yml`
+    has a curl-free one.
 
 Metrics written to `fleet-docker.prom`:
 
@@ -164,6 +189,7 @@ Metrics written to `fleet-docker.prom`:
 | `fleet_docker_projects_updated` | projects whose images changed |
 | `fleet_docker_containers_recreated` | containers moved to a new image |
 | `fleet_docker_containers_restarting` | stuck restarting after the update |
+| `fleet_docker_containers_unhealthy` | failing their healthcheck; any at all fails the run |
 | `fleet_docker_image_bytes_reclaimed` | freed by pruning |
 
 Two alerts consume them: `fleet-docker-update-failed` (critical) and

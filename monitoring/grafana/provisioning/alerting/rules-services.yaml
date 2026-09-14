@@ -44,12 +44,22 @@ groups:
               #     boot when an interface comes up late; the network is fine
               #     afterwards and the unit stays `failed` until reboot.
               #
+              # One more, for a different reason: it is not harmless, it is
+              # already covered.
+              #
+              #   fleet-docker-update.service exits non-zero when an update
+              #     fails, and fleet-docker-update-failed (rules-containers)
+              #     already pages for exactly that, from the metric the script
+              #     writes. Without this exclusion one failure pages twice, and
+              #     workstations, which that rule skips on purpose, would page
+              #     through this one instead.
+              #
               # Add to this list rather than silencing the rule: a Grafana
               # silence expires and has to be renewed by hand, whereas an
               # exclusion here is version-controlled and self-documenting.
               expr: |
                 max by (host, name) (
-                  node_systemd_unit_state{state="failed",name!~"(systemd-.*|user@.*|.*-cleanup|openipmi|NetworkManager-wait-online|e2scrub_reap|apt-daily.*|man-db|logrotate)\\.service"} == 1
+                  node_systemd_unit_state{state="failed",name!~"(systemd-.*|user@.*|.*-cleanup|openipmi|NetworkManager-wait-online|e2scrub_reap|apt-daily.*|man-db|logrotate|fleet-docker-update)\\.service"} == 1
                 )
           - refId: B
             datasourceUid: __expr__
