@@ -134,7 +134,8 @@ Then add the project to `docker_update_skip_projects` until it is understood.
 
 ## Container Update Failed
 
-**Alert:** `fleet-docker-update-failed`: critical.
+**Alert:** `fleet-docker-update-failed`: critical. Does not fire for
+`role="workstation"` hosts; check those by hand with the same commands.
 
 ```bash
 ssh <host> 'journalctl -u fleet-docker-update.service -n 200'

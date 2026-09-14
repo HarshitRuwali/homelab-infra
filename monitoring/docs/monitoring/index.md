@@ -52,6 +52,14 @@ Every series carries these, applied by Alloy as external labels:
 | `role` | `MONITOR_ROLE` | `server`, `workstation`, `pi`, `router`, `service`, `central`, `hypervisor` |
 | `job` | set by the exporter | `integrations/unix`, `integrations/cadvisor`, `alloy` |
 
-`role` is genuinely useful in rules. `fleet-container-disappeared` excludes
-`role="workstation"` because a dev box starts and destroys throwaway
-containers constantly, and every one of them would otherwise fire.
+`role` is genuinely useful in rules. Two exclude `role="workstation"`, which
+today means `ubuntu-dev`:
+
+- `fleet-container-disappeared`, because a dev box starts and destroys
+  throwaway containers constantly, and every one of them would otherwise fire.
+- `fleet-docker-update-failed`, because half-built compose projects fail
+  `up -d` and a crashing dev container left `restarting` at 04:00 sets the same
+  flag. Neither is news on a workstation.
+
+In both cases the metrics are still collected and still on the dashboards. It
+is the page that is suppressed, not the signal.
