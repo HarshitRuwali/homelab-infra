@@ -83,7 +83,10 @@ groups:
           severity: critical
         annotations:
           summary: A container was killed by the OOM killer in the last 15 minutes.
-          runbook: "docker inspect <name> --format '{{.HostConfig.Memory}}'; raise the limit or fix the leak"
+          # Grafana expands annotations as Go templates, so no literal {{ }}
+          # here: `docker inspect --format '{{.HostConfig.Memory}}'` failed to
+          # expand on every evaluation, about 23 errors a minute.
+          runbook: "docker stats --no-stream <name>; raise the limit or fix the leak"
         noDataState: OK
         execErrState: Error
         data:
