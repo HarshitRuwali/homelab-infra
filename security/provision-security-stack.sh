@@ -332,6 +332,12 @@ create_lxc() {
   # aborts with the VMID already created, and the next run's "already exists"
   # check then SKIPS it and reports success over a half-built guest, forever.
   # The header promises "never modified", which is what makes that dangerous.
+  #
+  # nesting=1 is what the Proxmox UI sets on every unprivileged container, and
+  # pct create does not. Without it the Debian 13 template's systemd 257 cannot
+  # mount /tmp, /run/lock or the mqueue filesystem, so the guest boots
+  # "degraded" and trips the fleet's Systemd Unit Failed alert once monitored.
+  # sec-dns came up exactly like that on 2026-09-15.
   run pct create "$vmid" "${STORAGE_TMPL}:vztmpl/${LXC_TEMPLATE}" \
       --hostname "$name" \
       --cores "$cores" \
@@ -341,6 +347,7 @@ create_lxc() {
       --net0 "name=eth0,bridge=${bridge},firewall=1,ip=dhcp" \
       --ssh-public-keys "$SSH_PUBKEY" \
       --unprivileged 1 \
+      --features nesting=1 \
       --onboot 1 \
       --description "security stack: $name. Managed by provision-security-stack.sh"
 

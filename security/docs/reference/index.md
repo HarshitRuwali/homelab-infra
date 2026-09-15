@@ -48,6 +48,9 @@ for anything wanting kernel tunables, raw sockets or its own memory locking.
   workload you do not want running privileged beside everything else.
 - **`sec-crowdsec` and `sec-dns` use unprivileged LXC.** Their services do not
   need their own kernel. ntopng captures directly on the firewall.
+- **Both LXCs get `nesting=1`**, the default the Proxmox UI applies to every
+  unprivileged container. The Debian 13 template's systemd cannot mount `/tmp`
+  or `/run/lock` without it, and the guest boots with failed units.
 
 ## Ports
 
