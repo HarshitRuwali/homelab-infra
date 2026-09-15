@@ -7,6 +7,121 @@ in a graph can be lined up against a date.
 
 ---
 
+## 2026-09-14: guest traffic, the hardened updater, and drift the dry runs caught
+
+Three changes: names for every guest NIC on the hypervisor plus the Guest
+Traffic dashboard, the first deployment of the hardened Docker updater (without
+`--wait`), and an alert fix so a failed update pages once. Staged, dry run
+first, one stage at a time.
+
+```bash
+ansible-playbook playbooks/update-metrics.yml --limit t7920   # guest NIC names
+ansible-playbook playbooks/dashboards.yml                     # Guest Traffic, 4 security-guest dashboards
+ansible-playbook playbooks/central-alerting.yml               # updater excluded from Systemd Unit Failed
+# expired 2 dead silences; fixed qdrant's healthcheck on memory (one-off plays)
+ansible-playbook playbooks/docker-updates.yml --limit ubuntu-dev -e docker_update_run_now=true
+ansible-playbook playbooks/docker-updates.yml
+# first real runs on the other five the same day, instead of waiting for 04:00
+ansible-playbook playbooks/docker-updates.yml --limit 'autoupdate:!ubuntu-dev' -e docker_update_run_now=true
+ansible-playbook playbooks/central-alerting.yml               # OOM runbook, see below
+```
+
+!!! note "One expected dry-run failure"
+    `update-metrics.yml --check` stopped at enabling `fleet-pve-guests.timer`:
+    check mode never writes the unit file, so systemd cannot find the unit it
+    is asked to enable. The real run writes it first.
+
+### What the dry runs caught before anything shipped
+
+**The alerting deploy would have rolled back two live fixes.** The silence-link
+fix and the ubuntu-dev exclusion were deployed from
+`fix/alerting-silences-and-workstation-noise`, which had not been merged into
+the branch being deployed. The `--diff` gave it away: it *removed* lines nobody
+had written. When a diff deletes lines you did not touch, the box is ahead of
+your branch. The fix was merged first, and the redone dry run changed one file.
+
+**plex had moved.** Its container had been moved to the OPNsense LAN on DHCP,
+while the inventory still held its old static address. Monitoring never
+noticed, because Alloy pushes; only SSH broke. And since `docker-updates.yml`
+runs `serial: 1`, that one unreachable host stopped the play for every host
+after it.
+
+**qdrant had been "unhealthy" since Sept 4** (28,435 failed probes) while
+serving normally. Its healthcheck calls `curl`, which the image does not ship.
+The old updater counted unhealthy containers but failed only on restarting
+ones; the new one fails the run, so memory would have paged every night. Fixed
+on the host by editing the compose file it actually runs, an older copy than
+the repo's with different volumes, and in both repo compose files, where the
+same check also stopped Compose from ever starting the API behind it.
+
+### What the test run caught
+
+The run-now test on ubuntu-dev failed, correctly. `fastapi-lxc` was started
+from a compose file that no longer exists: the project became `api-service` in
+`0e43419` and its folder was deleted. On Sept 4, Docker recreated only the
+missing logs mount, as root, at the old path. The updater refused to touch a
+project it cannot read in full. The rest of that run worked, including the
+one-shot `superset-init`, the exact case `--wait` used to fail on.
+
+It also exposed two bugs in the role's run-now path, both fixed:
+
+- Starting a oneshot blocks until it finishes, and the new script exits
+  non-zero on failure, so the start step failed first with systemd's generic
+  "control process exited" error. The play now reads back what the run wrote
+  and fails with the run's own `ERROR` lines.
+- "Report what changed" always printed `[]`. Inside a `>-` block, `'\n'`
+  reaches Jinja as a backslash and an `n`, so `.split('\n')` never split.
+  `.splitlines()` does.
+
+A check of every running Compose project on all six Docker hosts found no
+other missing compose file.
+
+With `fastapi-lxc` skipped, the next ubuntu-dev run failed on `superset`
+instead, and this one did harm. superset's websocket takes its host port from
+`WEBSOCKET_PORT` in whatever shell ran `up`; the project's `.envrc.example`
+picks the first free port from 8080. The systemd updater has no such variable,
+so Compose resolves `${WEBSOCKET_PORT:-8080}` to 8080, decides the running
+websocket container has changed, and recreates it. The new one cannot bind
+8080, which `fastapi` holds, so a websocket that was up before the run was
+down after it. The rest of superset was untouched, and the websocket was
+brought back on 8082, the next free port.
+
+Both projects are now in ubuntu-dev's `docker_update_skip_projects`, with the
+reasons beside them in `host_vars/ubuntu-dev.yml`. The general lesson: a
+project whose Compose variables come from the interactive shell (direnv, an
+`export` before `up`) is not safe to update unattended until they are pinned
+in its `.env`, because the updater applies the whole configuration every run.
+
+### An old runbook was flooding Grafana's log
+
+`fleet-container-oom`'s runbook contained
+`docker inspect --format '{{.HostConfig.Memory}}'`. Grafana expands
+annotations as Go templates, so that failed on every evaluation: 32,945 errors
+in the 24 hours before this rollout. The runbook now reads
+`docker stats --no-stream <name>`, and the journal has shown none since.
+
+### Verification
+
+- The read-only validation play: **33 of 33 pass**, including a clean first run
+  of the new updater on all six Docker hosts (`failed=0`, none unhealthy). No
+  image had changed since the previous night, so nothing was restarted.
+- All 16 Guest Traffic queries return data against live Prometheus: 15 guest
+  NICs named, 13 carrying traffic (the other two belong to stopped guests).
+- 52 alert rules live, 0 errors of any kind in Grafana's journal since the last
+  restart, and nothing newly firing.
+
+### Still outstanding
+
+- ubuntu-dev skips `fastapi-lxc` (retire it, or redeploy from `api-service`)
+  and `superset` (pin `WEBSOCKET_PORT=8082` in its `.env`). Remove each skip
+  once fixed.
+- A static DHCP mapping for plex in OPNsense, or its address drifts again.
+- `rules-backup.yaml` on monitor-lxc holds 5 live backup rules that are not in
+  this repo.
+- ubuntu-dev's root filesystem is at 96%, mostly unused images and build cache.
+
+---
+
 ## 2026-08-16: SMART disk health, and onboarding the hypervisor
 
 Adding disk health turned out to require onboarding a host that had been

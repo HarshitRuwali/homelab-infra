@@ -16,3 +16,6 @@
     # other host this role removes any leftovers and moves on. See the role
     # defaults for why that is inventory-gated rather than autodetected.
     - smart_metrics
+    # Same directory, same gate, same group: only group_vars/metal enables it,
+    # and everywhere else it removes leftovers.
+    - pve_guest_metrics

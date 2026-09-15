@@ -98,12 +98,17 @@ Project from that, not from the planning figure.
 
 ## Backups
 
-Add all six guests to Proxmox Backup Server. They hold your detection history
-and your secrets, which cost more to lose than a rebuildable service.
+Add all four guests to Proxmox Backup Server. They hold your detection history
+and the credentials that protect it, which cost more to lose than a rebuildable
+service.
 
 ```bash
 vzdump 200 --storage <pbs-storage> --mode snapshot --compress zstd
 ```
+
+Suricata and ntopng live on the firewall, so their settings are in the
+firewall's own configuration. Back that up too: OPNsense exports it from
+**System > Configuration > Backups**.
 
 Snapshot before every Wazuh major upgrade. Its index migrations are not
 reliably reversible.
@@ -134,8 +139,9 @@ timeout 5 bash -c 'echo > /dev/tcp/<sec-wazuh>/1514' && echo ok || echo BLOCKED
 # the resolver clients actually get, run from a client, not from the server
 resolvectl status | grep 'DNS Servers'
 
-# NetFlow arriving, on sec-ntopng
-tcpdump -ni any port 2055 -c 5
+# ntopng capturing, on the firewall's shell; then find a sandbox host
+# with a recent last-seen time under Hosts in its UI
+/usr/local/etc/rc.d/ntopng status
 
 # CrowdSec making decisions, on sec-crowdsec
 cscli decisions list

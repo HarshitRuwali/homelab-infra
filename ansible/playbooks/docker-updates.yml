@@ -20,8 +20,46 @@
 # `--limit matrix` is the one to do last, because updating it restarts the
 # Synapse homeserver that the alert relay posts into.
 
+- name: Remove automatic Docker updates from opted-out hosts
+  hosts: >-
+    {{ (groups['monitored'] | default([]) | difference(groups['autoupdate'] | default([])))
+       | union(groups['no_autoupdate'] | default([])) }}
+  become: true
+  tasks:
+    - name: Check for installed updater units
+      ansible.builtin.stat:
+        path: "/etc/systemd/system/{{ item }}"
+      loop:
+        - fleet-docker-update.timer
+        - fleet-docker-update.service
+      register: docker_update_units
+
+    - name: Stop and disable installed updater units
+      ansible.builtin.systemd:
+        name: "{{ item.item }}"
+        state: stopped
+        enabled: false
+      loop: "{{ docker_update_units.results }}"
+      when: item.stat.exists
+
+    - name: Remove the scheduled updater and stale update results
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/fleet-docker-update.timer
+        - /etc/systemd/system/fleet-docker-update.service
+        - "{{ docker_update_script | default('/usr/local/bin/fleet-docker-update.sh') }}"
+        - "{{ alloy_textfile_dir }}/{{ docker_update_metrics_file | default('fleet-docker.prom') }}"
+      register: docker_update_removed
+
+    - name: Reload systemd after removing the updater
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: docker_update_removed.changed
+
 - name: Configure Docker container and image updates
-  hosts: autoupdate
+  hosts: "autoupdate:!no_autoupdate"
   become: true
   vars:
     # Serialised on purpose. These pulls are large and every host shares one

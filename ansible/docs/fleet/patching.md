@@ -141,3 +141,22 @@ query.
 The role ends with `unattended-upgrade --dry-run --debug`, asserting no
 `Traceback` and no blacklisted package appears. That fails the play rather
 than discovering breakage at 03:00.
+
+## Policy changes and manual holds
+
+The fleet configuration clears both `Allowed-Origins` and `Origins-Pattern`
+before declaring its origin policy, and clears the vendor package blacklist
+before applying `uu_package_blacklist`. APT otherwise merges these lists across
+files; merely using a filename after `50unattended-upgrades` does not replace
+list contents. `uu_apply_security_only: true` therefore restricts the effective
+origins rather than retaining the distro's base-release entries. Later local
+APT snippets can still override the policy; inspect `apt-config dump` after
+adding one.
+
+`force-updates.yml` records existing `apt-mark` holds, resolves blacklist regular
+expressions against installed package names, and temporarily holds only matches
+not already held. It releases only those temporary holds in its `always` block,
+including when the upgrade task fails. Existing administrator pins survive.
+Failure to place a required hold aborts the upgrade. If the controller is killed
+or the SSH connection is lost, inspect the holds before resuming; `always` cannot
+run on an unreachable host.

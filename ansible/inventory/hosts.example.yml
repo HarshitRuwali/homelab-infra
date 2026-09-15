@@ -53,6 +53,7 @@
 #   monitored      -> gets the Alloy collector and the update-metrics exporter
 #   lan_guests     -> HOW it is reached (ProxyJump, not direct)
 #   central        -> WHAT IT RUNS (the monitoring stack itself)
+#   security_guests -> the four guests from security/, with standard host telemetry
 #   autoupdate     -> ALSO gets unattended-upgrades (auto-apply, never reboot)
 #   no_autoupdate  -> monitored but NEVER auto-patched
 #   wazuh_agents   -> ALSO gets the Wazuh agent, reporting to the sec-wazuh
@@ -113,6 +114,16 @@ all:
                   # the value already in /etc/default/alloy on that box.
                   # Renaming it forks its history in Prometheus and Loki.
 
+                sec-crowdsec:
+                  pve_vmid: 210
+                  ansible_host: 10.0.0.210
+                  ansible_user: root
+
+                sec-dns:
+                  pve_vmid: 211
+                  ansible_host: 10.0.0.211
+                  ansible_user: root
+
         # --- Proxmox KVM virtual machines ----------------------------------
         # Own kernel, so kernel upgrades and reboot-required are real here.
         vm:
@@ -126,6 +137,16 @@ all:
                   ansible_host: 10.0.0.12
                   ansible_user: someoneelse
                   monitor_role: workstation
+
+                sec-wazuh:
+                  pve_vmid: 200
+                  ansible_host: 10.0.0.200
+                  ansible_user: admin
+
+                sec-scan:
+                  pve_vmid: 201
+                  ansible_host: 10.0.1.201
+                  ansible_user: admin
 
         # --- Bare-metal ARM SBCs -------------------------------------------
         # group_vars/pi holds the SD-card IO tuning; group_vars/pi_debian
@@ -166,6 +187,17 @@ all:
         lan_guests:
           hosts:
             app-01: {}
+            sec-scan: {}
+
+        # Standard Alloy host metrics, journal logs and update visibility.
+        # Replace the example addresses above with DHCP reservations. Add
+        # trusted-side guests to lan_guests too if they need ProxyJump.
+        security_guests:
+          hosts:
+            sec-wazuh: {}
+            sec-scan: {}
+            sec-crowdsec: {}
+            sec-dns: {}
 
         # The central stack. Pushes to itself over loopback rather than out
         # through the WAN and back; see group_vars/central.
@@ -179,6 +211,11 @@ all:
     # Roll out in stages and tune the alert volume after the first two hosts.
     # An untuned default ruleset across the whole fleet at once is the
     # documented failure mode. See playbooks/wazuh-agents.yml.
+    # Manager access verifies the enrollment group. Harden it before agents.
+    wazuh_manager:
+      hosts:
+        sec-wazuh: {}
+
     wazuh_agents:
       hosts:
         # ubuntu-dev:

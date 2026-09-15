@@ -1,0 +1,10 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Run fleet-pve-guests
+  ansible.builtin.systemd:
+    name: fleet-pve-guests.service
+    state: started
+  when: not ansible_check_mode

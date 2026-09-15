@@ -25,7 +25,7 @@ itself three weeks ago"**.
 | 🧠 | [**`memory/`**](memory/README.md) | Self-hosted semantic memory for AI agents. PostgreSQL and Qdrant behind FastAPI, with an MCP server. | [site](https://harshitruwali.github.io/homelab-infra/memory/) |
 | 💾 | [**`s3-backup/`**](s3-backup/README.md) | Nightly off-site backup of Immich and Nextcloud to Amazon S3, with restores drilled monthly. | [site](https://harshitruwali.github.io/homelab-infra/s3-backup/) |
 | 🤖 | [**`aibox-model-queue/`**](aibox-model-queue/README.md) | Serializing proxy so one GPU's LM Studio host is shared without model-swap races. | [README](aibox-model-queue/README.md) |
-| 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, Suricata, AdGuard Home, Authelia, OpenBao, ntopng and Greenbone across six small guests. All free and open source. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
+| 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, AdGuard Home and Greenbone on four small guests, with Suricata and ntopng on the firewall. Open source throughout. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
 
 Each module stands alone. Nothing here requires you to run the others, and
 every directory's README is a complete quick start by itself.
@@ -199,18 +199,3 @@ blind the monitoring.
 > password, without which every S3 snapshot is permanently unreadable. Losing
 > the AWS account loses that one *and* the backups together. Keep offline
 > copies of both. See [Secrets](s3-backup/docs/secrets.md).
-
-## History
-
-| Directory | Origin repo |
-|---|---|
-| `memory/` | `HarshitRuwali/open-memory-stack` |
-| `s3-backup/` | `HarshitRuwali/s3-backup-automation` |
-| `monitoring/`, `ansible/` | `HarshitRuwali/monitorting-stack` |
-
-All three repositories were merged in with `git subtree`, so every original
-commit, author and date is preserved and the original SHAs still match the
-archived upstreams. Commits from before the merge refer to paths as they were
-in the standalone repos, so use `git log --follow <path>` to trace a file
-across the boundary. `ansible/` was later promoted out of `monitoring/ansible/`
-to the root, meaning its history crosses two path moves.

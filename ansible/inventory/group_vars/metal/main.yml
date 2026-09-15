@@ -9,6 +9,13 @@
 # by inventory membership rather than autodetected.
 smart_metrics_enabled: true
 
+# --- Naming the guests' traffic -------------------------------------------
+# The only host with guests. node_exporter here already reports every guest
+# NIC's host-side device (tap102i0, veth112i0); this writes the join key that
+# turns those into names for the Guest Traffic dashboard. See
+# roles/pve_guest_metrics/defaults/main.yml.
+pve_guest_metrics_enabled: true
+
 # --- Cardinality ----------------------------------------------------------
 # This is the genuine article, not the lookalike. PVE enumerates a transient
 # systemd unit for every guest it starts (lxc@103, qemu@110, plus their scopes

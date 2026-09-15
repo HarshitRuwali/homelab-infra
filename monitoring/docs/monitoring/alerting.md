@@ -139,6 +139,7 @@ would have caught a real failure.
 | `NetworkManager-wait-online` | times out at boot, network fine afterwards |
 | `systemd-*`, `user@*`, `*-cleanup` | routinely transient |
 | `apt-daily*`, `man-db`, `logrotate`, `e2scrub_reap` | maintenance jobs that retry |
+| `fleet-docker-update` | not harmless, already covered: **Container Update Failed** pages for the same failure, so this would page twice, and would page for workstations, which that rule skips on purpose |
 
 Thresholds were raised deliberately: a homelab routinely runs boxes in the
 high 80s, and a warning that is always on is a warning nobody reads.

@@ -3,20 +3,49 @@
 # Run inside the sec-wazuh VM. Needs ~8 GB RAM.
 source "$(dirname "$0")/_common.sh"
 require_root; banner
+WAZUH_VERSION="${WAZUH_VERSION:-4.14}"
+WAZUH_WORKDIR="${WAZUH_WORKDIR:-/root/wazuh-install}"
+[[ "$WAZUH_VERSION" =~ ^[0-9]+\.[0-9]+$ ]] || die "WAZUH_VERSION must be a major.minor release"
+for input in "${WAZUH_ENROLLMENT_PASSWORD_FILE:-/root/security-bootstrap/wazuh-enrollment.password}" \
+  "${WAZUH_TLS_CERT_FILE:-/root/security-bootstrap/wazuh.crt}" \
+  "${WAZUH_TLS_KEY_FILE:-/root/security-bootstrap/wazuh.key}"; do
+  require_input_file "$input"
+done
 
 [[ $(free -m | awk '/^Mem:/{print $2}') -ge 7000 ]] || warn "less than 7 GB RAM visible; the indexer may OOM"
 
 run apt-get update
-run apt-get install -y curl ca-certificates
+# The VM is created with --agent enabled=1, but Debian's genericcloud image does
+# not ship the agent. Without it PVE shows no IP for the guest, which is exactly
+# what you need to set the DHCP reservation in the provisioning script's step 1.
+run apt-get install -y qemu-guest-agent
+run systemctl enable --now qemu-guest-agent
+run apt-get install -y curl ca-certificates openssl python3
 
-run curl -sO https://packages.wazuh.com/4.x/wazuh-install.sh
-run bash ./wazuh-install.sh -a -i
+validate_tls_pair "${WAZUH_TLS_CERT_FILE:-/root/security-bootstrap/wazuh.crt}" \
+  "${WAZUH_TLS_KEY_FILE:-/root/security-bootstrap/wazuh.key}"
+if (( APPLY )); then
+  python3 "$(dirname "$0")/_configure.py" check-password \
+    "${WAZUH_ENROLLMENT_PASSWORD_FILE:-/root/security-bootstrap/wazuh-enrollment.password}"
+fi
+[[ "${WAZUH_AGENT_GROUP:-homelab}" =~ ^[A-Za-z0-9_-]+$ ]] || die "invalid WAZUH_AGENT_GROUP"
+run install -d -m 0700 "$WAZUH_WORKDIR"
+download_file "https://packages.wazuh.com/${WAZUH_VERSION}/wazuh-install.sh" "$WAZUH_WORKDIR/wazuh-install.sh"
+run bash -c 'cd "$1" && bash ./wazuh-install.sh -a -i' _ "$WAZUH_WORKDIR"
+run bash "$(dirname "$0")/configure-sec-wazuh.sh" --apply
 
 ok "Wazuh installed"
 cat <<'NOTE'
 
-  The installer prints the admin password ONCE. Put it straight into OpenBao on
-  sec-auth. Do not leave it in scrollback or a note.
+  THE ADMIN PASSWORD is printed at the end of the install. It is ALSO written,
+  with every internal password and the TLS certificates, to
+  wazuh-install-files.tar in WAZUH_WORKDIR (default /root/wazuh-install):
+
+      cd /root/wazuh-install
+      tar -O -xvf wazuh-install-files.tar wazuh-install-files/wazuh-passwords.txt
+
+  Put the admin password in your password manager, then move that tar OFF this
+  guest. It holds every credential the stack uses.
 
   RETENTION: set this before you have data, not after. In Dashboard >
   Index Management > State management policies, create a policy with:
@@ -43,7 +72,9 @@ cat <<'NOTE'
         forward_to = [loki.write.central.receiver]
       }
 
-  Ports agents need: 1514/tcp events, 1515/tcp enrollment, 55000/tcp API.
+  Ports agents need: 1514/tcp events, 1515/tcp enrollment. Port 55000 is admin-only.
+  Enrollment requires the configured password and a trusted manager CA on each agent.
+  The manager group homelab is created by configure-sec-wazuh.sh.
   DO NOT install agents by hand. Use the ansible role, which is how every other
   fleet-wide package in this repository is deployed:
 

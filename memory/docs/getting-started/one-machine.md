@@ -87,10 +87,16 @@ Compose waits on health checks rather than start order:
 ```mermaid
 flowchart LR
     P["postgres<br/>pg_isready"] --> F["fastapi"]
-    Q["qdrant<br/>/healthz"] --> F
+    Q["qdrant<br/>/readyz"] --> F
     R["redis<br/>redis-cli ping"] --> F
     F --> M["alembic upgrade head<br/>then uvicorn"]
 ```
+
+!!! warning "The qdrant check cannot use curl"
+    The qdrant image ships no `curl` or `wget`, so a `curl` healthcheck fails
+    forever while qdrant serves normally, and Compose then refuses to start
+    `fastapi` at all. The check in `docker-compose.yml` has bash send the HTTP
+    request itself over `/dev/tcp`.
 
 The FastAPI container runs `alembic upgrade head` before starting Uvicorn, so a
 fresh database is migrated on first boot with no manual step. See
