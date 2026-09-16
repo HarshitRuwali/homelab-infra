@@ -138,6 +138,42 @@ except the physical NICs.
     another, so it usually tops **Busiest Guest Now** and shows traffic on both
     bridges. It is doing exactly that much work.
 
+## Suricata Alerts
+
+`uid: suricata-alerts`: what the IDS on the firewall is flagging. Suricata runs
+on OPNsense in alert-only mode and ships its EVE alerts as syslog to the central
+collector, which stores them in Loki as `host="opnsense"`, `job="suricata"`.
+Setup and the end-to-end check are in the security module's wiring page,
+section 2.
+
+| Panel | Query intent |
+|---|---|
+| Alerts | every alert in range, after the pickers |
+| **High Severity** | severity 1 only, and it ignores the Severity picker so a narrowed view never hides one |
+| Signatures / Source Addresses | distinct rules that fired, and distinct sources behind them |
+| **Firewall Log Lines** | everything the firewall sent, alerts or not; red at zero |
+| Alerts Over Time | per interval, stacked by severity |
+| Top Signatures / Sources / Destinations | the rules, hosts and ports doing the talking |
+| Recent Alerts | one line per alert with its SID; expand for every field |
+| Engine Messages | rule reloads and flowbit warnings, not alerts |
+
+Two pickers: **Severity** (1 high, 2 medium, 3 low) and **Search**, a
+case-insensitive regex over the raw alert JSON, so an address, a SID or part of
+a signature all work.
+
+!!! warning "Zero alerts is only good news if Firewall Log Lines is not zero"
+    Suricata only sends something when a rule fires or the engine reloads, so a
+    quiet dashboard and a broken pipeline look the same in every alert panel.
+    The daily rule update makes the engine reload and log, which is what makes
+    **Firewall Log Lines** a health check: zero across a range that includes an
+    update means the syslog path is broken, not that the network is clean.
+
+!!! tip "Tune noisy rules in OPNsense, not here"
+    UPnP discovery against the firewall trips sid 2019102 (SSDP amplification)
+    within minutes on a normal LAN. Disable a rule like that by SID under
+    **Services > Intrusion Detection > Rules** rather than filtering it out of
+    the dashboard; a filter hides it here and nowhere else.
+
 ## Disk Health
 
 `uid: disk-health`: SMART inventory, temperature, wear, bad sectors over time,

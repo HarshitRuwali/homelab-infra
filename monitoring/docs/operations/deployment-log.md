@@ -108,6 +108,13 @@ both from an internet server and from a guest on the other side of the
 firewall on the same hypervisor. The usual trigger site, `testmynids.org`, is
 NXDOMAIN now; the wiring page has the `httpbin.org` replacement.
 
+The **Suricata Alerts** dashboard followed (`dashboards.yml`, one file, no
+Grafana restart). Every panel query was run against Loki with the pickers
+substituted before deploying, and one table panel queried through Grafana after.
+Loki instant queries come back as one frame per series with the labels on the
+value field, so the tables turn labels into columns and merge the frames
+rather than relying on a table format that Loki does not have.
+
 ### Still outstanding
 
 - **30 security updates pending on the new guest.** Its first automatic run is
