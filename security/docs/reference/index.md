@@ -64,6 +64,7 @@ for anything wanting kernel tunables, raw sockets or its own memory locking.
 | LAN clients | `sec-dns` | 53/tcp, 53/udp | DNS |
 | admin | `sec-dns` | 3000/tcp | AdGuard UI |
 | admin | the firewall | 3000/tcp | ntopng UI. Listens on **every** firewall interface; keep WAN closed |
+| the firewall | the central stack | 5514/tcp | Suricata EVE syslog into Loki. Not 1514, which is Wazuh's |
 | admin | `sec-scan` | 9392/tcp, 443/tcp | Greenbone UI, **bound to loopback**; reach it over an SSH tunnel through your jump host |
 | `sec-scan` | everything it scans | any | Scans, originated from the sandbox bridge. Trusted-side targets see the firewall's address |
 

@@ -100,19 +100,59 @@ On the central stack, Alloy accepts it:
 ```river
 loki.source.syslog "firewall" {
   listener {
-    address  = "0.0.0.0:1514"
+    address  = "0.0.0.0:5514"
     protocol = "tcp"
-    labels   = {job = "suricata", source = "opnsense"}
+    labels   = {job = "suricata", source = "opnsense", host = "opnsense", role = "firewall"}
   }
   forward_to = [loki.write.central.receiver]
 }
 ```
 
-!!! note "1514 collides with Wazuh"
-    Wazuh agents also use 1514/tcp. These are different hosts, so there is no
-    actual conflict, but if you ever co-locate them, move one. Picking a
-    different syslog port now costs nothing and avoids a confusing afternoon
-    later.
+`host` and `role` are not decoration. The central collector's `loki.write`
+stamps everything it ships with its own identity, so without them every
+firewall alert is stored as coming from the monitoring host itself.
+
+`ansible/roles/alloy_collector` renders exactly that block, on whichever host
+sets `alloy_syslog_listener_port`. It is set in `group_vars/central` and empty
+everywhere else, so one host listens rather than all of them:
+
+```bash
+ansible-playbook playbooks/collectors.yml --limit central
+```
+
+!!! note "Why 5514 and not 1514"
+    1514/tcp is Wazuh's agent event port. The two would sit on different
+    hosts, so nothing actually collides, but a Suricata listener answering on
+    the Wazuh port is a bad thing to discover mid-investigation. Choosing a
+    different port costs nothing today.
+
+!!! warning "Send RFC5424"
+    Alloy's syslog source expects RFC5424 framing. Tick the RFC5424 option on
+    the firewall's remote syslog target; with BSD-format syslog the messages
+    arrive and fail to parse, which looks like a broken listener.
+
+Then prove it end to end with a harmless trigger. The usual target,
+`testmynids.org`, no longer resolves. `httpbin.org` echoes back any string it
+is given, and `uid=0(root)` in a response trips sid 2100498, in the
+`emerging-attack_response` category:
+
+```bash
+# from any host whose traffic crosses the firewall's LAN interface
+curl "http://httpbin.org/base64/$(printf 'uid=0(root) gid=0(root) groups=0(root)\n' | base64)"
+```
+
+In Grafana, open **Drilldown > Logs** and pick `suricata`, or query Loki in
+Explore:
+
+```logql
+{host="opnsense"} | json | alert_signature_id="2100498"
+```
+
+!!! warning "Wait for that signature, not for any alert"
+    An ordinary LAN trips other rules within minutes: UPnP discovery against
+    the firewall, a torrent client resolving `.to` trackers. A check that stops
+    at the first alert it sees can report success, or failure, before the test
+    alert has even arrived.
 
 ## 3. ntopng on the firewall
 

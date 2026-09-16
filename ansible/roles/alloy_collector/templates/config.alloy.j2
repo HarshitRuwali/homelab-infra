@@ -226,3 +226,27 @@ loki.source.docker "containers" {
   forward_to = [loki.write.central.receiver]
 }
 {% endif %}
+
+{% if alloy_syslog_listener_port | default('') | string | length > 0 %}
+
+// --- Syslog from devices that cannot run Alloy ---------------------------
+// Suricata runs on the firewall, which is FreeBSD and outside Ansible's
+// reach, so its EVE alerts arrive as syslog instead of being scraped. Only
+// the host with alloy_syslog_listener_port set opens this; see
+// group_vars/central and security/docs/wiring/index.md.
+//
+// host and role are set here, not left to loki.write. Its external_labels
+// stamp every stream with THIS host's identity, so without them the
+// firewall's alerts were stored as host="main-server", role="central", as if
+// the monitoring box had raised them. Labels on the stream take precedence
+// over external_labels, which is what makes this override work.
+loki.source.syslog "firewall" {
+  listener {
+    address  = "0.0.0.0:{{ alloy_syslog_listener_port }}"
+    protocol = "tcp"
+    labels   = {job = "suricata", source = "opnsense", host = "opnsense", role = "firewall"}
+  }
+
+  forward_to = [loki.write.central.receiver]
+}
+{% endif %}

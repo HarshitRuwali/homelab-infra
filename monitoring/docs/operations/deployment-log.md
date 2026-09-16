@@ -7,6 +7,126 @@ in a graph can be lined up against a date.
 
 ---
 
+## 2026-09-16: sec-dns, the first guest of the security stack
+
+The security stack starts here. One guest, AdGuard Home on it, then the LAN
+pointed at it. Staged: a dry run and an explicit go before each step, which is
+also why the two stops below cost nothing.
+
+```bash
+# on the hypervisor, as root, after re-copying the script from the repo
+./provision-security-stack.sh --only sec-dns            # dry run
+./provision-security-stack.sh --apply --only sec-dns
+pct set 211 --features nesting=1 && pct reboot 211      # see below
+# inside the guest
+./install/install-sec-dns.sh                            # dry run
+./install/install-sec-dns.sh --apply
+# from the controller, once it had a DHCP reservation
+ansible-playbook playbooks/preflight.yml --limit sec-dns
+ansible-playbook playbooks/onboard.yml --limit sec-dns
+ansible-playbook playbooks/site.yml --limit sec-dns     # patching policy
+ansible-playbook playbooks/central-alerting.yml --limit central
+```
+
+### A new container boots degraded without nesting
+
+`pct create` does not set `features: nesting=1`; the Proxmox UI does, which is
+why every other container here already had it. Without it the Debian 13
+template's systemd cannot mount `/tmp`, `/run/lock` or the mqueue filesystem,
+so the guest came up `degraded` with three failed units. Proxmox does warn at
+create time ("Systemd 257 detected. You may need to enable nesting"), and it is
+easy to read as advisory.
+
+It is not advisory here: those three failed units would have tripped
+`fleet-systemd-unit-failed` the moment the guest joined monitoring, and the
+first thing a new host does is join monitoring. The provisioning script now
+passes `--features nesting=1` for every LXC it creates.
+
+### Dry runs of onboarding were failing for a different reason
+
+`onboard.yml --check` failed at the ingest reachability test on any new host,
+reporting "connection failed" no matter what the network was doing. The cause
+was Ansible, not the network: the `uri` module skips itself under `--check`, so
+the assert that reads its result found no status at all. The same shape broke
+the clock check.
+
+Fixed by marking both read-only probes `check_mode: false`, and by skipping the
+post-install "did the data arrive" proofs under `--check`, since a dry run
+installs nothing for them to find. A dry run of onboarding now gets as far as a
+dry run can: it stops at adding Grafana's APT repository, because `gpg` is
+installed by the step before it and check mode only reports that it would.
+
+### Order of operations, and one metric that lags because of it
+
+`site.yml` deliberately runs update-metrics before patching, so the exporter
+wrote `fleet_unattended_upgrades_enabled 0` moments before unattended-upgrades
+was configured. The hourly timer corrects it; starting
+`fleet-update-metrics.service` corrects it immediately. Worth knowing before
+reading it as a failed rollout.
+
+### Verification
+
+Metrics and logs both confirmed from the controller by the onboarding play
+itself. Afterwards: `up=1` and `role="security"` in central Prometheus, the
+host present in Loki's `host` label values, the committed `sec-dns` dashboard
+live, 52 rules, and the inventory-derived Host Down rule now covering the
+guest. AdGuard resolves and blocks from two different network segments, over
+both UDP and TCP, with its upstream on Quad9 DoH.
+
+### The receiver for Suricata, ahead of Suricata itself
+
+Suricata runs on OPNsense, which is FreeBSD and deliberately outside Ansible's
+reach here, so enabling it stays manual. The half that is not manual is the
+landing point for its alerts, and that did not exist: the wiring page showed
+the Alloy block to add but nothing rendered it.
+
+`alloy_collector` now takes `alloy_syslog_listener_port`, empty by default so
+no ordinary host opens a port, and set to 5514 in `group_vars/central`. Deployed
+with `collectors.yml --limit central`. Port 5514 rather than the wiring page's
+old 1514, which is Wazuh's agent event port: different hosts, no real conflict,
+and still the wrong thing to meet halfway through an investigation.
+
+The candidate config was rendered to a scratch path and run through
+`alloy validate` before deploying, because this restart is the monitoring stack
+restarting itself. Worth knowing for that check: `vars_files` outranks play
+`vars`, so loading the role defaults to render the template silently reset the
+port to empty and validated a config without the block. `-e` is the way.
+
+A test message sent with `logger --tcp --rfc5424` from a host on the firewall's
+LAN proved the path before the firewall was pointed at it, and caught a
+labelling bug on the way: the line arrived as `host="main-server"`,
+`role="central"`. The central collector's `loki.write` stamps everything it
+ships with its own identity, so every firewall alert would have looked like
+the monitoring box raising it. The listener now sets `host="opnsense"` and
+`role="firewall"` itself; labels on the stream win over `external_labels`, and
+a second test confirmed it. The first test line keeps the wrong labels until
+retention removes it.
+
+Verified end to end once the firewall was pointed at it: a response containing
+`uid=0(root)` produced sid 2100498 in Loki as `host="opnsense"` within seconds,
+both from an internet server and from a guest on the other side of the
+firewall on the same hypervisor. The usual trigger site, `testmynids.org`, is
+NXDOMAIN now; the wiring page has the `httpbin.org` replacement.
+
+### Still outstanding
+
+- **30 security updates pending on the new guest.** Its first automatic run is
+  the night after onboarding, and `fleet-security-updates-stuck` has a 24 hour
+  fuse that started when patching was enabled, so the two nearly coincide. Run
+  `force-updates.yml --limit sec-dns` to settle it deliberately.
+- **`1.1.1.1` is still the secondary resolver.** That is the documented first
+  week, and it means blocking and query logging are partial until it is
+  removed. Before removing it: this resolver is a guest, so every hypervisor
+  reboot takes the LAN's DNS with it. The kernel update two nights earlier
+  would have meant about four minutes without it.
+- **Suricata's first-minutes noise.** sid 2019102 (SSDP amplification) fires
+  on ordinary UPnP discovery from guests to the firewall, and the `.tk` and
+  `.to` DNS rules fire on the torrent client's trackers. Suppress or accept
+  them before building anything that pages on Suricata.
+- **The rest of the stack is untouched.** sec-crowdsec and sec-wazuh need
+  certificates from a CA and a Wazuh enrollment password in the vault before
+  they can be installed at all.
+
 ## 2026-09-14: guest traffic, the hardened updater, and drift the dry runs caught
 
 Three changes: names for every guest NIC on the hypervisor plus the Guest
