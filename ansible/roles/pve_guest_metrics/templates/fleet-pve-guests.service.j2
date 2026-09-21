@@ -1,0 +1,21 @@
+[Unit]
+Description=Name Proxmox guest NICs for the textfile collector
+Documentation=file://{{ pve_guest_metrics_script }}
+# pvesh reads the cluster filesystem at /etc/pve, which pve-cluster mounts.
+# Run before it is up and every call fails.
+After=pve-cluster.service
+
+[Service]
+Type=oneshot
+# Root is required: pvesh only skips API authentication when run as root.
+User=root
+ExecStart={{ pve_guest_metrics_script }}
+
+# One pvesh call per guest. A wedged cluster filesystem must not hold the
+# timer forever.
+TimeoutStartSec=120
+
+[Install]
+# Wired to multi-user.target so a reboot names the guests at once rather than
+# waiting out RandomizedDelaySec on the timer.
+WantedBy=multi-user.target

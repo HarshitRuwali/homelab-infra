@@ -122,15 +122,19 @@ Documented so the omission is a decision, not a gap.
 
 ??? note "t7920, the Proxmox host: monitored, never auto-patched"
     It **is** monitored, as the sole member of the `metal` platform group, and
-    it is the only host that can report SMART disk health. What is deliberately
+    it is the only host that can report SMART disk health. It is also the only
+    host with guests, so it names their network counters for the Guest Traffic
+    dashboard (`pve_guest_metrics`). What is deliberately
     out of scope is **patching**: it is kept out of `autoupdate`, because an
     unattended upgrade there restarts pveproxy and pvedaemon underneath every
     running guest. Updates on this box are a deliberate, supervised act.
 
 ??? note "OPNsense (VM 102, FreeBSD)"
     Monitor via the `os-node_exporter` plugin if you want it, scraped rather
-    than pushed. Firmware updates stay manual: an unattended firewall upgrade
-    takes out remote access to everything else.
+    than pushed. Its traffic, per NIC, is already visible without it: the
+    Guest Traffic dashboard reads it from the hypervisor's side. Firmware
+    updates stay manual: an unattended firewall upgrade takes out remote access
+    to everything else.
 
 ??? note "Others"
     - **arr-stack (LXC 104)**: stopped in Proxmox.
@@ -149,7 +153,7 @@ ansible/inventory/
     all/vault.yml        ansible-vault, committed encrypted
     pi/main.yml          SD-card IO tuning (platform)
     pi_debian/main.yml   RPi kernel/bootloader blacklist (distro)
-    metal/main.yml       SMART, PVE cardinality and mount exclusions
+    metal/main.yml       SMART, guest NIC names, PVE cardinality, mount exclusions
     central/main.yml     loopback ingest, stack blacklist
     lan_guests/main.yml  ProxyJump defaults
   host_vars/
@@ -157,20 +161,13 @@ ansible/inventory/
     tailscale-router.yml    PVE-safe overrides, small-rootfs caps
 ```
 
-`lxc`, `lxc_debian`, `vm`, `vm_debian` and `metal_debian` have no var files
-yet. They exist to
-be extended: the platform/distro seam is where the next override goes, rather
-than into a host_vars file that quietly grows a second copy of the same
-setting.
+`lxc`, `lxc_debian`, `vm`, `vm_debian` and `metal_debian` have no group
+variable files. Their hosts inherit the applicable parent-group settings.
 
-!!! note "Why `tailscale-router` is `host_vars`, not a group"
-    Those overrides used to be `group_vars/proxmox`, a group of exactly one
-    host described as "hosts running a PVE kernel". That was true but
-    misleading, and once `monitored` split into `lxc`/`vm`/`pi` a third thing
-    called `proxmox` sitting beside them was actively confusing. Every value
-    in it is justified by that host's 2.0 GB rootfs and exit-node role, so it
-    belongs to the host. Promoting any of it to `lxc` would be a real change
-    for plex, memory and monitor-lxc.
+!!! note "Host-specific overrides for `tailscale-router`"
+    Its `host_vars` contain settings for its 2.0 GB rootfs and exit-node role.
+    Keeping them scoped to this host avoids applying them to plex, memory and
+    monitor-lxc.
 
 !!! warning "The repo is public"
     All real domains, IPs and usernames live only in `hosts.local.yml`, which

@@ -89,43 +89,47 @@
       check_mode: false
       changed_when: false
 
-    - name: Apply the upgrade, holding blacklisted packages for the duration
+    - name: Read existing package holds
+      ansible.builtin.command: apt-mark showhold
+      register: force_update_original_holds
+      changed_when: false
+      check_mode: false
+      when: force_update_respect_blacklist | bool
+
+    - name: Read installed packages to resolve blacklist expressions
+      ansible.builtin.package_facts:
+        manager: apt
+      when: force_update_respect_blacklist | bool
+
+    - name: Resolve temporary holds without changing existing pins
+      ansible.builtin.set_fact:
+        force_update_temporary_holds: >-
+          {{ ansible_facts.packages.keys()
+             | select('match', '(' ~ (uu_package_blacklist | default([]) | join(')|(')) ~ ')')
+             | difference(force_update_original_holds.stdout_lines) | sort
+             if (uu_package_blacklist | default([]) | length > 0) else [] }}
+      when: force_update_respect_blacklist | bool
+
+    - name: Apply the upgrade with temporary holds
       block:
-        - name: Hold the blacklisted packages
-          # apt-mark, not the unattended-upgrades blacklist: that config is
-          # only consulted by unattended-upgrades, and this play deliberately
-          # does not use it. Without this the Pi kernels would upgrade here.
-          ansible.builtin.command: "apt-mark hold {{ item }}"
-          loop: "{{ uu_package_blacklist | default([]) }}"
-          when:
-            - force_update_respect_blacklist | bool
-            - uu_package_blacklist | default([]) | length > 0
-          changed_when: false
-          # A blacklist entry may be a regex (linux-image-rpi-.*) or a package
-          # that is not installed on this host; neither is a reason to stop.
-          failed_when: false
+        - name: Hold installed packages matching the blacklist
+          ansible.builtin.dpkg_selections:
+            name: "{{ item }}"
+            selection: hold
+          loop: "{{ force_update_temporary_holds | default([]) }}"
 
         - name: Upgrade all packages
           ansible.builtin.apt:
             upgrade: "{{ force_update_type }}"
-            # autoremove is NOT set. On this fleet it would drop old kernels,
-            # and group_vars/central and group_vars/metal both refuse that
-            # explicitly: losing the kernel a box booted from is not worth the
-            # disk saving. Reclaim space with the disk runbook instead.
             autoremove: false
           register: force_update_result
 
       always:
-        - name: Release the holds
-          # In `always` so a failed or interrupted upgrade cannot leave a host
-          # permanently pinned, which would silently stop it patching forever.
-          ansible.builtin.command: "apt-mark unhold {{ item }}"
-          loop: "{{ uu_package_blacklist | default([]) }}"
-          when:
-            - force_update_respect_blacklist | bool
-            - uu_package_blacklist | default([]) | length > 0
-          changed_when: false
-          failed_when: false
+        - name: Release only holds introduced by this play
+          ansible.builtin.dpkg_selections:
+            name: "{{ item }}"
+            selection: install
+          loop: "{{ force_update_temporary_holds | default([]) }}"
 
     - name: Count what is still pending afterwards
       ansible.builtin.shell: |

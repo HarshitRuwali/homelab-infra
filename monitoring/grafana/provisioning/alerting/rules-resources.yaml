@@ -55,6 +55,54 @@ groups:
                 # that is always on is a warning nobody reads.
                 - evaluator: {type: gt, params: [95]}
 
+
+      # ---------------------------------------------------------------
+      # The Wazuh indexer is OpenSearch, which stops allocating shards at 90%
+      # disk and turns every index read-only at 95%: ingestion stops, and
+      # nothing else complains. Disk Usage High fires at 95%, after that
+      # already happened, so the manager gets its own earlier line. When it
+      # fires, grow the disk (security/docs/operations/index.md) rather than
+      # shortening retention. Keyed on the manager's host name: add others
+      # to the regex if more OpenSearch hosts appear.
+      - uid: wazuh-indexer-disk
+        title: Wazuh Indexer Disk Filling
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: >-
+            {{ $labels.host }} root filesystem is {{ printf "%.0f" $values.B.Value }}% full.
+            The Wazuh indexer goes read-only at 95%.
+          runbook: "qm resize 200 scsi0 +10G on the Proxmox host, then growpart /dev/sda 1 && resize2fs /dev/sda1 in the guest"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                100 * (1 - (
+                  node_filesystem_avail_bytes{host=~"sec-wazuh",mountpoint="/"}
+                  /
+                  node_filesystem_size_bytes{host=~"sec-wazuh",mountpoint="/"}
+                ))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [80]}
       # ---------------------------------------------------------------
       - uid: fleet-disk-critical
         title: Disk Usage Critical

@@ -1,0 +1,154 @@
+---
+# Names the per-guest network counters node_exporter already reports on a
+# Proxmox VE node, through the textfile collector Alloy already reads. See
+# defaults/main.yml for what it writes and why, and roles/smart_metrics for the
+# pattern it mirrors task for task.
+
+- name: Report the resolved guest-metrics shape
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: pve_guest_metrics_enabled={{ pve_guest_metrics_enabled }}"
+
+- name: Install Proxmox guest NIC naming
+  when: pve_guest_metrics_enabled | bool
+  block:
+    # The switch is an assertion that this host runs PVE. Check it, rather
+    # than install a timer that fails every five minutes on a host that cannot
+    # answer.
+    - name: Look for pvesh
+      ansible.builtin.stat:
+        path: /usr/bin/pvesh
+      register: pve_guest_metrics_pvesh
+
+    - name: Fail if this is not a Proxmox VE node
+      ansible.builtin.assert:
+        that: pve_guest_metrics_pvesh.stat.exists
+        fail_msg: >-
+          pve_guest_metrics_enabled is true for {{ inventory_hostname }}, but
+          /usr/bin/pvesh does not exist, so it is not a Proxmox VE node. Enable
+          the role only in the group that holds PVE hosts.
+
+    - name: Ensure the textfile collector directory exists
+      ansible.builtin.file:
+        path: "{{ pve_guest_metrics_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the guest metrics exporter script
+      ansible.builtin.template:
+        src: fleet-pve-guests.j2
+        dest: "{{ pve_guest_metrics_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+        # Catches a template edit that produces invalid Python before it is
+        # installed, rather than leaving a timer that fails every 5 minutes.
+        validate: /usr/bin/python3 -m py_compile %s
+      notify: Run fleet-pve-guests
+
+    - name: Install the guest metrics systemd service
+      ansible.builtin.template:
+        src: fleet-pve-guests.service.j2
+        dest: /etc/systemd/system/fleet-pve-guests.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Run fleet-pve-guests
+
+    - name: Install the guest metrics systemd timer
+      ansible.builtin.template:
+        src: fleet-pve-guests.timer.j2
+        dest: /etc/systemd/system/fleet-pve-guests.timer
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Enable and start the guest metrics timer
+      ansible.builtin.systemd:
+        name: fleet-pve-guests.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # `enabled` only, never `state`, for the same reason as smart_metrics: the
+    # unit is wired to multi-user.target so a reboot refreshes it, and the
+    # handler already runs it whenever the script or unit changes.
+    - name: Enable the guest metrics service so a reboot refreshes it at once
+      ansible.builtin.systemd:
+        name: fleet-pve-guests.service
+        enabled: true
+
+    - name: Flush handlers so metrics exist before we verify them
+      ansible.builtin.meta: flush_handlers
+
+    # --- Proof of life ---------------------------------------------------
+    # `state: started` on a oneshot returns when the job is ENQUEUED, not when
+    # it finishes. Retry rather than race.
+    - name: Confirm the metrics file was written
+      ansible.builtin.stat:
+        path: "{{ pve_guest_metrics_dir }}/{{ pve_guest_metrics_file }}"
+      register: pve_guest_metrics_out
+      retries: 12
+      delay: 5
+      until:
+        - pve_guest_metrics_out.stat.exists
+        - pve_guest_metrics_out.stat.size | default(0) > 0
+      when: not ansible_check_mode
+
+    - name: Fail if the exporter produced nothing
+      ansible.builtin.assert:
+        that:
+          - pve_guest_metrics_out.stat.exists
+          - pve_guest_metrics_out.stat.size > 0
+        fail_msg: >-
+          {{ pve_guest_metrics_script }} did not produce
+          {{ pve_guest_metrics_dir }}/{{ pve_guest_metrics_file }}.
+          Check: journalctl -u fleet-pve-guests.service -n 50
+      when: not ansible_check_mode
+
+    - name: Read the guest NIC count
+      ansible.builtin.shell: |
+        grep '^fleet_pve_guest_nics_total ' {{ pve_guest_metrics_dir }}/{{ pve_guest_metrics_file }} | awk '{print $2}'
+      register: pve_guest_metrics_count
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Report the guest NIC count
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ pve_guest_metrics_count.stdout | trim }}
+          guest NIC(s) named.
+          {{ 'CHECK THIS: a PVE node in this group reports no guest NICs at all.'
+             if (pve_guest_metrics_count.stdout | trim | int) == 0 else '' }}
+      when: not ansible_check_mode
+
+- name: Remove Proxmox guest NIC naming where it is not enabled
+  when: not (pve_guest_metrics_enabled | bool)
+  block:
+    - name: Stop and disable the guest metrics timer
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - fleet-pve-guests.timer
+        - fleet-pve-guests.service
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Remove the guest metrics units, script and stale metrics
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/fleet-pve-guests.timer
+        - /etc/systemd/system/fleet-pve-guests.service
+        - "{{ pve_guest_metrics_script }}"
+        # Left behind, the names would freeze at the moment collection stopped
+        # and silently mislabel any VMID reused afterwards.
+        - "{{ pve_guest_metrics_dir }}/{{ pve_guest_metrics_file }}"
+      notify: Reload systemd

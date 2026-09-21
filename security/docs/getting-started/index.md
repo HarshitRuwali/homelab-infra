@@ -8,9 +8,14 @@ each one. Both phases are dry run by default.
 - Proxmox VE, with root shell access on the node.
 - Two storage IDs, one on SSD and one on bulk disk. `pvesm status` lists them.
   They are storage **IDs**, not mount paths.
-- A bridge to attach guests to, usually `vmbr0`.
-- An SSH public key. No guest here is given a root password; the LXCs get your
-  key and the VMs get it through cloud-init.
+- Two bridges: the trusted one most guests attach to (`BRIDGE`, default
+  `vmbr0`), and the firewall's LAN side, where only `sec-scan` goes
+  (`BRIDGE_SANDBOX`, default `vmbr1`).
+  [Architecture](../architecture/index.md#the-scanner-is-the-exception) explains
+  why the scanner is different.
+- An SSH public key. No guest here is given a password of any kind; the LXCs
+  get your key for `root`, and the VMs get it through cloud-init for `admin`.
+  [Logging in](../components/index.md#logging-in) has the details.
 
 ## Phase 1: provision the guests
 
@@ -29,7 +34,7 @@ To do one guest at a time, which is the gentler path:
 
 ```bash
 ./provision-security-stack.sh --apply --only sec-dns
-./provision-security-stack.sh --apply --only sec-crowdsec,sec-auth
+./provision-security-stack.sh --apply --only sec-crowdsec,sec-wazuh
 ```
 
 Override defaults with environment variables:
@@ -39,6 +44,7 @@ STORAGE_SSD=local-lvm \
 STORAGE_HDD=local-lvm \
 STORAGE_TMPL=local \
 BRIDGE=vmbr0 \
+BRIDGE_SANDBOX=vmbr1 \
 SSH_PUBKEY=~/.ssh/id_ed25519.pub \
 LXC_TEMPLATE_FAMILY=debian-13-standard \
   ./provision-security-stack.sh --apply
@@ -75,7 +81,8 @@ It fails before touching anything if:
   a backup target being used for guest disks
 - the requested RAM exceeds what the host has available right now
 - a storage tier does not have enough free space for the disks assigned to it
-- the bridge does not exist, or the SSH key is not readable
+- a bridge any selected guest needs does not exist, or the SSH key is not
+  readable
 - no template matches `LXC_TEMPLATE_FAMILY`, in cache or in the index
 
 It warns, but continues, when the stack would consume more than 70% of
@@ -90,8 +97,11 @@ after a partial failure is safe.
 
 Do this before installing anything. DHCP leases move, and when they do, agent
 configs and firewall rules that reference an address break silently. Add a
-reservation per guest on your router, or set static addresses outside the DHCP
-pool.
+reservation per guest, or set static addresses outside the DHCP pool.
+
+The trusted-side guests get their leases from your router. `sec-scan` is on the
+sandbox bridge, so its lease comes from whatever serves DHCP there, usually the
+firewall.
 
 ## Phase 3: install the services
 
@@ -103,8 +113,11 @@ dry run unless you pass `--apply`.
 ./install/install-sec-dns.sh --apply      # execute
 ```
 
+`sec-scan` sits behind the firewall and the hypervisor has no route to it, so
+reach it through your jump host (`scp -J` and `ssh -J`).
+
 Each script ends with the post-install steps that cannot be automated, such as
-setting retention in a web UI or recording an unseal key.
+setting retention in a web UI or changing a default password.
 
 ## Recommended order
 
@@ -124,6 +137,107 @@ Each step is useful on its own, so a partial rollout still improves things.
    **not** installed by hand: add hosts to the `wazuh_agents` inventory group
    and run `ansible-playbook playbooks/wazuh-agents.yml --limit <host>`. Tune
    the alert volume after the first two hosts, before going wider.
-5. **`sec-auth`**, then move service credentials into OpenBao.
-6. **`sec-ntopng`** plus a NetFlow exporter on the firewall.
-7. **`sec-scan`**, weekly schedule, baseline scan first.
+5. **ntopng on the firewall.** No guest required: install `os-redis` and then
+   `os-ntopng`, and capture on LAN. Give the firewall VM the extra RAM and CPU
+   first. See [ntopng](../components/index.md#ntopng).
+6. **`sec-scan`**, weekly schedule, baseline scan first. Change the default
+   `admin` password before the feed sync, not after.
+
+## Authenticated bootstrap
+
+Wazuh and CrowdSec require prepared credentials and server certificates
+before `--apply`; see [Security bootstrap inputs](../security.md#bootstrap-inputs).
+Existing guests use `install/configure-sec-wazuh.sh` or
+`install/configure-sec-crowdsec.sh` to apply these settings without reinstalling.
+Keep Wazuh enrollment blocked during the initial vendor installation, and
+prepare all CrowdSec clients for HTTPS before changing an existing LAPI.
+
+## Host monitoring in Grafana
+
+All four security guests use the same native Alloy collector as the rest of the
+fleet. It pushes CPU, memory, filesystem, network, uptime and systemd metrics to
+central Prometheus, and journal logs to Loki. Grafana reads those existing
+datasources. The onboarding play also installs the pending-package and
+reboot-status exporter.
+
+### Inventory
+
+Merge the security guest entries from `ansible/inventory/hosts.example.yml`
+into your private `ansible/inventory/hosts.local.yml`, replacing the example
+addresses with each guest's DHCP reservation:
+
+| Guest | Platform group under `monitored` | SSH user | VMID |
+|---|---|---|---|
+| `sec-wazuh` | `vm_debian` | `admin` | 200 |
+| `sec-scan` | `vm_debian` | `admin` | 201 |
+| `sec-crowdsec` | `lxc_debian` | `root` | 210 |
+| `sec-dns` | `lxc_debian` | `root` | 211 |
+
+Also add all four to the `security_guests` overlay under `monitored`. Its
+committed group variables set `monitor_role: security` and retain Docker
+autodetection. Keep the inventory names above: `monitor_hostname` defaults to
+that name, and the dedicated dashboards query those exact `host` labels.
+
+`sec-scan` belongs in `lan_guests` because it needs the jump host to reach the
+sandbox. Add any other guest there only if the controller needs a jump host to
+reach it. Keep `sec-wazuh` in `wazuh_manager` for agent enrollment checks.
+Monitoring membership does not enable automatic patching; that remains a
+separate `autoupdate` inventory choice.
+
+### Onboard and verify
+
+Use the same `monitoring_domain` and
+`vault_collector_basic_auth_password` as the existing fleet. Each guest needs
+DNS resolution and outbound HTTPS to the central ingest endpoint. There is no
+inbound exporter port to open: Alloy scrapes locally and pushes through the
+authenticated Prometheus and Loki endpoints.
+
+Run from the controller, once the guest's service installer has completed:
+
+```bash
+cd ansible                                     # from the repository root
+ansible-playbook playbooks/preflight.yml --limit sec-dns
+ansible-playbook playbooks/onboard.yml --limit sec-dns
+```
+
+Repeat for `sec-crowdsec`, `sec-wazuh` and `sec-scan`. Onboarding checks ingest
+reachability, installs the collectors, and queries central Prometheus and Loki
+to confirm that data arrived. On `sec-scan`, Docker autodetection adds Greenbone
+container CPU, memory and logs. If the collector was installed before Docker,
+rerun `playbooks/collectors.yml --limit sec-scan` after installing Greenbone.
+
+Load the committed dashboards and refresh inventory-derived host-down alerts
+after onboarding the guests:
+
+```bash
+ansible-playbook playbooks/dashboards.yml --limit central
+ansible-playbook playbooks/central-alerting.yml --limit central
+```
+
+The alerting play reloads Grafana provisioning and can restart Grafana. Its
+host-down rule includes every member of `monitored`, so add only guests ready
+to report telemetry to the private inventory.
+
+### Grafana views
+
+The **Servers** folder contains `sec-wazuh`, `sec-scan`, `sec-crowdsec` and
+`sec-dns`. Each has the standard resource, systemd, pending-update and log
+panels; `sec-scan` also has container panels. The existing fleet dashboards
+discover their host labels automatically.
+
+In Grafana Explore, confirm the four hosts in Prometheus:
+
+```promql
+count by (host, role) (
+  node_uname_info{host=~"sec-wazuh|sec-scan|sec-crowdsec|sec-dns"}
+)
+```
+
+And select each host's journal in Loki:
+
+```logql
+{host="sec-dns", job="systemd-journal"}
+```
+
+Detailed security alert forwarding is covered separately in
+[Wiring](../wiring/index.md).

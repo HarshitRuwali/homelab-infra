@@ -7,6 +7,341 @@ in a graph can be lined up against a date.
 
 ---
 
+## 2026-09-21: sec-wazuh, the manager, and four bugs it flushed out
+
+The second security guest. Staged like sec-dns, with one change of brief:
+CPU and RAM are plentiful on this host, SSD is not, so every size here is the
+smallest that fits and grows later.
+
+```bash
+# On the controller: a private CA, kept outside the repository. Its key never
+# goes to a guest. The enrollment password also goes into the vault as
+# vault_wazuh_enrollment_password.
+openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=Homelab Root CA" ...
+
+# On the hypervisor
+SSH_PUBKEY=<admin key> ./provision-security-stack.sh --only sec-wazuh           # dry run
+SSH_PUBKEY=<admin key> ./provision-security-stack.sh --apply --only sec-wazuh
+
+# Server certificate, once the guest had its reserved address (SAN: name + IP)
+# Then wazuh.crt, wazuh.key and the password to /root/security-bootstrap/
+
+# In the guest
+bash install/install-sec-wazuh.sh            # dry run
+bash install/install-sec-wazuh.sh --apply
+
+# From the controller
+ansible-playbook playbooks/onboard.yml --limit sec-wazuh
+ansible-playbook playbooks/site.yml    --limit sec-wazuh
+```
+
+**Disk: 25 GB, not 40.** The 40 GB working assumed 20 GB for the stack. The
+real figure is about 13 GB, and **8 GB of that is the vulnerability-detection
+CVE feed** the manager downloads on first start, which the working did not
+know about. Content updates also stage up to 3 GB at a time in
+`/var/ossec/queue/vd_updater/tmp` and clear themselves. That leaves roughly
+7 GB before OpenSearch's 90% watermark, several times what 30 days of alerts
+needs at this fleet's volume. A new rule, Wazuh Indexer Disk Filling, fires at
+80%, because the fleet's own disk alert fires at 95%, after the indexer has
+already stopped writing.
+
+**Enrollment held shut during the vendor install.** The installer enables
+enrollment before our configure step sets the password, so 1514, 1515 and
+55000 were dropped with a temporary nftables table for the duration.
+**Exempt loopback** if you do the same: without `iifname "lo" accept` the
+installer's own call to the local API times out, and it sat for 12 minutes
+retrying before that was spotted.
+
+**Bugs found on the way:**
+
+- **`configure-sec-wazuh.sh` created no agent group and said `ok`.** It ran
+  `agent_groups -a` while the manager was stopped. That needs wazuh-db, so it
+  printed "Some Wazuh daemons are not ready yet" and **exited 0**. The agent
+  role would then have refused every host. Fixed: the group is created after
+  the manager starts, retried, and the directory is checked rather than the
+  exit status.
+- **Agents would have had no manager address.** `group_vars/wazuh_agents`
+  set `wazuh_manager_address: ""`, and a group_vars file outranks variables
+  written in the inventory file, so the real value in `hosts.local.yml` never
+  applied. Confirmed with `ansible-inventory --host` on a probe copy, then the
+  placeholder was removed. The role default is already empty and the role
+  refuses to run without a value.
+- **The Wazuh apt repository stays enabled after install.** The nightly run
+  only takes Debian-Security, but `force-updates.yml` does a full upgrade and
+  would move the manager, indexer and dashboard independently. The installer
+  now runs `apt-mark hold` on all four packages.
+
+**Retention before data:** an ISM policy, `wazuh-retention-30d`, deletes
+`wazuh-alerts-*` and `wazuh-archives-*` indices 30 days after creation. It is
+attached to the first day's index and picks up new ones by template.
+
+**Into Grafana:** Alloy on the manager tails `/var/ossec/logs/alerts/alerts.json`
+as `job="wazuh"`, joining the `wazuh` group to read it. The first query found
+578 alerts, all from the install itself. `host` is the manager; the host an
+alert is about is `agent.name` inside the line.
+
+**Verified:** enrollment on 1515 presents the certificate from the private
+CA and verifies for the reserved address; all four services active; metrics
+and logs confirmed centrally by the onboarding play; auto-patching on.
+
+**Security room, same day.** Suricata alerts now page a dedicated Matrix
+room (see [Security alerts](../monitoring/alerting.md#security-alerts)),
+deployed together with the disk rule and sec-wazuh's Host Down rule. The
+first live alert, sid 2100498 from a sandbox guest, arrived and exposed three
+template bugs, all fixed the same afternoon: Grafana expands environment
+variables in provisioned **label** values, so `$labels` vanished and the raw
+template became the severity; `.CommonLabels` drops labels a group disagrees
+on, leaving "Severity 2 ()"; and the stock silence link matched source and
+destination, so it silenced one flow instead of the signature.
+
+**Outstanding:** the agent rollout, two hosts first; the Wazuh dashboard admin password is in the guest's
+`wazuh-install-files.tar`, to be moved to a password manager and the tar off
+the guest.
+
+---
+
+## 2026-09-16: sec-dns, the first guest of the security stack
+
+The security stack starts here. One guest, AdGuard Home on it, then the LAN
+pointed at it. Staged: a dry run and an explicit go before each step, which is
+also why the two stops below cost nothing.
+
+```bash
+# on the hypervisor, as root, after re-copying the script from the repo
+./provision-security-stack.sh --only sec-dns            # dry run
+./provision-security-stack.sh --apply --only sec-dns
+pct set 211 --features nesting=1 && pct reboot 211      # see below
+# inside the guest
+./install/install-sec-dns.sh                            # dry run
+./install/install-sec-dns.sh --apply
+# from the controller, once it had a DHCP reservation
+ansible-playbook playbooks/preflight.yml --limit sec-dns
+ansible-playbook playbooks/onboard.yml --limit sec-dns
+ansible-playbook playbooks/site.yml --limit sec-dns     # patching policy
+ansible-playbook playbooks/central-alerting.yml --limit central
+```
+
+### A new container boots degraded without nesting
+
+`pct create` does not set `features: nesting=1`; the Proxmox UI does, which is
+why every other container here already had it. Without it the Debian 13
+template's systemd cannot mount `/tmp`, `/run/lock` or the mqueue filesystem,
+so the guest came up `degraded` with three failed units. Proxmox does warn at
+create time ("Systemd 257 detected. You may need to enable nesting"), and it is
+easy to read as advisory.
+
+It is not advisory here: those three failed units would have tripped
+`fleet-systemd-unit-failed` the moment the guest joined monitoring, and the
+first thing a new host does is join monitoring. The provisioning script now
+passes `--features nesting=1` for every LXC it creates.
+
+### Dry runs of onboarding were failing for a different reason
+
+`onboard.yml --check` failed at the ingest reachability test on any new host,
+reporting "connection failed" no matter what the network was doing. The cause
+was Ansible, not the network: the `uri` module skips itself under `--check`, so
+the assert that reads its result found no status at all. The same shape broke
+the clock check.
+
+Fixed by marking both read-only probes `check_mode: false`, and by skipping the
+post-install "did the data arrive" proofs under `--check`, since a dry run
+installs nothing for them to find. A dry run of onboarding now gets as far as a
+dry run can: it stops at adding Grafana's APT repository, because `gpg` is
+installed by the step before it and check mode only reports that it would.
+
+### Order of operations, and one metric that lags because of it
+
+`site.yml` deliberately runs update-metrics before patching, so the exporter
+wrote `fleet_unattended_upgrades_enabled 0` moments before unattended-upgrades
+was configured. The hourly timer corrects it; starting
+`fleet-update-metrics.service` corrects it immediately. Worth knowing before
+reading it as a failed rollout.
+
+### Verification
+
+Metrics and logs both confirmed from the controller by the onboarding play
+itself. Afterwards: `up=1` and `role="security"` in central Prometheus, the
+host present in Loki's `host` label values, the committed `sec-dns` dashboard
+live, 52 rules, and the inventory-derived Host Down rule now covering the
+guest. AdGuard resolves and blocks from two different network segments, over
+both UDP and TCP, with its upstream on Quad9 DoH.
+
+### The receiver for Suricata, ahead of Suricata itself
+
+Suricata runs on OPNsense, which is FreeBSD and deliberately outside Ansible's
+reach here, so enabling it stays manual. The half that is not manual is the
+landing point for its alerts, and that did not exist: the wiring page showed
+the Alloy block to add but nothing rendered it.
+
+`alloy_collector` now takes `alloy_syslog_listener_port`, empty by default so
+no ordinary host opens a port, and set to 5514 in `group_vars/central`. Deployed
+with `collectors.yml --limit central`. Port 5514 rather than the wiring page's
+old 1514, which is Wazuh's agent event port: different hosts, no real conflict,
+and still the wrong thing to meet halfway through an investigation.
+
+The candidate config was rendered to a scratch path and run through
+`alloy validate` before deploying, because this restart is the monitoring stack
+restarting itself. Worth knowing for that check: `vars_files` outranks play
+`vars`, so loading the role defaults to render the template silently reset the
+port to empty and validated a config without the block. `-e` is the way.
+
+A test message sent with `logger --tcp --rfc5424` from a host on the firewall's
+LAN proved the path before the firewall was pointed at it, and caught a
+labelling bug on the way: the line arrived as `host="main-server"`,
+`role="central"`. The central collector's `loki.write` stamps everything it
+ships with its own identity, so every firewall alert would have looked like
+the monitoring box raising it. The listener now sets `host="opnsense"` and
+`role="firewall"` itself; labels on the stream win over `external_labels`, and
+a second test confirmed it. The first test line keeps the wrong labels until
+retention removes it.
+
+Verified end to end once the firewall was pointed at it: a response containing
+`uid=0(root)` produced sid 2100498 in Loki as `host="opnsense"` within seconds,
+both from an internet server and from a guest on the other side of the
+firewall on the same hypervisor. The usual trigger site, `testmynids.org`, is
+NXDOMAIN now; the wiring page has the `httpbin.org` replacement.
+
+The **Suricata Alerts** dashboard followed (`dashboards.yml`, one file, no
+Grafana restart). Every panel query was run against Loki with the pickers
+substituted before deploying, and one table panel queried through Grafana after.
+Loki instant queries come back as one frame per series with the labels on the
+value field, so the tables turn labels into columns and merge the frames
+rather than relying on a table format that Loki does not have.
+
+### Still outstanding
+
+- **30 security updates pending on the new guest.** Its first automatic run is
+  the night after onboarding, and `fleet-security-updates-stuck` has a 24 hour
+  fuse that started when patching was enabled, so the two nearly coincide. Run
+  `force-updates.yml --limit sec-dns` to settle it deliberately.
+- **`1.1.1.1` is still the secondary resolver.** That is the documented first
+  week, and it means blocking and query logging are partial until it is
+  removed. Before removing it: this resolver is a guest, so every hypervisor
+  reboot takes the LAN's DNS with it. The kernel update two nights earlier
+  would have meant about four minutes without it.
+- **Suricata's first-minutes noise.** sid 2019102 (SSDP amplification) fires
+  on ordinary UPnP discovery from guests to the firewall, and the `.tk` and
+  `.to` DNS rules fire on the torrent client's trackers. Suppress or accept
+  them before building anything that pages on Suricata.
+- **The rest of the stack is untouched.** sec-crowdsec and sec-wazuh need
+  certificates from a CA and a Wazuh enrollment password in the vault before
+  they can be installed at all.
+
+## 2026-09-14: guest traffic, the hardened updater, and drift the dry runs caught
+
+Three changes: names for every guest NIC on the hypervisor plus the Guest
+Traffic dashboard, the first deployment of the hardened Docker updater (without
+`--wait`), and an alert fix so a failed update pages once. Staged, dry run
+first, one stage at a time.
+
+```bash
+ansible-playbook playbooks/update-metrics.yml --limit t7920   # guest NIC names
+ansible-playbook playbooks/dashboards.yml                     # Guest Traffic, 4 security-guest dashboards
+ansible-playbook playbooks/central-alerting.yml               # updater excluded from Systemd Unit Failed
+# expired 2 dead silences; fixed qdrant's healthcheck on memory (one-off plays)
+ansible-playbook playbooks/docker-updates.yml --limit ubuntu-dev -e docker_update_run_now=true
+ansible-playbook playbooks/docker-updates.yml
+# first real runs on the other five the same day, instead of waiting for 04:00
+ansible-playbook playbooks/docker-updates.yml --limit 'autoupdate:!ubuntu-dev' -e docker_update_run_now=true
+ansible-playbook playbooks/central-alerting.yml               # OOM runbook, see below
+```
+
+!!! note "One expected dry-run failure"
+    `update-metrics.yml --check` stopped at enabling `fleet-pve-guests.timer`:
+    check mode never writes the unit file, so systemd cannot find the unit it
+    is asked to enable. The real run writes it first.
+
+### What the dry runs caught before anything shipped
+
+**The alerting deploy would have rolled back two live fixes.** The silence-link
+fix and the ubuntu-dev exclusion were deployed from
+`fix/alerting-silences-and-workstation-noise`, which had not been merged into
+the branch being deployed. The `--diff` gave it away: it *removed* lines nobody
+had written. When a diff deletes lines you did not touch, the box is ahead of
+your branch. The fix was merged first, and the redone dry run changed one file.
+
+**plex had moved.** Its container had been moved to the OPNsense LAN on DHCP,
+while the inventory still held its old static address. Monitoring never
+noticed, because Alloy pushes; only SSH broke. And since `docker-updates.yml`
+runs `serial: 1`, that one unreachable host stopped the play for every host
+after it.
+
+**qdrant had been "unhealthy" since Sept 4** (28,435 failed probes) while
+serving normally. Its healthcheck calls `curl`, which the image does not ship.
+The old updater counted unhealthy containers but failed only on restarting
+ones; the new one fails the run, so memory would have paged every night. Fixed
+on the host by editing the compose file it actually runs, an older copy than
+the repo's with different volumes, and in both repo compose files, where the
+same check also stopped Compose from ever starting the API behind it.
+
+### What the test run caught
+
+The run-now test on ubuntu-dev failed, correctly. `fastapi-lxc` was started
+from a compose file that no longer exists: the project became `api-service` in
+`0e43419` and its folder was deleted. On Sept 4, Docker recreated only the
+missing logs mount, as root, at the old path. The updater refused to touch a
+project it cannot read in full. The rest of that run worked, including the
+one-shot `superset-init`, the exact case `--wait` used to fail on.
+
+It also exposed two bugs in the role's run-now path, both fixed:
+
+- Starting a oneshot blocks until it finishes, and the new script exits
+  non-zero on failure, so the start step failed first with systemd's generic
+  "control process exited" error. The play now reads back what the run wrote
+  and fails with the run's own `ERROR` lines.
+- "Report what changed" always printed `[]`. Inside a `>-` block, `'\n'`
+  reaches Jinja as a backslash and an `n`, so `.split('\n')` never split.
+  `.splitlines()` does.
+
+A check of every running Compose project on all six Docker hosts found no
+other missing compose file.
+
+With `fastapi-lxc` skipped, the next ubuntu-dev run failed on `superset`
+instead, and this one did harm. superset's websocket takes its host port from
+`WEBSOCKET_PORT` in whatever shell ran `up`; the project's `.envrc.example`
+picks the first free port from 8080. The systemd updater has no such variable,
+so Compose resolves `${WEBSOCKET_PORT:-8080}` to 8080, decides the running
+websocket container has changed, and recreates it. The new one cannot bind
+8080, which `fastapi` holds, so a websocket that was up before the run was
+down after it. The rest of superset was untouched, and the websocket was
+brought back on 8082, the next free port.
+
+Both projects are now in ubuntu-dev's `docker_update_skip_projects`, with the
+reasons beside them in `host_vars/ubuntu-dev.yml`. The general lesson: a
+project whose Compose variables come from the interactive shell (direnv, an
+`export` before `up`) is not safe to update unattended until they are pinned
+in its `.env`, because the updater applies the whole configuration every run.
+
+### An old runbook was flooding Grafana's log
+
+`fleet-container-oom`'s runbook contained
+`docker inspect --format '{{.HostConfig.Memory}}'`. Grafana expands
+annotations as Go templates, so that failed on every evaluation: 32,945 errors
+in the 24 hours before this rollout. The runbook now reads
+`docker stats --no-stream <name>`, and the journal has shown none since.
+
+### Verification
+
+- The read-only validation play: **33 of 33 pass**, including a clean first run
+  of the new updater on all six Docker hosts (`failed=0`, none unhealthy). No
+  image had changed since the previous night, so nothing was restarted.
+- All 16 Guest Traffic queries return data against live Prometheus: 15 guest
+  NICs named, 13 carrying traffic (the other two belong to stopped guests).
+- 52 alert rules live, 0 errors of any kind in Grafana's journal since the last
+  restart, and nothing newly firing.
+
+### Still outstanding
+
+- ubuntu-dev skips `fastapi-lxc` (retire it, or redeploy from `api-service`)
+  and `superset` (pin `WEBSOCKET_PORT=8082` in its `.env`). Remove each skip
+  once fixed.
+- A static DHCP mapping for plex in OPNsense, or its address drifts again.
+- `rules-backup.yaml` on monitor-lxc holds 5 live backup rules that are not in
+  this repo.
+- ubuntu-dev's root filesystem is at 96%, mostly unused images and build cache.
+
+---
+
 ## 2026-08-16: SMART disk health, and onboarding the hypervisor
 
 Adding disk health turned out to require onboarding a host that had been

@@ -65,6 +65,24 @@ metric and log line the host ships, and the dashboards group by it.
 If the host has no direct route from the controller, also add it to the
 `lan_guests` overlay so it is reached through `lan_jump_host`.
 
+### Security guests
+
+`inventory/hosts.example.yml` includes the four guests provisioned by
+`security/`: `sec-wazuh` and `sec-scan` in `vm_debian`, and `sec-crowdsec` and
+`sec-dns` in `lxc_debian`. All four also belong to `security_guests`, whose
+group variables set `monitor_role: security` and Docker autodetection.
+Replace their example addresses with DHCP reservations in the private inventory.
+The VMs use `admin` with sudo; the LXC guests use `root`. `sec-scan` uses the
+`lan_guests` jump-host path.
+
+Run the normal onboarding play for each guest. The standard host metrics and
+journal logs reach the existing Grafana stack; `sec-scan` also ships Docker
+telemetry once Greenbone is installed. Keep their default `monitor_hostname`
+values because `monitoring/grafana/dashboards/servers/sec-*.json` uses those
+host labels. Install the dashboards with `playbooks/dashboards.yml --limit central`
+and refresh host-down coverage with `playbooks/central-alerting.yml --limit central`
+after onboarding. Monitoring does not add these hosts to `autoupdate`.
+
 ## Step 3: run it
 
 ```bash

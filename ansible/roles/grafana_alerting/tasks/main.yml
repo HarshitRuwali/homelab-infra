@@ -26,6 +26,22 @@
     mode: "0640"
   notify: Restart grafana-server
 
+# Required, not optional. Without it the matrix-security contact point posts
+# to an empty room_id, provisioning still succeeds, and the gap only shows when
+# the first real Suricata alert fails to deliver. A room ALIAS (#room:server)
+# fails the same way later, because the relay wants the internal ID.
+- name: Require the Matrix room for security alerts
+  ansible.builtin.assert:
+    that:
+      - vault_matrix_security_room_id is defined
+      - vault_matrix_security_room_id is match('^!')
+    fail_msg: >-
+      vault_matrix_security_room_id is missing, or is an alias rather than the
+      internal room ID (which starts with "!"). Create the room, invite
+      {{ vault_matrix_bot_mxid | default('the relay bot') }}, and add the ID to
+      the vault. See "Security alerts" in monitoring/docs/monitoring/alerting.md.
+    quiet: true
+
 # The contact point references these with $__env{}. Grafana resolves them at
 # provisioning time from its own environment, so they must be in the unit's
 # EnvironmentFile, not just the shell.
@@ -43,6 +59,8 @@
       value: "{{ vault_matrix_webhook_api_key }}"
     - key: MATRIX_ALERT_ROOM_ID
       value: "{{ vault_matrix_alert_room_id }}"
+    - key: MATRIX_SECURITY_ROOM_ID
+      value: "{{ vault_matrix_security_room_id }}"
   no_log: true
   notify: Restart grafana-server
 
@@ -89,6 +107,7 @@
       - "'fleet-smart-health-failed' in (ga_rules.json | map(attribute='uid') | list)"    # rules-storage
       - "'fleet-net-link-lost' in (ga_rules.json | map(attribute='uid') | list)"          # rules-network
       - "'fleet-gpu-exporter-down' in (ga_rules.json | map(attribute='uid') | list)"      # rules-gpu
+      - "'security-suricata-alert' in (ga_rules.json | map(attribute='uid') | list)"     # rules-security
     fail_msg: >-
       Alerting provisioning did not load. Check:
       journalctl -u grafana-server -n 100 | grep -i provision

@@ -101,31 +101,33 @@
 
     # --- Opt-in immediate run ------------------------------------------
     - name: Run the container update now
-      when: docker_update_run_now | default(false) | bool
+      when: docker_update_run_now | default(false) | bool and not ansible_check_mode
       block:
+        - name: Note the time before the run
+          ansible.builtin.command: date +%s
+          register: docker_update_started
+          changed_when: false
+
+        # Starting a oneshot blocks until it finishes, which can take many
+        # minutes while it pulls. The updater exits non-zero when anything
+        # failed, so the start fails too; let it, and fail below instead, with
+        # what this run wrote and logged rather than systemd's generic
+        # "control process exited with error code".
         - name: Trigger fleet-docker-update.service
           ansible.builtin.systemd:
             name: fleet-docker-update.service
             state: started
-
-        # `state: started` on a oneshot returns once the job is ENQUEUED, not
-        # when it finishes, and this one can legitimately run for many minutes
-        # while it pulls. Poll for the unit to go inactive instead.
-        # noqa command-instead-of-module: same reason, this reads SubState.
-        # The systemd module has no equivalent query.
-        - name: Wait for the update to finish
-          ansible.builtin.command: systemctl show fleet-docker-update.service -p SubState --value  # noqa: command-instead-of-module
-          register: docker_update_substate
-          until: docker_update_substate.stdout | trim == "dead"
-          retries: 120
-          delay: 15
-          changed_when: false
+          register: docker_update_trigger
+          failed_when: false
 
         - name: Read back the result
           ansible.builtin.slurp:
             src: "{{ update_metrics_dir }}/{{ docker_update_metrics_file }}"
           register: docker_update_result
 
+        # splitlines(), never split('\n'): inside a >- block the '\n' reaches
+        # Jinja as a backslash and an n, so that split never splits and this
+        # used to report an empty list.
         - name: Report what changed
           ansible.builtin.debug:
             msg: "{{ docker_update_summary }}"
@@ -133,8 +135,33 @@
             docker_update_reported: >-
               ^fleet_docker_(projects_updated|containers_recreated|containers_restarting|update_failed|image_bytes_reclaimed)
             docker_update_summary: >-
-              {{ (docker_update_result.content | b64decode).split('\n')
+              {{ (docker_update_result.content | b64decode).splitlines()
                  | select('match', docker_update_reported ~ ' ') | list }}
+
+        # noqa command-instead-of-module: reads the journal of this run only,
+        # which the systemd module cannot do.
+        - name: Collect this run's errors
+          ansible.builtin.shell: >-
+            journalctl --no-pager -o cat
+            _SYSTEMD_INVOCATION_ID="$(systemctl show -p InvocationID --value fleet-docker-update.service)"
+            | grep ERROR || true
+          register: docker_update_errors
+          changed_when: false
+
+        # The metrics file outlives each run, so check this run wrote it
+        # before trusting what it says.
+        - name: Fail if the update did not run
+          ansible.builtin.assert:
+            that: docker_update_last_run | int >= docker_update_started.stdout | int
+            fail_msg: >-
+              fleet-docker-update.service did not run on {{ inventory_hostname }}:
+              {{ docker_update_trigger.msg | default('no error reported') }}
+            quiet: true
+          vars:
+            docker_update_last_run: >-
+              {{ ((docker_update_result.content | b64decode).splitlines()
+                  | select('match', 'fleet_docker_update_last_run_timestamp_seconds ')
+                  | first | default('none 0')).split(' ') | last }}
 
         - name: Fail if the update left containers broken
           ansible.builtin.assert:
@@ -142,6 +169,7 @@
               - "'fleet_docker_update_failed 0' in (docker_update_result.content | b64decode)"
               - "'fleet_docker_containers_restarting 0' in (docker_update_result.content | b64decode)"
             fail_msg: >-
-              Container update reported a failure on {{ inventory_hostname }}.
-              Check: journalctl -u fleet-docker-update.service -n 100
+              Container update reported a failure on {{ inventory_hostname }}:
+              {{ docker_update_errors.stdout_lines | join('; ') or 'no ERROR lines in its journal' }}.
+              Full log: journalctl -u fleet-docker-update.service -n 100
             success_msg: "Container update completed cleanly."

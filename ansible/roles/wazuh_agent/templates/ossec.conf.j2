@@ -1,4 +1,4 @@
-{{ ansible_managed | comment }}
+<!-- Managed by Ansible: wazuh_agent. -->
 <ossec_config>
   <client>
     <server>
@@ -12,8 +12,17 @@
       <port>{{ wazuh_manager_enrollment_port }}</port>
       <agent_name>{{ inventory_hostname }}</agent_name>
       <groups>{{ wazuh_agent_group }}</groups>
+      <server_ca_path>{{ wazuh_manager_ca_path | e }}</server_ca_path>
+      <authorization_pass_path>{{ wazuh_enrollment_password_path | e }}</authorization_pass_path>
     </enrollment>
   </client>
+
+{% for source in wazuh_log_sources %}
+  <localfile>
+    <location>{{ source.location | e }}</location>
+    <log_format>{{ source.log_format | e }}</log_format>
+  </localfile>
+{% endfor %}
 
   <syscheck>
     <disabled>no</disabled>

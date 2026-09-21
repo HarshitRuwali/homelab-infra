@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Proxmox guest NIC naming refresh
+
+[Timer]
+OnBootSec=2min
+OnCalendar={{ pve_guest_metrics_oncalendar }}
+RandomizedDelaySec={{ pve_guest_metrics_randomized_delay }}
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

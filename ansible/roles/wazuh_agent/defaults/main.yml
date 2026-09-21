@@ -1,7 +1,9 @@
 ---
 # Address of the Wazuh manager (the `sec-wazuh` guest from security/).
 # Set this in inventory, not here: this repository is public and an address is
-# part of the estate map. group_vars/wazuh_agents/main.yml is the right home.
+# part of the estate map. Put it under all.vars in hosts.local.yml, which is
+# gitignored. Not in a committed group_vars file: see
+# group_vars/wazuh_agents/main.yml for why.
 wazuh_manager_address: ""
 
 # Agent enrolment port (1515/tcp) and event port (1514/tcp). Defaults match
@@ -14,6 +16,22 @@ wazuh_manager_event_port: 1514
 # fleet in a named group rather than `default` means centralised config
 # changes do not have to touch every agent.
 wazuh_agent_group: homelab
+
+# Manager inventory entry used for the read-only group preflight. The manager
+# installer creates homelab; custom groups must exist before agent rollout.
+wazuh_manager_inventory_host: "{{ (groups['wazuh_manager'] | default([]) | first) | default('') }}"
+# Public CA PEM on the controller, obtained through a trusted channel. Never
+# fetch it from an unauthenticated enrollment endpoint during deployment.
+wazuh_manager_ca_src: ""
+wazuh_manager_ca_path: /var/ossec/etc/manager-ca.pem
+wazuh_enrollment_password: "{{ vault_wazuh_enrollment_password | default('') }}"
+wazuh_enrollment_password_path: /var/ossec/etc/enrollment.pass
+
+# Debian and Ubuntu use journald for SSH, sudo and system events. Add file
+# sources here for applications that do not write to the journal.
+wazuh_log_sources:
+  - location: journald
+    log_format: journald
 
 # APT repository. Pinned to the 4.x line: Wazuh's manager and agents must stay
 # on the same major version, and an agent that silently jumps major behind the

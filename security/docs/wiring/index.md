@@ -1,8 +1,8 @@
 # Wiring it together
 
-Provisioning gets you six running services. This page connects them to each
-other and to the existing `monitoring/` stack, so alerts land somewhere you
-already look.
+Provisioning gets you four guests, and the firewall runs Suricata and ntopng
+itself. This page connects them to each other and to the existing
+`monitoring/` stack, so alerts land somewhere you already look.
 
 Read [Architecture](../architecture/index.md) first for *why* it is wired this
 way. This page is the *how*, with the actual configuration.
@@ -11,6 +11,14 @@ way. This page is the *how*, with the actual configuration.
     Add the firewall allow rules **in the same change** as any block rule, and
     point DHCP at the new resolver **only after** verifying it resolves. Both
     are explained below, and both fail quietly rather than loudly.
+
+## Guest host metrics and logs
+
+For CPU, memory, disk, network, uptime, systemd state and journal logs, use
+[Host monitoring in Grafana](../getting-started/index.md#host-monitoring-in-grafana).
+All four guests use the existing fleet Alloy role, authenticated push endpoints
+and Servers dashboards. `sec-scan` also contributes Docker metrics and logs
+through the collector's Docker autodetection.
 
 ## 1. Wazuh alerts into Loki
 
@@ -39,6 +47,10 @@ loki.source.file "wazuh" {
 loki.process "wazuh" {
   forward_to = [loki.write.central.receiver]
 
+  stage.static_labels {
+    values = {job = "wazuh"}
+  }
+
   stage.json {
     expressions = {
       rule_level  = "rule.level",
@@ -49,7 +61,6 @@ loki.process "wazuh" {
 
   stage.labels {
     values = {
-      job        = "wazuh",
       rule_level = "",
       agent_name = "",
     }
@@ -67,7 +78,13 @@ second one.
     query it with `| json` instead.
 
 Then add a `wazuh_manager` group to the inventory with the one guest in it, so
-the block above never renders anywhere else.
+the block above never renders anywhere else. The native Alloy service also
+needs read access to `/var/ossec/logs/alerts/alerts.json` and traversal of its
+parent directories. Grant a narrowly scoped ACL (including a default ACL on
+the alerts directory for rotation), then verify access as `alloy`; its existing
+`adm` group alone does not grant access to Wazuh logs. Do not make the logs
+world-readable. This remains a wiring example, not an automatically installed
+collector configuration.
 
 ## 2. Suricata EVE into Loki
 
@@ -83,34 +100,77 @@ On the central stack, Alloy accepts it:
 ```river
 loki.source.syslog "firewall" {
   listener {
-    address  = "0.0.0.0:1514"
+    address  = "0.0.0.0:5514"
     protocol = "tcp"
-    labels   = {job = "suricata", source = "opnsense"}
+    labels   = {job = "suricata", source = "opnsense", host = "opnsense", role = "firewall"}
   }
   forward_to = [loki.write.central.receiver]
 }
 ```
 
-!!! note "1514 collides with Wazuh"
-    Wazuh agents also use 1514/tcp. These are different hosts, so there is no
-    actual conflict, but if you ever co-locate them, move one. Picking a
-    different syslog port now costs nothing and avoids a confusing afternoon
-    later.
+`host` and `role` are not decoration. The central collector's `loki.write`
+stamps everything it ships with its own identity, so without them every
+firewall alert is stored as coming from the monitoring host itself.
 
-## 3. NetFlow into ntopng
-
-ntopng collects rather than sniffs, which is what keeps it an unprivileged
-container.
-
-On OPNsense: install the **softflowd** plugin, set the target to
-`<sec-ntopng>:2055`, and select the interfaces you want flows from.
-
-`install-sec-ntopng.sh` already configures nprobe to listen on 2055/udp and
-feed ntopng over ZMQ. Confirm packets arrive before believing the UI:
+`ansible/roles/alloy_collector` renders exactly that block, on whichever host
+sets `alloy_syslog_listener_port`. It is set in `group_vars/central` and empty
+everywhere else, so one host listens rather than all of them:
 
 ```bash
-tcpdump -ni any port 2055 -c 5      # on sec-ntopng
+ansible-playbook playbooks/collectors.yml --limit central
 ```
+
+!!! note "Why 5514 and not 1514"
+    1514/tcp is Wazuh's agent event port. The two would sit on different
+    hosts, so nothing actually collides, but a Suricata listener answering on
+    the Wazuh port is a bad thing to discover mid-investigation. Choosing a
+    different port costs nothing today.
+
+!!! warning "Send RFC5424"
+    Alloy's syslog source expects RFC5424 framing. Tick the RFC5424 option on
+    the firewall's remote syslog target; with BSD-format syslog the messages
+    arrive and fail to parse, which looks like a broken listener.
+
+Then prove it end to end with a harmless trigger. The usual target,
+`testmynids.org`, no longer resolves. `httpbin.org` echoes back any string it
+is given, and `uid=0(root)` in a response trips sid 2100498, in the
+`emerging-attack_response` category:
+
+```bash
+# from any host whose traffic crosses the firewall's LAN interface
+curl "http://httpbin.org/base64/$(printf 'uid=0(root) gid=0(root) groups=0(root)\n' | base64)"
+```
+
+In Grafana, open **Drilldown > Logs** and pick `suricata`, or query Loki in
+Explore:
+
+```logql
+{host="opnsense"} | json | alert_signature_id="2100498"
+```
+
+!!! warning "Wait for that signature, not for any alert"
+    An ordinary LAN trips other rules within minutes: UPnP discovery against
+    the firewall, a torrent client resolving `.to` trackers. A check that stops
+    at the first alert it sees can report success, or failure, before the test
+    alert has even arrived.
+
+## 3. ntopng on the firewall
+
+ntopng runs on the firewall and captures there directly, so there is no flow
+export to wire up and no guest to point it at.
+
+On OPNsense, in this order:
+
+1. **System > Firmware > Plugins**: install `os-redis`, then enable it under
+   **Services > Redis**. ntopng needs it running.
+2. Install `os-ntopng`. Under **Services > Ntopng**, enable it and select the
+   **LAN** interface. On WAN, NAT has already rewritten every sandbox address to
+   the firewall's own.
+3. Open `http://<firewall>:3000`, log in as `admin` / `admin`, and set the new
+   password ntopng asks for.
+
+Confirm it sees real traffic before believing the UI: generate traffic from one
+sandbox host and find it under **Hosts** with a recent last-seen time.
 
 Remember the scope limit: this sees traffic that **crosses the firewall**. It
 cannot see two hosts talking on the same segment, nor a multi-homed host
@@ -127,7 +187,8 @@ cscli machines add <agent-hostname> --auto        # prints credentials
 
 ```yaml
 # /etc/crowdsec/local_api_credentials.yaml on the agent
-url: http://<sec-crowdsec>:8080
+url: https://<sec-crowdsec-certificate-dns-name>:8080
+ca_cert_path: /etc/crowdsec/tls/ca.crt
 login: <from above>
 password: <from above>
 ```
@@ -173,11 +234,16 @@ order:
 pass   <sandbox net> -> sec-wazuh      tcp 1514, 1515
 pass   <sandbox net> -> sec-crowdsec   tcp 8080
 pass   <sandbox net> -> sec-dns        tcp/udp 53
+pass   sec-scan      -> <trusted net>          # only if it should scan the trusted side
 block  <sandbox net> -> <trusted net>          # must be BELOW the passes
 ```
 
 Add the passes in the **same change** as the block. Doing it afterwards leaves
 a window where sandbox telemetry stops and nothing tells you.
+
+`sec-scan` is on the sandbox side, so the block catches it too. Its pass rule
+is a deliberate trade, explained in
+[Reference](../reference/index.md#firewall-rules).
 
 ## 7. Grafana
 
@@ -189,10 +255,16 @@ adding:
 | Wazuh alert rate by level | `sum by (rule_level) (count_over_time({job="wazuh"}[5m]))` |
 | High-severity Wazuh alerts | `{job="wazuh"} \| json \| rule_level >= 10` |
 | Suricata alerts by signature | `sum by (alert_signature) (count_over_time({job="suricata"} \| json [5m]))` |
-| Agent stopped reporting | `absent_over_time({job="wazuh", agent_name="<host>"}[30m])` |
+| Agent disconnected or stopped (event) | `sum by (agent_name) (count_over_time({job="wazuh"} \| json \| rule_id =~ "504\|506" [10m])) > 0` |
 
-That last row is the one people forget. A silent agent looks identical to a
-quiet host, and it is the failure mode this whole stack is most exposed to.
+The last row uses Wazuh's explicit disconnect/stop events (rules 504 and 506).
+Keep those level-3 alerts in the forwarding pipeline. An absence of security
+alerts is **not** a heartbeat: a healthy idle host may emit none for hours.
+This query reports recent events, not current connection state; it ages out
+after ten minutes even if the agent remains offline. Check current state with
+`/var/ossec/bin/agent_control -l`, or export periodic manager API connection
+status for a persistent per-agent availability alert. Monitor manager/Alloy
+availability separately through the existing fleet host-down rules.
 
 Route these through the existing Matrix notification path rather than inventing
 a second one: `monitoring/grafana/provisioning/alerting/` already carries the
@@ -212,6 +284,7 @@ touch /etc/wiring-test && sleep 60             # on an agent
 rm /etc/wiring-test
 ```
 
-Then break it on purpose: stop one agent, confirm it goes Disconnected and that
-the `absent_over_time` rule fires, and start it again. A pipeline you have only
+Then stop one test agent, confirm it goes Disconnected in the manager and that
+a rule 504 or 506 event reaches Loki, and start it again. A quiet connected
+agent must not trigger an availability alert. A pipeline you have only
 ever seen green is untested infrastructure, not evidence.

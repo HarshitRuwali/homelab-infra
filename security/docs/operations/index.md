@@ -19,8 +19,19 @@ The working, for roughly 15 monitored hosts:
 - Add roughly 20 GB for the OS plus the manager, indexer and dashboard.
 - Keep about 25 percent of the disk free for OpenSearch segment merges.
 
-`(9 + 20) / 0.75` is about 39 GB, so **40 GB** is the allocation. Single node,
-so no replica shard doubles it.
+`(9 + 20) / 0.75` is about 39 GB, which is the generous ceiling. The
+allocation is **25 GB**: the 20 GB for the stack is padding, and an all-in-one
+install settles well under that, so `(9 + 10) / 0.75` fits even at the noisy
+300 MB per day. At the realistic 45 MB per day it is mostly headroom. Single
+node, so no replica shard doubles it.
+
+!!! warning "Watch the disk, not just the alerts"
+    OpenSearch stops allocating shards at 90 percent disk and turns every index
+    read-only at 95 percent, which is a silent stop in ingestion. The fleet's
+    Disk Usage High alert fires at 95 percent, **after** the first of those, so
+    it is not enough here on its own. Give `sec-wazuh` its own disk alert at 80
+    percent when it is onboarded, and when it fires, grow the disk as below
+    rather than shortening retention.
 
 !!! danger "Set the policy before you have data"
     Create the ISM policy in the Wazuh indexer on day one: hot for 7 days then
@@ -63,7 +74,7 @@ operation:
 qm resize 200 scsi0 +20G     # then grow the filesystem inside the guest
 ```
 
-That asymmetry is the whole argument for starting at 40 GB. If real ingest runs
+That asymmetry is the whole argument for starting at 25 GB. If real ingest runs
 higher, you add disk in a minute. Over-provision and reclaiming it means a
 backup, a rebuild and a restore.
 
@@ -98,12 +109,17 @@ Project from that, not from the planning figure.
 
 ## Backups
 
-Add all six guests to Proxmox Backup Server. They hold your detection history
-and your secrets, which cost more to lose than a rebuildable service.
+Add all four guests to Proxmox Backup Server. They hold your detection history
+and the credentials that protect it, which cost more to lose than a rebuildable
+service.
 
 ```bash
 vzdump 200 --storage <pbs-storage> --mode snapshot --compress zstd
 ```
+
+Suricata and ntopng live on the firewall, so their settings are in the
+firewall's own configuration. Back that up too: OPNsense exports it from
+**System > Configuration > Backups**.
 
 Snapshot before every Wazuh major upgrade. Its index migrations are not
 reliably reversible.
@@ -134,8 +150,9 @@ timeout 5 bash -c 'echo > /dev/tcp/<sec-wazuh>/1514' && echo ok || echo BLOCKED
 # the resolver clients actually get, run from a client, not from the server
 resolvectl status | grep 'DNS Servers'
 
-# NetFlow arriving, on sec-ntopng
-tcpdump -ni any port 2055 -c 5
+# ntopng capturing, on the firewall's shell; then find a sandbox host
+# with a recent last-seen time under Hosts in its UI
+/usr/local/etc/rc.d/ntopng status
 
 # CrowdSec making decisions, on sec-crowdsec
 cscli decisions list

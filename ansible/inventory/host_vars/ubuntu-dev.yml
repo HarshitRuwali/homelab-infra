@@ -14,3 +14,20 @@
 # increase for hosts whose process list never changes. See
 # roles/alloy_collector/defaults/main.yml.
 alloy_enable_process: true
+
+# Projects the nightly updater must leave alone here; see the 2026-09-14
+# deployment log.
+#
+# fastapi-lxc: started from a compose file that no longer exists (the project
+#   became api-service and its folder was deleted), so every run failed on it.
+#   Its image is built locally, so there was never anything to pull. Remove
+#   once the container is retired or redeployed from api-service.
+# superset: its websocket host port comes from WEBSOCKET_PORT in the shell
+#   that ran `up` (the project's .envrc.example picks the first free port from
+#   8080), which the systemd updater never has. Compose then falls back to
+#   8080, calls the websocket service changed, recreates it, and the bind fails
+#   because fastapi holds 8080. It runs on 8082 now; remove this once
+#   WEBSOCKET_PORT=8082 is pinned in the project's .env.
+docker_update_skip_projects:
+  - fastapi-lxc
+  - superset

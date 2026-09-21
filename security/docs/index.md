@@ -1,8 +1,8 @@
 # Homelab Security Stack
 
-Six small guests that give a self-hosted estate intrusion detection, host
-integrity monitoring, DNS filtering, SSO, secrets management, flow visibility
-and vulnerability scanning. Every component is free and open source.
+Four small guests, plus Suricata and ntopng on the firewall, that give a
+self-hosted estate intrusion detection, host integrity monitoring, DNS
+filtering, flow visibility and vulnerability scanning. Open source throughout.
 
 ## The premise
 
@@ -18,8 +18,8 @@ So this stack deliberately pairs two kinds of sensor:
 
 - **Network, at the chokepoint**
 
-    Suricata on the firewall and ntopng collecting NetFlow. Cheap, broad, and
-    structurally blind to anything that does not cross the boundary.
+    Suricata and ntopng, both on the firewall. Cheap, broad, and structurally
+    blind to anything that does not cross the boundary.
 
 - **Host, on every machine**
 
@@ -31,22 +31,24 @@ So this stack deliberately pairs two kinds of sensor:
     AdGuard Home. DNS logs are the cheapest detection data you will ever
     collect, and a resolver you control is a prerequisite for having them.
 
-- **Identity and secrets**
+- **Vulnerability scanning**
 
-    Authelia in front of internal UIs, OpenBao underneath the credentials that
-    every other service needs.
+    Greenbone on `sec-scan`. Scheduled scans check reachable hosts for
+    vulnerable software and exposed services.
 
 </div>
 
 ## Start here
 
 !!! tip "Standing this up for the first time?"
-    **[Getting started](getting-started/index.md)** provisions the six guests
+    **[Getting started](getting-started/index.md)** provisions the four guests
     with one dry-run-by-default script, then installs each service.
 
 | If you want to… | Go to |
 |---|---|
 | Create the guests | [Getting started](getting-started/index.md) |
+| See what each guest runs, its configs, and how to log in | [What runs where](components/index.md) |
+| Understand the mechanisms, from bridges to decoders | [How it works](understanding/index.md) |
 | Understand why things sit where they do | [Architecture](architecture/index.md) |
 | Connect it to Grafana, Loki and the firewall | [Wiring](wiring/index.md) |
 | Size disks, set retention, keep it running | [Operations](operations/index.md) |

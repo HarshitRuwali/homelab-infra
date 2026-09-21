@@ -2,34 +2,34 @@
 
 ## Guest specifications
 
-| Guest | Type | VMID | vCPU | RAM | Disk | Tier |
-|---|---|---|---|---|---|---|
-| `sec-wazuh` | VM | 200 | 4 | 8 GB | 40 GB | SSD |
-| `sec-scan` | VM | 201 | 2 | 6 GB | 40 GB | HDD |
-| `sec-crowdsec` | LXC | 210 | 1 | 1 GB | 8 GB | SSD |
-| `sec-dns` | LXC | 211 | 1 | 512 MB | 8 GB | SSD |
-| `sec-auth` | LXC | 212 | 1 | 1 GB | 8 GB | SSD |
-| `sec-ntopng` | LXC | 213 | 2 | 2 GB | 16 GB | HDD |
+| Guest | Type | VMID | vCPU | RAM | Disk | Tier | Bridge |
+|---|---|---|---|---|---|---|---|
+| `sec-wazuh` | VM | 200 | 4 | 8 GB | 25 GB | SSD | trusted (`vmbr0`) |
+| `sec-scan` | VM | 201 | 2 | 6 GB | 40 GB | HDD | sandbox (`vmbr1`) |
+| `sec-crowdsec` | LXC | 210 | 1 | 1 GB | 8 GB | SSD | trusted (`vmbr0`) |
+| `sec-dns` | LXC | 211 | 1 | 512 MB | 8 GB | SSD | trusted (`vmbr0`) |
 
-Totals: **11 vCPU, 18.5 GB RAM, 120 GB disk**, of which 64 GB on SSD and 56 GB
-on bulk storage.
+Totals: **8 vCPU, 15.5 GB RAM, 81 GB disk**, of which 41 GB on SSD and 40 GB on
+bulk storage.
+
+ntopng runs [on the firewall](../components/index.md#ntopng). Budget an
+additional 2 GB RAM and 2 vCPU for the firewall VM, then measure.
 
 ### Why each guest is sized as it is
 
-- **`sec-wazuh` 40 GB**: the only guest with real data growth. Working in
-  [Operations](../operations/index.md).
+- **`sec-wazuh` 25 GB**: the only guest with real data growth. Working in
+  [Operations](../operations/index.md). Started below the 40 GB the
+  generous working gives, because growing a disk is a one-minute job.
 - **`sec-crowdsec` 8 GB, 1 GB RAM**: the LAPI stores decisions and alerts in
   SQLite, which stays in the tens of MB at this scale. Almost all disk is OS.
 - **`sec-dns` 8 GB, 512 MB RAM**: a single Go binary. Only the query log grows,
   at roughly 200 bytes per query. At 30 day retention it stays under 2 GB.
-- **`sec-auth` 8 GB, 1 GB RAM**: Authelia's user and session database and
-  OpenBao's raft store are both measured in MB for a homelab.
-- **`sec-ntopng` 16 GB, 2 GB RAM**: Community Edition keeps timeseries in RRD,
-  which is **fixed size by design**. The ClickHouse flow export that would grow
-  without bound is an Enterprise feature.
 - **`sec-scan` 40 GB, 6 GB RAM**: dominated by feeds, not results. SCAP and CVE
   data in PostgreSQL runs 10 to 20 GB, plus 1 to 2 GB of NVTs. RAM peaks during
   a scan, not at idle.
+- **ntopng on the firewall**: Community Edition keeps timeseries in RRD, which
+  is **fixed size by design**. The ClickHouse flow export that would grow
+  without bound is an Enterprise feature.
 
 Right-size down further if you like, with one caution: `sec-scan` failing a
 feed sync because the disk filled is a confusing failure to diagnose. Leave it
@@ -47,9 +47,11 @@ for anything wanting kernel tunables, raw sockets or its own memory locking.
 - **`sec-scan` must be a VM.** Greenbone performs raw-socket scanning and needs
   `NET_RAW`. Possible in a privileged LXC, but a scanner is exactly the
   workload you do not want running privileged beside everything else.
-- **The rest are fine as unprivileged LXC**, including ntopng, *provided you
-  collect NetFlow rather than sniff*. Sniffing needs `NET_ADMIN` and `NET_RAW`
-  and pushes it to a VM for no benefit.
+- **`sec-crowdsec` and `sec-dns` use unprivileged LXC.** Their services do not
+  need their own kernel. ntopng captures directly on the firewall.
+- **Both LXCs get `nesting=1`**, the default the Proxmox UI applies to every
+  unprivileged container. The Debian 13 template's systemd cannot mount `/tmp`
+  or `/run/lock` without it, and the guest boots with failed units.
 
 ## Ports
 
@@ -62,9 +64,10 @@ for anything wanting kernel tunables, raw sockets or its own memory locking.
 | every monitored host | `sec-crowdsec` | 8080/tcp | CrowdSec LAPI |
 | LAN clients | `sec-dns` | 53/tcp, 53/udp | DNS |
 | admin | `sec-dns` | 3000/tcp | AdGuard UI |
-| firewall | `sec-ntopng` | 2055/udp | NetFlow export |
-| admin | `sec-ntopng` | 3000/tcp | ntopng UI |
-| admin | `sec-scan` | 443/tcp | Greenbone UI |
+| admin | the firewall | 3000/tcp | ntopng UI. Listens on **every** firewall interface; keep WAN closed |
+| the firewall | the central stack | 5514/tcp | Suricata EVE syslog into Loki. Not 1514, which is Wazuh's |
+| admin | `sec-scan` | 9392/tcp, 443/tcp | Greenbone UI, **bound to loopback**; reach it over an SSH tunnel through your jump host |
+| `sec-scan` | everything it scans | any | Scans, originated from the sandbox bridge. Trusted-side targets see the firewall's address |
 
 ## Firewall rules
 
@@ -75,14 +78,19 @@ the evaluation order or the block shadows them:
 ```
 pass   <sandbox net> -> sec-wazuh      tcp 1514, 1515
 pass   <sandbox net> -> sec-crowdsec   tcp 8080
+pass   sec-scan      -> <trusted net>          # only if it should scan the trusted side
 block  <sandbox net> -> <trusted net>          # must be BELOW the passes
 ```
 
 Add the passes in the **same change** as the block. Adding them afterwards
 means a window where sandbox telemetry silently stops.
 
-Put the management UIs behind Authelia rather than exposing them directly, and
-do not publish any of them through an internet-facing tunnel.
+The `sec-scan` pass is a real trade: it lets one sandbox host reach the whole
+trusted segment, which is exactly what makes a scanner useful and exactly what
+makes a compromised one dangerous. Without it, `sec-scan` covers the sandbox
+only.
+
+Keep the management UIs unpublished, and reach them over SSH tunnels.
 
 ## Integration with the monitoring module
 
@@ -92,6 +100,8 @@ own the dashboard.
 | Concern | Owned by | How |
 |---|---|---|
 | Manager guest | `security/` | `provision-security-stack.sh`, `install/install-sec-wazuh.sh` |
+| Guest host metrics and logs | `ansible/` | `monitored` platform groups plus `security_guests`; `playbooks/onboard.yml` installs Alloy and update metrics |
+| Per-guest resource dashboards | `monitoring/` | `grafana/dashboards/servers/sec-*.json`, installed by Ansible's dashboard role |
 | Agents on fleet hosts | `ansible/` | `roles/wazuh_agent`, gated by the `wazuh_agents` group |
 | Alert display and routing | `monitoring/` | Loki datasource, Grafana unified alerting |
 
@@ -111,19 +121,17 @@ space have changed licence recently.
 | CrowdSec | MIT | Engine has no paywalled features; console tier optional |
 | Wazuh | GPLv2 | Indexer and dashboard on Apache-2.0 OpenSearch. No feature paywall |
 | AdGuard Home | GPLv3 | |
-| Authelia | Apache-2.0 | |
-| OpenBao | MPL-2.0 | Linux Foundation fork of Vault 1.14.0 |
-| ntopng Community | GPLv3 | Pro and Enterprise add retention, LDAP, SNMP |
-| Greenbone GVM | GPLv2 | Community Feed is delayed relative to Enterprise Feed |
+| ntopng Community | GPLv3 | Runs on the firewall via `os-ntopng`. Pro and Enterprise add retention, LDAP, SNMP |
+| Greenbone GVM | GPLv2 | Community Feed is delayed relative to Enterprise Feed. Runs from Greenbone's containers |
 
-### Caveats worth knowing before you commit
+### Operational limitations
 
 - **ntopng Community** is enough to verify segmentation. Long-term flow history,
-  graphical reports, LDAP and SNMP are paid. If you want months of retained
-  flows, use Zeek logs into Loki instead of buying up.
+  graphical reports, LDAP and SNMP are paid features.
 - **Greenbone Community Feed** is free but delayed and reduced relative to the
   Enterprise Feed. Fine for drift detection; not parity with a commercial
   scanner.
-- **Security Onion** is a tempting all-in-one bundle, and it is free, but its
-  Elastic components ship under the Elastic Licence, which is source-available
-  rather than OSI open source.
+- **Greenbone uses the published Community Containers.** `gvm` is in **sid only** and is
+  absent from bookworm, trixie and forky, so `apt-get install gvm` fails on any
+  stable release. `install-sec-scan.sh` uses Greenbone's published Community
+  Containers, which is the path their own documentation leads with.
