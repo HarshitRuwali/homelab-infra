@@ -84,9 +84,17 @@ alert is about is `agent.name` inside the line.
 CA and verifies for the reserved address; all four services active; metrics
 and logs confirmed centrally by the onboarding play; auto-patching on.
 
-**Outstanding:** `central-alerting.yml` (the disk rule and sec-wazuh's Host
-Down rule) waits on the Matrix security room ID; the agent rollout, two hosts
-first; the Wazuh dashboard admin password is in the guest's
+**Security room, same day.** Suricata alerts now page a dedicated Matrix
+room (see [Security alerts](../monitoring/alerting.md#security-alerts)),
+deployed together with the disk rule and sec-wazuh's Host Down rule. The
+first live alert, sid 2100498 from a sandbox guest, arrived and exposed three
+template bugs, all fixed the same afternoon: Grafana expands environment
+variables in provisioned **label** values, so `$labels` vanished and the raw
+template became the severity; `.CommonLabels` drops labels a group disagrees
+on, leaving "Severity 2 ()"; and the stock silence link matched source and
+destination, so it silenced one flow instead of the signature.
+
+**Outstanding:** the agent rollout, two hosts first; the Wazuh dashboard admin password is in the guest's
 `wazuh-install-files.tar`, to be moved to a password manager and the tar off
 the guest.
 

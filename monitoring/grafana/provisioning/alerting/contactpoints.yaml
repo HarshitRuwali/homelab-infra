@@ -21,3 +21,23 @@ contactPoints:
           title: '{{ if eq .Status "firing" }}FIRING{{ else }}RESOLVED{{ end }}: {{ .CommonLabels.alertname }}'
           message: |
             {{ template "fleet.message" . }}
+
+  # Security alerts get their own room. Same relay, only room_id differs, so
+  # there is no second relay to run or secure. MATRIX_SECURITY_ROOM_ID is
+  # injected by roles/grafana_alerting like the others.
+  #
+  # No resolved messages. A Suricata alert is an event, not a condition:
+  # "resolved" would only mean the rule's five-minute window went quiet, which
+  # tells you nothing and doubles the traffic in a room meant to be read.
+  - orgId: 1
+    name: matrix-security
+    receivers:
+      - uid: matrix-security
+        type: webhook
+        disableResolveMessage: true
+        settings:
+          url: http://127.0.0.1:4785/?formatter=grafana&key=$__env{MATRIX_WEBHOOK_API_KEY}&room_id=$__env{MATRIX_SECURITY_ROOM_ID}
+          httpMethod: POST
+          title: 'Suricata: {{ .CommonLabels.alert_signature }}'
+          message: |
+            {{ template "security.message" . }}
