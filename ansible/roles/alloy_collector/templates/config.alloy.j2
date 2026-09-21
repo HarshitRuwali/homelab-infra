@@ -250,3 +250,25 @@ loki.source.syslog "firewall" {
   forward_to = [loki.write.central.receiver]
 }
 {% endif %}
+
+{% if inventory_hostname in groups['wazuh_manager'] | default([]) %}
+
+// --- Wazuh alerts --------------------------------------------------------
+// Every alert the manager raises, for every agent, as one JSON object per
+// line. Tailing the file keeps Grafana the single pane and leaves the Wazuh
+// dashboard for deep investigation. Wazuh rotates it daily into
+// logs/alerts/YYYY/Mon/, and loki.source.file follows the path, not the inode.
+//
+// host stays the manager's (from loki.write), because the alert is the
+// manager's verdict. The host an alert is ABOUT is `agent.name` inside the
+// line: `| json` gives it as agent_name. Not promoted to a label on purpose,
+// so a fleet-wide rollout does not multiply streams.
+local.file_match "wazuh_alerts" {
+  path_targets = [{"__path__" = "/var/ossec/logs/alerts/alerts.json", job = "wazuh"}]
+}
+
+loki.source.file "wazuh_alerts" {
+  targets    = local.file_match.wazuh_alerts.targets
+  forward_to = [loki.write.central.receiver]
+}
+{% endif %}

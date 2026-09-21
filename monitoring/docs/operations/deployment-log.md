@@ -7,6 +7,91 @@ in a graph can be lined up against a date.
 
 ---
 
+## 2026-09-21: sec-wazuh, the manager, and four bugs it flushed out
+
+The second security guest. Staged like sec-dns, with one change of brief:
+CPU and RAM are plentiful on this host, SSD is not, so every size here is the
+smallest that fits and grows later.
+
+```bash
+# On the controller: a private CA, kept outside the repository. Its key never
+# goes to a guest. The enrollment password also goes into the vault as
+# vault_wazuh_enrollment_password.
+openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=Homelab Root CA" ...
+
+# On the hypervisor
+SSH_PUBKEY=<admin key> ./provision-security-stack.sh --only sec-wazuh           # dry run
+SSH_PUBKEY=<admin key> ./provision-security-stack.sh --apply --only sec-wazuh
+
+# Server certificate, once the guest had its reserved address (SAN: name + IP)
+# Then wazuh.crt, wazuh.key and the password to /root/security-bootstrap/
+
+# In the guest
+bash install/install-sec-wazuh.sh            # dry run
+bash install/install-sec-wazuh.sh --apply
+
+# From the controller
+ansible-playbook playbooks/onboard.yml --limit sec-wazuh
+ansible-playbook playbooks/site.yml    --limit sec-wazuh
+```
+
+**Disk: 25 GB, not 40.** The 40 GB working assumed 20 GB for the stack. The
+real figure is about 13 GB, and **8 GB of that is the vulnerability-detection
+CVE feed** the manager downloads on first start, which the working did not
+know about. Content updates also stage up to 3 GB at a time in
+`/var/ossec/queue/vd_updater/tmp` and clear themselves. That leaves roughly
+7 GB before OpenSearch's 90% watermark, several times what 30 days of alerts
+needs at this fleet's volume. A new rule, Wazuh Indexer Disk Filling, fires at
+80%, because the fleet's own disk alert fires at 95%, after the indexer has
+already stopped writing.
+
+**Enrollment held shut during the vendor install.** The installer enables
+enrollment before our configure step sets the password, so 1514, 1515 and
+55000 were dropped with a temporary nftables table for the duration.
+**Exempt loopback** if you do the same: without `iifname "lo" accept` the
+installer's own call to the local API times out, and it sat for 12 minutes
+retrying before that was spotted.
+
+**Bugs found on the way:**
+
+- **`configure-sec-wazuh.sh` created no agent group and said `ok`.** It ran
+  `agent_groups -a` while the manager was stopped. That needs wazuh-db, so it
+  printed "Some Wazuh daemons are not ready yet" and **exited 0**. The agent
+  role would then have refused every host. Fixed: the group is created after
+  the manager starts, retried, and the directory is checked rather than the
+  exit status.
+- **Agents would have had no manager address.** `group_vars/wazuh_agents`
+  set `wazuh_manager_address: ""`, and a group_vars file outranks variables
+  written in the inventory file, so the real value in `hosts.local.yml` never
+  applied. Confirmed with `ansible-inventory --host` on a probe copy, then the
+  placeholder was removed. The role default is already empty and the role
+  refuses to run without a value.
+- **The Wazuh apt repository stays enabled after install.** The nightly run
+  only takes Debian-Security, but `force-updates.yml` does a full upgrade and
+  would move the manager, indexer and dashboard independently. The installer
+  now runs `apt-mark hold` on all four packages.
+
+**Retention before data:** an ISM policy, `wazuh-retention-30d`, deletes
+`wazuh-alerts-*` and `wazuh-archives-*` indices 30 days after creation. It is
+attached to the first day's index and picks up new ones by template.
+
+**Into Grafana:** Alloy on the manager tails `/var/ossec/logs/alerts/alerts.json`
+as `job="wazuh"`, joining the `wazuh` group to read it. The first query found
+578 alerts, all from the install itself. `host` is the manager; the host an
+alert is about is `agent.name` inside the line.
+
+**Verified:** enrollment on 1515 presents the certificate from the private
+CA and verifies for the reserved address; all four services active; metrics
+and logs confirmed centrally by the onboarding play; auto-patching on.
+
+**Outstanding:** `central-alerting.yml` (the disk rule and sec-wazuh's Host
+Down rule) waits on the Matrix security room ID; the agent rollout, two hosts
+first; the Wazuh dashboard admin password is in the guest's
+`wazuh-install-files.tar`, to be moved to a password manager and the tar off
+the guest.
+
+---
+
 ## 2026-09-16: sec-dns, the first guest of the security stack
 
 The security stack starts here. One guest, AdGuard Home on it, then the LAN

@@ -4,12 +4,12 @@
 
 | Guest | Type | VMID | vCPU | RAM | Disk | Tier | Bridge |
 |---|---|---|---|---|---|---|---|
-| `sec-wazuh` | VM | 200 | 4 | 8 GB | 40 GB | SSD | trusted (`vmbr0`) |
+| `sec-wazuh` | VM | 200 | 4 | 8 GB | 25 GB | SSD | trusted (`vmbr0`) |
 | `sec-scan` | VM | 201 | 2 | 6 GB | 40 GB | HDD | sandbox (`vmbr1`) |
 | `sec-crowdsec` | LXC | 210 | 1 | 1 GB | 8 GB | SSD | trusted (`vmbr0`) |
 | `sec-dns` | LXC | 211 | 1 | 512 MB | 8 GB | SSD | trusted (`vmbr0`) |
 
-Totals: **8 vCPU, 15.5 GB RAM, 96 GB disk**, of which 56 GB on SSD and 40 GB on
+Totals: **8 vCPU, 15.5 GB RAM, 81 GB disk**, of which 41 GB on SSD and 40 GB on
 bulk storage.
 
 ntopng runs [on the firewall](../components/index.md#ntopng). Budget an
@@ -17,8 +17,9 @@ additional 2 GB RAM and 2 vCPU for the firewall VM, then measure.
 
 ### Why each guest is sized as it is
 
-- **`sec-wazuh` 40 GB**: the only guest with real data growth. Working in
-  [Operations](../operations/index.md).
+- **`sec-wazuh` 25 GB**: the only guest with real data growth. Working in
+  [Operations](../operations/index.md). Started below the 40 GB the
+  generous working gives, because growing a disk is a one-minute job.
 - **`sec-crowdsec` 8 GB, 1 GB RAM**: the LAPI stores decisions and alerts in
   SQLite, which stays in the tens of MB at this scale. Almost all disk is OS.
 - **`sec-dns` 8 GB, 512 MB RAM**: a single Go binary. Only the query log grows,

@@ -33,6 +33,12 @@ run install -d -m 0700 "$WAZUH_WORKDIR"
 download_file "https://packages.wazuh.com/${WAZUH_VERSION}/wazuh-install.sh" "$WAZUH_WORKDIR/wazuh-install.sh"
 run bash -c 'cd "$1" && bash ./wazuh-install.sh -a -i' _ "$WAZUH_WORKDIR"
 run bash "$(dirname "$0")/configure-sec-wazuh.sh" --apply
+# The installer leaves Wazuh's apt repo enabled. The fleet's nightly run only
+# takes Debian-Security, but force-updates.yml does a full upgrade, which would
+# move these four independently when a release lands. They must upgrade
+# together, by hand.
+run apt-mark hold wazuh-manager wazuh-indexer wazuh-dashboard filebeat
+run apt-get clean
 
 ok "Wazuh installed"
 cat <<'NOTE'

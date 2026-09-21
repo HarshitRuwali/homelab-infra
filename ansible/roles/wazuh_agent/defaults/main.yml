@@ -1,7 +1,9 @@
 ---
 # Address of the Wazuh manager (the `sec-wazuh` guest from security/).
 # Set this in inventory, not here: this repository is public and an address is
-# part of the estate map. group_vars/wazuh_agents/main.yml is the right home.
+# part of the estate map. Put it under all.vars in hosts.local.yml, which is
+# gitignored. Not in a committed group_vars file: see
+# group_vars/wazuh_agents/main.yml for why.
 wazuh_manager_address: ""
 
 # Agent enrolment port (1515/tcp) and event port (1514/tcp). Defaults match

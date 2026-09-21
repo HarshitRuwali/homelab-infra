@@ -3,8 +3,14 @@
 # PUBLIC, so the real address belongs in hosts.local.yml (gitignored) or an
 # encrypted vault, not here.
 #
-# The manager is the `sec-wazuh` guest from security/. Give it a DHCP
-# reservation or a static address first: an agent that loses its manager does
-# not fail loudly, it just stops reporting, which is the worst failure mode a
-# monitoring agent has.
-wazuh_manager_address: ""
+# Deliberately NOT set in this file, not even to "". A group_vars file
+# outranks variables written in the inventory file itself, so an empty
+# placeholder here silently beat the real address in hosts.local.yml and every
+# agent would have been configured with no manager. The role default is
+# already empty and the role refuses to run without a value.
+#
+# Set wazuh_manager_address and wazuh_manager_ca_src under all.vars in
+# hosts.local.yml. The manager is the `sec-wazuh` guest from security/. Give it
+# a DHCP reservation or a static address first: an agent that loses its
+# manager does not fail loudly, it just stops reporting, which is the worst
+# failure mode a monitoring agent has.

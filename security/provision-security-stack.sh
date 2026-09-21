@@ -57,7 +57,7 @@ CLOUD_IMAGE_CACHE="${CLOUD_IMAGE_CACHE:-/var/lib/vz/template/iso}"
 # Sizes come from docs/reference/index.md, at 30 day retention. network is
 # "trusted" (BRIDGE) or "sandbox" (BRIDGE_SANDBOX).
 GUESTS=(
-  "sec-wazuh:vm:200:4:8192:40:ssd:trusted"
+  "sec-wazuh:vm:200:4:8192:25:ssd:trusted"
   "sec-scan:vm:201:2:6144:40:hdd:sandbox"
   "sec-crowdsec:lxc:210:1:1024:8:ssd:trusted"
   "sec-dns:lxc:211:1:512:8:ssd:trusted"
