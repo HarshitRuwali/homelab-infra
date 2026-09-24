@@ -1,0 +1,129 @@
+---
+# Every Dell chassis fan by name, through the textfile collector Alloy already
+# reads. See defaults/main.yml for why this is gated per host, and the script
+# template for how fans are read and named.
+
+- name: Report the resolved Dell fan shape
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: dell_fan_metrics_enabled={{ dell_fan_metrics_enabled }}"
+
+- name: Install Dell fan speed collection
+  when: dell_fan_metrics_enabled | bool
+  block:
+    # A host in host_vars with this on but no dell_smm_hwmon is a
+    # configuration mistake (not a Dell, or the module failed to load after a
+    # kernel update). Say so, rather than installing a timer that the unit's
+    # ConditionPathExists would then skip quietly forever.
+    - name: Check for the Dell SMM interface
+      ansible.builtin.stat:
+        path: /proc/i8k
+      register: dell_fan_metrics_i8k
+
+    - name: Fail if the Dell SMM interface is missing
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} has dell_fan_metrics_enabled but no /proc/i8k.
+          Check: lsmod | grep dell_smm; modprobe dell_smm_hwmon; dmesg | grep -i dell_smm
+      when: not dell_fan_metrics_i8k.stat.exists
+
+    - name: Ensure the textfile collector directory exists
+      ansible.builtin.file:
+        path: "{{ dell_fan_metrics_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the Dell fan metrics exporter script
+      ansible.builtin.template:
+        src: fleet-dell-fan-metrics.j2
+        dest: "{{ dell_fan_metrics_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+        validate: /usr/bin/python3 -m py_compile %s
+      notify: Run fleet-dell-fan-metrics
+
+    - name: Install the Dell fan metrics systemd service
+      ansible.builtin.template:
+        src: fleet-dell-fan-metrics.service.j2
+        dest: /etc/systemd/system/fleet-dell-fan-metrics.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify:
+        - Reload systemd
+        - Run fleet-dell-fan-metrics
+
+    - name: Install the Dell fan metrics systemd timer
+      ansible.builtin.template:
+        src: fleet-dell-fan-metrics.timer.j2
+        dest: /etc/systemd/system/fleet-dell-fan-metrics.timer
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Enable and start the Dell fan metrics timer
+      ansible.builtin.systemd:
+        name: fleet-dell-fan-metrics.timer
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    - name: Flush handlers so metrics exist before we verify them
+      ansible.builtin.meta: flush_handlers
+
+    - name: Confirm the metrics file was written
+      ansible.builtin.stat:
+        path: "{{ dell_fan_metrics_dir }}/{{ dell_fan_metrics_file }}"
+      register: dell_fan_metrics_out
+      retries: 10
+      delay: 3
+      until:
+        - dell_fan_metrics_out.stat.exists
+        - dell_fan_metrics_out.stat.size | default(0) > 0
+      when: not ansible_check_mode
+
+    - name: Read the fan count back
+      ansible.builtin.shell: |
+        grep -c '^fleet_dell_fan_rpm' {{ dell_fan_metrics_dir }}/{{ dell_fan_metrics_file }}
+      register: dell_fan_metrics_count
+      changed_when: false
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Report the fan count
+      ansible.builtin.debug:
+        msg: >-
+          {{ inventory_hostname }}: {{ dell_fan_metrics_count.stdout | trim }} fan(s) named from SMBIOS.
+          {{ 'CHECK THIS: none were found.' if (dell_fan_metrics_count.stdout | trim | int) == 0 else '' }}
+      when: not ansible_check_mode
+
+- name: Remove Dell fan speed collection where it is not enabled
+  when: not (dell_fan_metrics_enabled | bool)
+  block:
+    - name: Stop and disable the Dell fan metrics timer
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+      loop:
+        - fleet-dell-fan-metrics.timer
+        - fleet-dell-fan-metrics.service
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Remove the Dell fan metrics units, script and stale metrics
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/fleet-dell-fan-metrics.timer
+        - /etc/systemd/system/fleet-dell-fan-metrics.service
+        - "{{ dell_fan_metrics_script }}"
+        # Left behind, this would report fan speeds frozen at the moment
+        # collection stopped, which reads as healthy when it is not.
+        - "{{ dell_fan_metrics_dir }}/{{ dell_fan_metrics_file }}"
+      notify: Reload systemd

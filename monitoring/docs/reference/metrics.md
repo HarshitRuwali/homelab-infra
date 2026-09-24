@@ -146,6 +146,77 @@ hosts where `nvidia-smi` is present. Same figures `nvtop` shows interactively.
 All are labelled `host` and `uuid` (one series per physical GPU), same as
 every other exporter in this stack.
 
+## Hardware sensors
+
+Stock node_exporter hwmon series: `prometheus.exporter.unix` reads
+`/sys/class/hwmon` on every host with no extra exporter. Only the hypervisor
+has anything meaningful there. On t7920 (Dell Precision 7920 Tower, two Xeon
+Gold 6138) the chips are:
+
+| `chip` | Driver | What it reports |
+|---|---|---|
+| `platform_coretemp_0` / `_1` | `coretemp` | one per CPU socket. `sensor="temp1"` is the package; the rest are cores, named by `node_hwmon_sensor_label` |
+| `platform_dell_smm_hwmon` | `dell_smm_hwmon` | six board temperatures, and `fan1`-`fan4` unnamed (use `fleet_dell_fan_rpm` instead) |
+| `thermal_thermal_zone0` | `pch_lewisburg` | the C620 chipset |
+| `nvme_nvme0` | `nvme` | the NVMe drive's own sensors, `temp1` is the composite |
+
+| Metric | Meaning |
+|---|---|
+| `node_hwmon_temp_celsius` | current temperature |
+| `node_hwmon_temp_max_celsius` / `..._crit_celsius` | the part's own limits: 83 C and 93 C (TjMax) for these CPUs |
+| `node_hwmon_fan_rpm` | current fan speed |
+| `node_hwmon_sensor_label` | the human name for a sensor, always `1`; join it with `group_left (label)` |
+
+!!! warning "Every LXC guest reports the hypervisor's sensors too"
+    An LXC shares the host kernel, so it sees the same `/sys/class/hwmon`.
+    plex, memory, sec-dns, tailscale-router and main-server all push exact
+    copies of t7920's fans and temperatures under their own `host` label.
+    Always scope hardware queries to `host="t7920"` or `role="hypervisor"`,
+    as every rule in `rules-hardware.yaml` does.
+
+!!! info "What the Dell SMM board sensors do not tell you"
+    The BIOS reports no type for any board sensor, so their `_label` files
+    return `Invalid argument` and none appear in `node_hwmon_sensor_label`.
+    What is known from the data: SMM `temp1` and `temp2` track the CPU 0 and
+    CPU 1 packages within a few degrees. Fan control is BIOS-automatic
+    (`pwm_enable=2`), so there is no duty-cycle figure.
+
+### Named chassis fans
+
+`dell_smm_hwmon` hardcodes four fans; this firmware knows twelve. Written to
+`fleet-dell-fans.prom` every 30 s by `fleet-dell-fan-metrics`, from
+`ansible/roles/dell_fan_metrics`, which reads each fan through the same
+driver's `/proc/i8k` ioctl and names it from SMBIOS.
+
+| Metric | Meaning |
+|---|---|
+| `fleet_dell_fan_rpm{fan, zone, index}` | current speed; `fan` is the firmware name, `zone` is `cpu`, `front`, `rear`, `drive bay` or `psu` |
+| `fleet_dell_fans_total` | fans SMBIOS lists with a Dell SMM index |
+| `fleet_dell_fan_read_errors` | fans whose read failed on the last run |
+| `fleet_dell_fan_collection_timestamp_seconds` | when collection last ran |
+
+Where each fan sits, from the Owner's Manual:
+
+| `fan` | Position | Notes |
+|---|---|---|
+| `SYS0`-`SYS3` | four fans behind the front bezel, bottom to top | intake, cool CPU 0 directly |
+| `CPU1` | inside the air shroud, between the sockets | pushes air on to CPU 1 |
+| `REAR0`, `REAR1` | back wall beside the CPUs | exhaust |
+| `FB0`, `FB1` | behind front drive bays 0 and 1 (right side) | smaller fans, idle near 2500 RPM |
+| `FB4` | behind optional rear drive bay 4 (right side) | this machine has no rear bays, so no fan; the BIOS lists it anyway and it reads 0 |
+| `CPU0` | a header on the board, no fan fitted on this model | always 0 |
+| `PSU` | inside the power supply | no tachometer on SMM, always 0 |
+
+FB2 and FB3 exist on the chassis but this machine's BIOS does not list them.
+
+!!! note "How a name is matched to a reading"
+    Each SMBIOS type 27 entry carries a Dell OEM word `0x0000DDnn`, where `nn`
+    is the SMM fan index. Verified 2026-09-23: indices 0 to 3 matched
+    `dell_smm_hwmon`'s `fan1`-`fan4` exactly in the same instant, so
+    `fan1` is the empty CPU0 header, `fan2` is CPU1, and `fan3`/`fan4` are
+    SYS0/SYS1. The seven mandatory fans read together at 780 to 950 RPM and
+    the drive-bay fans in their own band, as the manual's fan list predicts.
+
 ## Stock metrics worth knowing
 
 | Metric | Used by |

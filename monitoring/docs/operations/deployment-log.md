@@ -7,6 +7,78 @@ in a graph can be lined up against a date.
 
 ---
 
+## 2026-09-23: Hardware sensors on t7920, and a targeted deploy
+
+CPU package temperatures and chassis fan speeds for the hypervisor, as a
+hardware row on the `t7920` dashboard and six rules in `rules-hardware.yaml`.
+
+### Second pass: every fan, by name, on Dell's own map
+
+hwmon only exposes four unnamed fans. The driver's older `/proc/i8k` ioctl
+takes any fan index, and SMBIOS names twelve, so `roles/dell_fan_metrics`
+reads all of them every 30 s (12 reads in about 10 ms). Mapping was checked
+against the live hwmon readings and Dell's Owner's Manual fan figures before
+any name went on a dashboard. Result: 9 fans spinning, CPU0 an empty header,
+PSU with no tachometer, and FB4 listed by the BIOS but reading 0. That turned
+out to be a position, not a fan: the rear FlexBays are optional and this
+machine has none (both drives sit in the front bays), so FB4 is drawn as not
+fitted and left out of the stall alert.
+
+```bash
+ansible-playbook playbooks/update-metrics.yml --limit t7920   # collector
+ansible-playbook playbooks/dashboards.yml -e grafana_dashboard_prune=false
+# then the same targeted copy of rules-hardware.yaml and restart as below
+```
+
+The t7920 dashboard gained a Chassis Fan Map canvas laid out as Dell's two
+figures, and System Overview gained a basic hardware row.
+
+### Temperatures were already collected
+
+Probed before designing anything. A Precision tower has no IPMI or iDRAC
+(`/dev/ipmi*` does not exist), but `coretemp` and `dell_smm_hwmon` were
+already loaded, and node_exporter's hwmon collector had been pushing both
+since the host was onboarded. The dashboards and rules cover those existing
+series; the one new collector is `roles/dell_fan_metrics`, rolled out to
+name every fan, because hwmon stops at four unnamed ones.
+
+Two findings shaped the rules:
+
+- **The LXC guests push copies of the host's sensors.** Same kernel, same
+  `/sys/class/hwmon`, so six hosts reported t7920's fans. Every rule is scoped
+  to `role="hypervisor"`.
+- **Thresholds come from a week of data.** CPU 1 runs 10 to 15 C hotter than
+  CPU 0 (median 72 C against 58 C) and peaked at 89 C, but spent one minute
+  above its 83 C rated max all week. Populated fans never dropped below
+  759 RPM or rose above 1731. `fan1` read 0 throughout: the CPU0 header,
+  which Dell leaves empty on this model (see below).
+
+### Deployed around the playbooks, on purpose
+
+The `--check --diff` runs showed the live central stack running the unmerged
+`feat/security-stack` branch. `central-alerting.yml` would have overwritten
+the contact points, templates and policies with master's copies, dropping the
+`matrix-security` receiver and route that `rules-security.yaml` depends on,
+and `dashboards.yml` would have pruned `sec-scan.json` and
+`sec-crowdsec.json`. So only the two new files went out:
+
+```bash
+ansible-playbook playbooks/dashboards.yml -e grafana_dashboard_prune=false
+ansible monitor-lxc -b -m copy -a "src=../monitoring/grafana/provisioning/alerting/rules-hardware.yaml \
+  dest=/etc/grafana/provisioning/alerting/rules-hardware.yaml owner=root group=grafana mode=0640"
+ansible monitor-lxc -b -m systemd -a "name=grafana-server state=restarted"
+```
+
+`grafana_dashboard_prune=false` crashed the role before this (the prune loop
+is templated before the block's `when`); fixed with
+`subelements('files', skip_missing=True)`.
+
+Verified end to end with a throwaway API rule reusing the CPU query at a
+50 C threshold: two alerts (one per socket, no LXC duplicates), routed to
+`matrix-homelab`, delivered 37 s after firing, then deleted.
+
+---
+
 ## 2026-08-16: SMART disk health, and onboarding the hypervisor
 
 Adding disk health turned out to require onboarding a host that had been

@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic Dell chassis fan speed refresh
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec={{ dell_fan_metrics_interval }}
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

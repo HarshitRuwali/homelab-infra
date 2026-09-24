@@ -1,0 +1,12 @@
+[Unit]
+Description=Collect Dell chassis fan speeds for the textfile collector
+Documentation=file://{{ dell_fan_metrics_script }}
+# /proc/i8k is created by dell_smm_hwmon. Without it there is nothing to read.
+ConditionPathExists=/proc/i8k
+
+[Service]
+Type=oneshot
+# Root is required: /proc/i8k and /sys/firmware/dmi/entries are root-only.
+User=root
+ExecStart={{ dell_fan_metrics_script }}
+TimeoutStartSec=30
