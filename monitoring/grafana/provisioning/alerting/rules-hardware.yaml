@@ -1,0 +1,310 @@
+apiVersion: 1
+
+# Chassis hardware health on the bare-metal hypervisor (t7920, a Dell
+# Precision 7920 Tower): CPU package temperatures and the Dell system fans.
+#
+# Temperatures are node_exporter's stock hwmon series, which Alloy's
+# prometheus.exporter.unix already collects from /sys/class/hwmon:
+#   coretemp        -> one chip per CPU socket (platform_coretemp_0/_1).
+#                      sensor="temp1" is "Package id N"; the rest are cores.
+#   dell_smm_hwmon  -> the Dell System Management Mode interface: six
+#                      unlabelled board temperatures, and fan1-fan4 unnamed.
+#
+# Fans come from roles/dell_fan_metrics instead: the same SMM interface, but
+# all twelve fans the firmware knows, named from SMBIOS (fleet_dell_fan_rpm,
+# labels fan and zone). hwmon stops at four. There is no IPMI or iDRAC on a
+# Precision tower, so SMM is the only source either way.
+#
+# EVERY QUERY IS SCOPED TO role="hypervisor", AND THAT IS NOT OPTIONAL. The LXC
+# guests share the hypervisor's kernel and therefore its /sys/class/hwmon, so
+# plex, memory, sec-dns, tailscale-router and main-server all push byte-for-
+# byte copies of these same sensors. Unscoped, every rule below would fire six
+# times for one hot CPU. If another bare-metal host joins `metal`, widen the
+# matcher to its role rather than dropping it.
+#
+# noDataState: OK throughout, for the same reason as rules-gpu.yaml: only the
+# hypervisor has these series. The liveness rule at the bottom is what keeps
+# that from hiding a sensor driver that failed to load.
+
+groups:
+  - orgId: 1
+    name: hardware
+    folder: Fleet
+    interval: 1m
+    rules:
+
+      # ---------------------------------------------------------------
+      # The Xeon Gold 6138's own limits, as coretemp reports them:
+      #   node_hwmon_temp_max_celsius  = 83  (every cooling device should be on)
+      #   node_hwmon_temp_crit_celsius = 93  (TjMax, PROCHOT throttling)
+      # 90 leaves three degrees before the silicon starts protecting itself.
+      - uid: fleet-hw-cpu-temperature-critical
+        title: CPU Package Temperature Critical
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: A CPU package has been at or above 90 C for five minutes, 3 C short of TjMax.
+          runbook: "sensors coretemp-isa-*; check the heatsink fans spin and the front intake is clear. Throttling is next."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, chip) (
+                  node_hwmon_temp_celsius{role="hypervisor", chip=~"platform_coretemp_.*", sensor="temp1"}
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gte, params: [90]}
+
+      # ---------------------------------------------------------------
+      # Socket 1 runs hotter than socket 0 (medians 72 C and 58 C over the
+      # week this was written) and brushes 83 C under load, but it spent one
+      # minute above it in seven days. Fifteen minutes above the part's own
+      # max is sustained heat, not a compile spike.
+      - uid: fleet-hw-cpu-temperature-high
+        title: CPU Package Temperature High
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: A CPU package has been above its 83 C rated max for fifteen minutes.
+          runbook: "Early warning ahead of throttling. Check which guest is loading it (Proxmox summary), then dust and airflow."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, chip) (
+                  node_hwmon_temp_celsius{role="hypervisor", chip=~"platform_coretemp_.*", sensor="temp1"}
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [83]}
+
+      # ---------------------------------------------------------------
+      # Unlike a GPU, the Dell BIOS never parks these fans: the slowest a
+      # populated fan read over the week this was written was 759 RPM, and
+      # the drive-bay fans idle near 2500. So no temperature guard is needed,
+      # and a reading under 500 is a fan that has stalled or is failing its
+      # bearing.
+      #
+      # Three names are excluded, each for a different reason:
+      #   CPU0  Dell fits no CPU 0 fan on this model; the front fans cool it.
+      #         The header exists and reads 0 forever.
+      #   PSU   The power supply's fan has no tachometer on SMM; always 0.
+      #   FB4   The fan behind rear FlexBay 4. This machine has no rear
+      #         FlexBays (both drives are in the front bays, confirmed
+      #         2026-09-23), so no fan is fitted; the BIOS lists the position
+      #         anyway and it reads 0. Drop it from this matcher only if rear
+      #         bays are ever added.
+      - uid: fleet-hw-fan-stalled
+        title: Chassis Fan Stalled
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: A Dell chassis fan has read under 500 RPM for five minutes. It has stopped or is failing.
+          runbook: "The fan label names it; see the fan map on the t7920 dashboard for where it sits. fleet-dell-fan-metrics re-reads every 30s. CPU temperature will follow."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                min by (host, fan, zone) (
+                  fleet_dell_fan_rpm{role="hypervisor", fan!~"CPU0|PSU|FB4"}
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [500]}
+
+      # ---------------------------------------------------------------
+      # The BIOS ramps fans to hold temperature, so a box whose fans are
+      # pinned high while temperatures still look fine is one that is
+      # compensating: clogged intake, a failed neighbour fan, a blocked vent.
+      # This catches the dust before the temperature rules do. Rated max is
+      # 4000 RPM; the week's peak was 1731.
+      #
+      # The 120 mm-class fans only (cpu, front, rear zones). The drive-bay
+      # fans are smaller and idle near 2500, so the same threshold would be
+      # meaningless for them.
+      - uid: fleet-hw-fans-high
+        title: Chassis Fans Running High
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: A Dell chassis fan has been above 3000 RPM (75% of max) for half an hour.
+          runbook: "The BIOS is compensating for something. Check CPU and board temperatures on the t7920 dashboard, then dust and intake."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, fan, zone) (
+                  fleet_dell_fan_rpm{role="hypervisor", zone=~"cpu|front|rear"}
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [3000]}
+
+      # ---------------------------------------------------------------
+      # The Dell SMM board sensors, minus temp1 and temp2, which track the two
+      # CPU packages within a few degrees and are covered above. The BIOS
+      # reports no type for any of them, so which is ambient, memory or VR is
+      # not knowable from software; the week's peak across the four was 51 C.
+      # 65 is well clear of normal and well short of anything dangerous.
+      - uid: fleet-hw-board-temperature-high
+        title: Board Temperature High
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: A Dell board temperature sensor has been above 65 C for half an hour.
+          runbook: "Check the t7920 dashboard for which sensor and whether the fans have ramped. Suspect airflow before hardware."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, sensor) (
+                  node_hwmon_temp_celsius{role="hypervisor", chip="platform_dell_smm_hwmon", sensor!~"temp1|temp2"}
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [65]}
+
+      # ---------------------------------------------------------------
+      # THE LIVENESS RULE, the counterpart of fleet-gpu-exporter-down.
+      #
+      # There is no separate exporter here to report up=0, so this keys on the
+      # host still pushing node_uname_info while the sensor series are gone,
+      # or while the fan collector's file has stopped being refreshed. A dead
+      # textfile script leaves its last values in place rather than removing
+      # them, so presence alone would read a frozen fan as a healthy one.
+      # That is what a failed driver looks like: a new -pve kernel that no
+      # longer whitelists this machine for dell_smm_hwmon, or a BIOS update
+      # that changes the SMM interface, takes the fans out of Prometheus while
+      # the host stays perfectly healthy, and every rule above goes silent.
+      #
+      # A host that is down entirely stops pushing node_uname_info too, so
+      # this stays quiet and fleet-host-down does the talking instead.
+      - uid: fleet-hw-sensors-missing
+        title: Hardware Sensors Missing
+        condition: C
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: The hypervisor is reporting, but its fan or CPU temperature sensors are not, or fan data is over 5 minutes old.
+          runbook: "lsmod | grep -E 'dell_smm|coretemp'; systemctl status fleet-dell-fan-metrics.timer; journalctl -u fleet-dell-fan-metrics -n 20. Usually a new kernel or BIOS."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                count by (host) (node_uname_info{role="hypervisor"})
+                unless on (host) (
+                  count by (host) (node_hwmon_temp_celsius{chip=~"platform_coretemp_.*"})
+                  and on (host)
+                  (time() - max by (host) (fleet_dell_fan_collection_timestamp_seconds) < 300)
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gte, params: [0]}

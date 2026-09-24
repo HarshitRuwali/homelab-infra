@@ -1,0 +1,20 @@
+---
+# Every Dell chassis fan by name, through the textfile collector Alloy already
+# reads. The stock dell_smm_hwmon driver stops at four fans (fan1-fan4); a
+# Precision 7920 Tower reports twelve. See templates/fleet-dell-fan-metrics.j2
+# for how the rest are read and named.
+#
+# OFF BY DEFAULT, ENABLED PER HOST, same contract as smart_metrics. This is
+# true of one Dell workstation, not of bare metal in general, so it is set in
+# host_vars/t7920.yml rather than group_vars/metal.
+dell_fan_metrics_enabled: false
+
+dell_fan_metrics_dir: "{{ alloy_textfile_dir }}"
+dell_fan_metrics_file: fleet-dell-fans.prom
+dell_fan_metrics_script: /usr/local/bin/fleet-dell-fan-metrics
+
+# Twelve SMM reads take about 10 ms in total (measured on t7920). Each one is a
+# System Management Interrupt, which briefly stalls every core, so this is
+# deliberately slower than the 15s Alloy scrape. A fan does not stall and
+# recover inside 30 seconds in any way worth charting.
+dell_fan_metrics_interval: 30s

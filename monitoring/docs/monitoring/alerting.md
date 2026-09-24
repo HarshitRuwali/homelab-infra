@@ -1,7 +1,7 @@
 # Alerting
 
-47 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
-room through a local relay. 42 are committed under
+53 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
+room through a local relay. 48 are committed under
 `grafana/provisioning/alerting/`; the five availability rules are generated
 from the inventory, so adding a host cannot leave a silent gap in
 down-detection.
@@ -103,6 +103,27 @@ down-detection.
     | `fleet-gpu-vram-exhausted` | warning | 15m | under 5% VRAM free |
     | `fleet-gpu-fan-stopped` | critical | 15m | fan reads zero while the card is over 70 C |
     | `fleet-gpu-exporter-down` | warning | 15m | the exporter stopped responding |
+
+=== "Hardware (6)"
+
+    Chassis sensors on the hypervisor (a Dell Precision 7920 Tower).
+    Temperatures come from node_exporter's stock hwmon collector (`coretemp`
+    for the CPU packages, `dell_smm_hwmon` for the board sensors); fans come
+    from `roles/dell_fan_metrics`, which reads all twelve the firmware knows,
+    by name. No IPMI or iDRAC exists on a Precision tower. Every query is
+    scoped to `role="hypervisor"`, because the LXC guests share the host's
+    kernel and push identical copies of the hwmon sensors. Liveness keys on
+    the host still pushing `node_uname_info` while the sensors are gone or the
+    fan data has gone stale.
+
+    | uid | Severity | For | Fires when |
+    |---|---|---|---|
+    | `fleet-hw-cpu-temperature-critical` | critical | 5m | a CPU package at or above 90 C (TjMax is 93 C) |
+    | `fleet-hw-cpu-temperature-high` | warning | 15m | a CPU package above its 83 C rated max |
+    | `fleet-hw-fan-stalled` | critical | 5m | a fitted fan under 500 RPM; the BIOS never parks them. Excludes CPU0 (no fan), PSU (no tachometer) and FB4 (no rear bays, so no fan) |
+    | `fleet-hw-fans-high` | warning | 30m | a 120 mm fan above 3000 RPM (75% of max): the BIOS is compensating |
+    | `fleet-hw-board-temperature-high` | warning | 30m | a Dell SMM board sensor above 65 C |
+    | `fleet-hw-sensors-missing` | warning | 15m | the host reports but its CPU sensors do not, or fan data is over 5 min old |
 
 ## Rule structure
 

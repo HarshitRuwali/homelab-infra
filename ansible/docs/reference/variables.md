@@ -77,6 +77,18 @@ For how variable precedence works at all, see
     `Encountered unknown tag 's'`. The script builds that line by
     concatenation instead. This applies to comments too.
 
+## Dell chassis fans
+
+`roles/dell_fan_metrics/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `dell_fan_metrics_enabled` | `false` | **the only switch**; set `true` in `host_vars/t7920.yml` |
+| `dell_fan_metrics_interval` | `30s` | each read is an SMI that briefly stalls every core; slower than the scrape on purpose |
+
+Per host rather than per group: it is true of one Dell workstation, not of
+bare metal in general. The role fails loudly if the host has no `/proc/i8k`.
+
 ## GPU exporter
 
 `roles/gpu_exporter/defaults/main.yml`

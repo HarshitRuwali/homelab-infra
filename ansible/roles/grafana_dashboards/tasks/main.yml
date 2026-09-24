@@ -72,7 +72,11 @@
       ansible.builtin.file:
         path: "{{ item.1.path }}"
         state: absent
-      loop: "{{ gd_remote.results | subelements('files') }}"
+      # skip_missing: the block's `when` is checked per item, AFTER this loop
+      # is templated. With grafana_dashboard_prune=false the find above
+      # registers skipped results with no `files` key, and a bare
+      # subelements('files') fails the play instead of skipping the prune.
+      loop: "{{ gd_remote.results | subelements('files', skip_missing=True) }}"
       loop_control:
         label: "{{ item.1.path | basename }}"
       when: >-

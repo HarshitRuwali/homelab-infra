@@ -77,6 +77,12 @@ redeploy.
 `uid: system-overview`: per-host resource detail. CPU, memory, root disk,
 network throughput, uptime and host count.
 
+A hardware row underneath carries the basics: hottest CPU, hottest disk,
+slowest chassis fan, fans stalled, CPU temperature by host and fan speeds.
+Only t7920 and the Pis have real sensors (the LXC guests echo the
+hypervisor's), so these panels select `role="hypervisor"` and `role="pi"`.
+Each panel links to the t7920 dashboard for the detail.
+
 ## Network
 
 `uid: network-monitoring`: throughput, packet rates, interface errors and
@@ -147,6 +153,17 @@ by `uuid`, so a multi-GPU box gets one line per card). See
 and `ansible/roles/gpu_exporter` for how it gets
 there. Empty GPU panels on a host that never had `nvidia-smi` mean the
 exporter correctly never installed, not a scrape failure.
+
+`t7920` additionally has the detailed hardware view. The centrepiece is the
+**Chassis Fan Map**, a canvas panel laid out as the two fan figures in Dell's
+Owner's Manual (main side and drive side), with every fan at its physical
+position showing live RPM, coloured by health. Positions the BIOS does not
+list are drawn as "not fitted". Around it: both CPU package temperatures
+against the alert thresholds, every fan by name as time series and as bars,
+the per-socket core temperature spread, a per-core table sorted hottest
+first, and the Dell SMM board, PCH and NVMe temperatures. See
+[Hardware sensors](../reference/metrics.md#hardware-sensors) for where each
+series comes from.
 
 Add a new host's dashboard by copying an existing `servers/*.json`, replacing
 every `host="<name>"` and the `uid`/`title`, and re-running the JSON

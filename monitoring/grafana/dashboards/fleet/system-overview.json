@@ -101,11 +101,89 @@
       ],
       "title": "Network Throughput",
       "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Hottest CPU package (t7920) or SoC (Pis) across the selected hosts. Only t7920 and the Pis have real sensors. The LXC guests report byte-for-byte copies of t7920's, since they share its kernel, so these panels select role=hypervisor and role=pi and ignore the rest.",
+      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 80}, {"color": "red", "value": 88}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 21},
+      "id": 9,
+      "links": [{"title": "t7920 hardware detail", "url": "/d/host-t7920/t7920"}],
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(max by (host) (node_hwmon_temp_celsius{host=~\"$host\",role=\"hypervisor\",chip=~\"platform_coretemp_.*\",sensor=\"temp1\"}) or max by (host) (node_hwmon_temp_celsius{host=~\"$host\",role=\"pi\",chip=\"thermal_thermal_zone0\"}))", "refId": "A"}],
+      "title": "Hottest CPU",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Hottest drive by its own SMART sensor (metal hosts only). fleet-smart-temperature-high fires above 60 C for 30 min.",
+      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 60}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 21},
+      "id": 10,
+      "links": [{"title": "t7920 hardware detail", "url": "/d/host-t7920/t7920"}],
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(fleet_smart_temperature_celsius{host=~\"$host\"})", "refId": "A"}],
+      "title": "Hottest Disk",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Slowest fitted Dell chassis fan on t7920, from roles/dell_fan_metrics. Under 500 RPM is a stalled fan. The fan map on the t7920 dashboard shows which one.",
+      "fieldConfig": {"defaults": {"unit": "rotrpm", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 500}, {"color": "orange", "value": 3000}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 21},
+      "id": 11,
+      "links": [{"title": "t7920 hardware detail", "url": "/d/host-t7920/t7920"}],
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "min(fleet_dell_fan_rpm{host=~\"$host\",fan!~\"CPU0|PSU|FB4\"})", "refId": "A"}],
+      "title": "Slowest Chassis Fan",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Fitted Dell chassis fans under 500 RPM right now. Anything but 0 is fleet-hw-fan-stalled about to page.",
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 21},
+      "id": 12,
+      "links": [{"title": "t7920 hardware detail", "url": "/d/host-t7920/t7920"}],
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(fleet_dell_fan_rpm{host=~\"$host\",fan!~\"CPU0|PSU|FB4\"} < 500) or vector(0)", "refId": "A"}],
+      "title": "Fans Stalled",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Hottest CPU package per host (t7920) and SoC temperature (Pis). Dashed lines at 80 C and 88 C. Only t7920 and the Pis have real sensors. The LXC guests report byte-for-byte copies of t7920's, since they share its kernel, so these panels select role=hypervisor and role=pi and ignore the rest.",
+      "fieldConfig": {"defaults": {"unit": "celsius", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 80}, {"color": "red", "value": 88}]}, "custom": {"thresholdsStyle": {"mode": "dashed"}}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26},
+      "id": 13,
+      "links": [{"title": "t7920 hardware detail", "url": "/d/host-t7920/t7920"}],
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (host) (node_hwmon_temp_celsius{host=~\"$host\",role=\"hypervisor\",chip=~\"platform_coretemp_.*\",sensor=\"temp1\"})", "legendFormat": "{{host}} CPU", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (host) (node_hwmon_temp_celsius{host=~\"$host\",role=\"pi\",chip=\"thermal_thermal_zone0\"})", "legendFormat": "{{host}} SoC", "refId": "B"}
+      ],
+      "title": "CPU Temperature by Host",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Every fitted t7920 chassis fan by name, plus the rpi5 cooler on the right axis (it idles near 10000 RPM and would flatten the Dell fans on a shared axis). Detail and physical positions are on the t7920 dashboard.",
+      "fieldConfig": {"defaults": {"unit": "rotrpm", "min": 0}, "overrides": [{"matcher": {"id": "byRegexp", "options": ".*cooler"}, "properties": [{"id": "custom.axisPlacement", "value": "right"}]}]},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 26},
+      "id": 14,
+      "links": [{"title": "t7920 hardware detail", "url": "/d/host-t7920/t7920"}],
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=~\"$host\",fan!~\"CPU0|PSU|FB4\"}", "legendFormat": "{{host}} {{fan}}", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_hwmon_fan_rpm{host=~\"$host\",role=\"pi\"}", "legendFormat": "{{host}} cooler", "refId": "B"}
+      ],
+      "title": "Fan Speeds",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["system", "alloy", "prometheus"],
+  "tags": ["system", "alloy", "prometheus", "hardware"],
   "templating": {
     "list": [
       {

@@ -16,3 +16,6 @@
     # other host this role removes any leftovers and moves on. See the role
     # defaults for why that is inventory-gated rather than autodetected.
     - smart_metrics
+    # Same shape again: a textfile exporter, inert unless
+    # dell_fan_metrics_enabled is set, which only host_vars/t7920.yml does.
+    - dell_fan_metrics

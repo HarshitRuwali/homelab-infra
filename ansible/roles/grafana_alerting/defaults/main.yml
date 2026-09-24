@@ -33,3 +33,7 @@ grafana_alerting_static_files:
   # GPU health. Liveness keys on up{job="nvidia-gpu"} rather than on absent
   # nvidia_smi_* series, which by definition vanish exactly when needed.
   - rules-gpu.yaml
+  # Chassis hardware on the hypervisor: CPU package temperatures and the Dell
+  # fans. Every query is scoped to role="hypervisor" because the LXC guests
+  # push copies of the host's hwmon sensors; see the file's header.
+  - rules-hardware.yaml
