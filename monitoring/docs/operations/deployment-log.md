@@ -33,12 +33,14 @@ ansible-playbook playbooks/dashboards.yml -e grafana_dashboard_prune=false
 The t7920 dashboard gained a Chassis Fan Map canvas laid out as Dell's two
 figures, and System Overview gained a basic hardware row.
 
-### Nothing new to collect
+### Temperatures were already collected
 
 Probed before designing anything. A Precision tower has no IPMI or iDRAC
 (`/dev/ipmi*` does not exist), but `coretemp` and `dell_smm_hwmon` were
 already loaded, and node_exporter's hwmon collector had been pushing both
-since the host was onboarded. The work was dashboards and rules only.
+since the host was onboarded. The dashboards and rules cover those existing
+series; the one new collector is `roles/dell_fan_metrics`, rolled out to
+name every fan, because hwmon stops at four unnamed ones.
 
 Two findings shaped the rules:
 

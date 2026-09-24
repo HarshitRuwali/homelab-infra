@@ -262,8 +262,10 @@ groups:
       # host still pushing node_uname_info while the sensor series are gone,
       # or while the fan collector's file has stopped being refreshed. A dead
       # textfile script leaves its last values in place rather than removing
-      # them, so presence alone would read a frozen fan as a healthy one.
-      # That is what a failed driver looks like: a new -pve kernel that no
+      # them, so presence alone would read a frozen fan as a healthy one. A
+      # fresh file is not enough either: one that lists no fans, or whose SMM
+      # reads failed, leaves the stall rule nothing to evaluate, so both count
+      # as missing too. That is what a failed driver looks like: a new -pve kernel that no
       # longer whitelists this machine for dell_smm_hwmon, or a BIOS update
       # that changes the SMM interface, takes the fans out of Prometheus while
       # the host stays perfectly healthy, and every rule above goes silent.
@@ -277,7 +279,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: The hypervisor is reporting, but its fan or CPU temperature sensors are not, or fan data is over 5 minutes old.
+          summary: The hypervisor is reporting, but its fan or CPU temperature sensors are not, fan data is over 5 minutes old, or the fan collector found no fans or failed a read.
           runbook: "lsmod | grep -E 'dell_smm|coretemp'; systemctl status fleet-dell-fan-metrics.timer; journalctl -u fleet-dell-fan-metrics -n 20. Usually a new kernel or BIOS."
         noDataState: OK
         execErrState: Error
@@ -293,9 +295,13 @@ groups:
               expr: |
                 count by (host) (node_uname_info{role="hypervisor"})
                 unless on (host) (
-                  count by (host) (node_hwmon_temp_celsius{chip=~"platform_coretemp_.*"})
+                  count by (host) (node_hwmon_temp_celsius{role="hypervisor", chip=~"platform_coretemp_.*"})
                   and on (host)
-                  (time() - max by (host) (fleet_dell_fan_collection_timestamp_seconds) < 300)
+                  (time() - max by (host) (fleet_dell_fan_collection_timestamp_seconds{role="hypervisor"}) < 300)
+                  and on (host)
+                  (max by (host) (fleet_dell_fans_total{role="hypervisor"}) > 0)
+                  and on (host)
+                  (max by (host) (fleet_dell_fan_read_errors{role="hypervisor"}) == 0)
                 )
           - refId: B
             datasourceUid: __expr__
