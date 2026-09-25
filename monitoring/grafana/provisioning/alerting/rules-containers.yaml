@@ -332,6 +332,11 @@ groups:
       # `role!="workstation"` excludes ubuntu-dev on purpose. A dev box starts
       # and destroys throwaway containers constantly and every one of them
       # would fire this. On a server, a container disappearing is news.
+      # Require fresh host metrics too. A remote-write gap makes every
+      # container on that host appear to disappear at once; Host Down covers
+      # that case and the individual container alerts would only add noise.
+      # s3-backup-runner-* is an intentionally short-lived `docker run --rm`
+      # helper; it must vanish after each successful backup.
       - uid: fleet-container-disappeared
         title: Container Disappeared
         condition: C
@@ -353,9 +358,12 @@ groups:
               instant: true
               range: false
               expr: |
-                time() - max by (host, name) (
-                  max_over_time(container_last_seen{name!="",role!="workstation"}[1h])
+                (
+                  time() - max by (host, name) (
+                    max_over_time(container_last_seen{name!="",name!~"s3-backup-runner-.*",role!="workstation"}[1h])
+                  )
                 )
+                and on (host) max by (host) (up{job=~"integrations/unix|host-unix"} == 1)
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}

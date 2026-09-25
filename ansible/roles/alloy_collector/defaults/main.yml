@@ -56,3 +56,7 @@ collector_basic_auth_required: true
 # Set it per host or per group where 10% is too much: see
 # host_vars/tailscale-router.yml, which caps it on a 2.0 GB rootfs.
 journald_system_max_use: ""
+
+# Where the private-ingest CA lands on each collector. See
+# collector_ingest_ca_file in group_vars/all.
+alloy_ingest_ca_path: /etc/alloy/ingest-ca.crt

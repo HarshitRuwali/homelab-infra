@@ -189,6 +189,13 @@ alerting:
 
 rule_files: []
 
+# Collectors can replay queued samples after a brief ingest outage. The window
+# would also hide two hosts sending identical series, so
+# fleet-prometheus-out-of-order alerts when out-of-order samples keep arriving.
+storage:
+  tsdb:
+    out_of_order_time_window: 30m
+
 scrape_configs:
   - job_name: prometheus
     static_configs:
@@ -515,7 +522,24 @@ prometheus.scrape "host" {
 prometheus.scrape "alloy" {
   job_name   = "alloy"
   targets    = [{"__address__" = "127.0.0.1:12345"}]
+  forward_to = [prometheus.relabel.alloy_host.receiver]
+}
+
+prometheus.relabel "alloy_host" {
   forward_to = [prometheus.remote_write.central.receiver]
+
+  // Keep the write destination before overwriting `host`, so the loki_write_*
+  // metrics still show which ingest URL each collector is using.
+  rule {
+    source_labels = ["host"]
+    regex         = "(.+)"
+    target_label  = "destination_host"
+  }
+
+  rule {
+    target_label = "host"
+    replacement  = sys.env("MONITOR_HOSTNAME")
+  }
 }
 
 loki.write "central" {
@@ -699,6 +723,55 @@ server {
   }
 }
 EOF
+
+  # Private HTTPS for collectors on the LAN (monitoring_ingest_base_url).
+  # Port 80 above is for the Cloudflare tunnel, which connects over
+  # localhost; LAN collectors use this listener so their Basic Auth
+  # credential is never sent in cleartext. The certificate is signed by the
+  # homelab CA and must list every private address collectors use.
+  local tls_dir="/etc/nginx/tls"
+  if [[ -f "$tls_dir/monitoring-ingest.crt" && -f "$tls_dir/monitoring-ingest.key" ]]; then
+    log "Adding the private HTTPS ingest listener."
+    cat >> /etc/nginx/sites-available/monitoring.conf <<EOF
+
+server {
+  listen 443 ssl;
+  server_name _;
+
+  ssl_certificate     ${tls_dir}/monitoring-ingest.crt;
+  ssl_certificate_key ${tls_dir}/monitoring-ingest.key;
+  ssl_protocols       TLSv1.2 TLSv1.3;
+
+  client_max_body_size 50m;
+
+  location /prometheus/ {
+    auth_basic "collector metrics ingest";
+    auth_basic_user_file ${htpasswd_file};
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_pass http://${listen_addr}:9090/;
+  }
+
+  location /loki/ {
+    auth_basic "collector logs ingest";
+    auth_basic_user_file ${htpasswd_file};
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_pass http://${listen_addr}:3100;
+  }
+
+  location / {
+    return 404;
+  }
+}
+EOF
+  fi
 
   rm -f /etc/nginx/sites-enabled/default
   ln -sfn /etc/nginx/sites-available/monitoring.conf /etc/nginx/sites-enabled/monitoring.conf
