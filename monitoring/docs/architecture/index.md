@@ -60,15 +60,53 @@ flowchart LR
     M -->|"m.room.message"| X["Matrix room"]
 ```
 
-Every host, on the tailnet or on the private LAN, uses the **same public HTTPS
-ingest endpoint**. That gives exactly one collector config shape in the fleet.
+Every host uses the same ingest base URL from the inventory. Sites where all
+collectors can reach central nginx privately can set `monitoring_ingest_base_url`
+in `hosts.local.yml` to avoid sending internal telemetry through the public
+tunnel. Other sites use the public HTTPS monitoring domain.
 
-!!! note "The tradeoff that buys"
-    Internal telemetry makes a round trip through Cloudflare, and guests
-    cannot push while the WAN is down. Accepted deliberately: one config shape
-    is worth more here than a few milliseconds and a rare failure mode. The
-    exception is the central node itself, which pushes over loopback so its
-    own telemetry never depends on the WAN.
+### Private ingest
+
+The private URL should be HTTPS, or the Basic Auth credential and all
+telemetry cross the LAN in cleartext. Central nginx serves the two ingest
+paths on port 443 when `/etc/nginx/tls/monitoring-ingest.{crt,key}` exist
+(`scripts/lxc-install.sh` adds the listener); port 80 stays for the Cloudflare
+tunnel, which connects over loopback. Sign the certificate with your own CA and
+list every private address collectors use:
+
+```bash
+cd ~/Documents/homelab-ca   # wherever the CA lives; ca.key never leaves it
+cat > monitor-ingest.ext <<'EXT'
+subjectAltName=DNS:monitor-lxc,IP:10.0.0.10
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+EXT
+openssl req -new -newkey rsa:2048 -nodes -keyout monitor-ingest.key \
+  -subj "/CN=monitor-lxc" -out monitor-ingest.csr
+openssl x509 -req -in monitor-ingest.csr -CA ca.crt -CAkey ca.key \
+  -CAserial ca.srl -days 825 -sha256 -extfile monitor-ingest.ext \
+  -out monitor-ingest.crt
+```
+
+Copy the certificate and key to `/etc/nginx/tls/` on the central box (key mode
+`0600`) and reload nginx. Then set, in `hosts.local.yml`:
+
+```yaml
+monitoring_ingest_base_url: https://10.0.0.10
+monitoring_ingest_ca_file: /path/to/homelab-ca/ca.crt   # on the Ansible controller
+```
+
+`collectors.yml` copies the CA to `/etc/alloy/ingest-ca.crt` and sets it as
+the only trusted CA on both ingest endpoints, so collectors do not trust the
+homelab CA for anything else. When the certificate expires,
+every collector fails TLS and Host Down fires fleet-wide, so note its expiry
+(`openssl x509 -noout -enddate`) and reissue it
+before then with the same commands.
+
+!!! note "Central collector"
+    The central node always pushes over loopback, regardless of the fleet URL,
+    so its own telemetry never depends on the LAN or WAN.
 
 ## Persistence
 

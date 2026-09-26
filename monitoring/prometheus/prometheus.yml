@@ -7,6 +7,13 @@ alerting:
 
 rule_files: []
 
+# Collectors can replay queued samples after a brief ingest outage. The window
+# would also hide two hosts sending identical series, so
+# fleet-prometheus-out-of-order alerts when out-of-order samples keep arriving.
+storage:
+  tsdb:
+    out_of_order_time_window: 30m
+
 scrape_configs:
   - job_name: prometheus
     static_configs:

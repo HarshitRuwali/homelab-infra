@@ -15,6 +15,7 @@ down-detection.
     | `fleet-host-down` | critical | 0m | no metrics for 10 min ([or-chain](../architecture/push-model.md)) |
     | `fleet-collector-lagging` | warning | 5m | data arriving but >15 min stale |
     | `fleet-remote-write-failing` | warning | 10m | Alloy failing to push samples |
+    | `fleet-prometheus-out-of-order` | warning | 30m | Prometheus still accepting out-of-order samples after 30m: two collectors probably send identical series |
     | `fleet-clock-unsynced` | warning | 30m | NTP not synchronised |
     | `fleet-central-stack-down` | critical | 2m | a core service on the central LXC is not active |
 
@@ -50,7 +51,7 @@ down-detection.
     | `fleet-container-oom` | critical | 0m | container OOM-killed in last 15 min |
     | `fleet-container-memory-near-limit` | warning | 15m | over 90% of its own limit |
     | `fleet-container-unhealthy` | warning | 10m | was healthy, now failing ([why that matters](container-metrics.md#container_health_state-does-not-mean-what-it-looks-like)) |
-    | `fleet-container-disappeared` | warning | 10m | container gone, non-workstation hosts |
+    | `fleet-container-disappeared` | warning | 10m | container gone while host metrics are still arriving, non-workstation hosts; excludes the temporary S3 backup runner |
     | `fleet-docker-update-failed` | critical | 0m | nightly update failed or left restarts, non-workstation hosts |
     | `fleet-docker-update-stale` | warning | 1h | no successful update in 50h |
 

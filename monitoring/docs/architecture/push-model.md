@@ -104,7 +104,20 @@ Two other rules use this pattern because they have the same problem:
 
 For containers the 1h window is deliberate: the alert names the container that
 vanished, then self-resolves after an hour rather than nagging about something
-you deliberately removed.
+you deliberately removed. It also requires a fresh host `up` sample. When
+remote write stalls, every container's `container_last_seen` grows stale
+together; Host Down covers that outage without a page for each container.
+
+## Out-of-order remote writes
+
+Alloy self metrics can carry a `host` label naming the ingest URL. The
+collector's external `host` label only fills missing labels, so without an
+explicit relabel those metrics collide across machines with the same role.
+The Alloy self scrape rewrites `host` to `MONITOR_HOSTNAME` before remote write.
+
+Prometheus accepts samples up to 30 minutes out of order. This handles short
+network interruptions and queued batches arriving after newer samples; it
+does not make an absent host look healthy or preserve arbitrarily old backlog.
 
 ## Known blind spot
 

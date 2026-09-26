@@ -1,0 +1,54 @@
+---
+# Redis 7.x to 8.x is a supported upgrade path. Memory has a persistent AOF;
+# save and copy it before changing the image. Nextcloud Redis is a cache.
+- name: Upgrade memory Redis to the current stable major
+  hosts: memory
+  become: true
+  tasks:
+    - name: Save the current Redis dataset
+      ansible.builtin.command: docker exec redis redis-cli SAVE
+
+    - name: Copy the persistent Redis files outside their Docker volume
+      ansible.builtin.command:
+        cmd: cp -a /var/lib/docker/volumes/memory_redis_data/_data /root/redis-pre8-backup
+        creates: /root/redis-pre8-backup
+
+    - name: Follow Redis 8 stable updates
+      ansible.builtin.replace:
+        path: /root/memory/docker-compose.yml
+        regexp: 'image: redis:7(?:\.2)?-alpine'
+        replace: 'image: redis:8-alpine'
+        backup: true
+
+    - name: Start Redis 8
+      ansible.builtin.command: docker compose -f /root/memory/docker-compose.yml up -d --no-deps --pull always redis
+
+    - name: Check Redis replies
+      ansible.builtin.command: docker exec redis redis-cli PING
+      register: memory_redis_ping
+      retries: 12
+      delay: 5
+      until: memory_redis_ping.stdout == "PONG"
+      changed_when: false
+
+- name: Upgrade the Nextcloud cache to Redis 8
+  hosts: cloud-services
+  become: true
+  tasks:
+    - name: Follow Redis 8 stable updates
+      ansible.builtin.replace:
+        path: /home/harshit/nextcloud/compose.yaml
+        regexp: 'image: redis:7-alpine'
+        replace: 'image: redis:8-alpine'
+        backup: true
+
+    - name: Start Redis 8
+      ansible.builtin.command: docker compose -f /home/harshit/nextcloud/compose.yaml up -d --no-deps --pull always redis
+
+    - name: Check Redis replies
+      ansible.builtin.command: docker exec nextcloud-redis-1 redis-cli PING
+      register: nextcloud_redis_ping
+      retries: 12
+      delay: 5
+      until: nextcloud_redis_ping.stdout == "PONG"
+      changed_when: false

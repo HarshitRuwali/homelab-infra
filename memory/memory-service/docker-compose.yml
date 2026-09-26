@@ -10,7 +10,11 @@
 
 services:
   qdrant:
-    image: qdrant/qdrant:v1.12.1
+    # Qdrant upgrades its storage only one minor release at a time. Before
+    # `up -d` on existing data, compare `curl localhost:6333` with the newest
+    # release; if it is more than one minor behind, step through the missed
+    # minors with ../upgrade-qdrant-stepwise.sh.
+    image: qdrant/qdrant:latest
     container_name: qdrant
     restart: unless-stopped
     ports:
@@ -57,7 +61,7 @@ services:
       start_period: 10s
 
   redis:
-    image: redis:7.2-alpine
+    image: redis:8-alpine
     container_name: redis
     restart: unless-stopped
     ports:

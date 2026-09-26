@@ -6,11 +6,22 @@
 monitor_hostname: "{{ inventory_hostname }}"
 
 # Ingest -----------------------------------------------------------------
-# One endpoint for the entire fleet. `monitoring_domain` is site-specific and
-# is defined in inventory/hosts.local.yml (gitignored), so this repo stays
-# free of real hostnames.
-prometheus_remote_write_url: "https://{{ monitoring_domain }}/prometheus/api/v1/write"
-loki_write_url: "https://{{ monitoring_domain }}/loki/api/v1/push"
+# One endpoint for the entire fleet. On a LAN, set monitoring_ingest_base_url
+# in hosts.local.yml to the central nginx's private address so telemetry does
+# not depend on a round trip through the public tunnel. Other deployments
+# continue to use the site-specific public monitoring_domain.
+prometheus_remote_write_url: "{{ monitoring_ingest_base_url | default('https://' ~ monitoring_domain, true) }}/prometheus/api/v1/write"
+loki_write_url: "{{ monitoring_ingest_base_url | default('https://' ~ monitoring_domain, true) }}/loki/api/v1/push"
+# With an https:// monitoring_ingest_base_url, set monitoring_ingest_ca_file in
+# hosts.local.yml to the CA (a path on the Ansible controller) that signed the
+# central nginx's private certificate. Collectors trust only that CA on their
+# ingest connections, not system-wide. Empty for the central box, whose URLs
+# are localhost, and for the public URL, which uses a public certificate.
+collector_ingest_ca_file: >-
+  {{ monitoring_ingest_ca_file | default('')
+     if (monitoring_ingest_base_url | default('')) is match('https://')
+        and prometheus_remote_write_url.startswith(monitoring_ingest_base_url | default('~'))
+     else '' }}
 collector_basic_auth_user: collector
 collector_basic_auth_password: "{{ vault_collector_basic_auth_password }}"
 

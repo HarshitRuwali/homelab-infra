@@ -143,6 +143,46 @@ groups:
                 - evaluator: {type: gt, params: [0]}
 
       # ---------------------------------------------------------------
+      # Prometheus accepts samples up to 30m late (out_of_order_time_window)
+      # so collectors can replay a backlog after an ingest outage. The same
+      # window would quietly merge two hosts that send identical series, which
+      # is how the 2026-09-24 alert flood started. A replay is a burst that
+      # ends within minutes; colliding series keep arriving out of order, so
+      # only a sustained rate fires.
+      - uid: fleet-prometheus-out-of-order
+        title: Prometheus Ingesting Out-of-Order Samples
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: Prometheus has accepted out-of-order samples for over 30 minutes. Two collectors are probably sending identical series.
+          runbook: "Find series with a changing instance or job on one host label; check the Alloy relabel rules"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: sum(increase(prometheus_tsdb_head_out_of_order_samples_appended_total[15m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
       - uid: fleet-clock-unsynced
         title: Clock Not Synchronised
         condition: C
