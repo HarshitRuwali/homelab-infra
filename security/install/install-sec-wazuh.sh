@@ -33,6 +33,9 @@ run install -d -m 0700 "$WAZUH_WORKDIR"
 download_file "https://packages.wazuh.com/${WAZUH_VERSION}/wazuh-install.sh" "$WAZUH_WORKDIR/wazuh-install.sh"
 run bash -c 'cd "$1" && bash ./wazuh-install.sh -a -i' _ "$WAZUH_WORKDIR"
 run bash "$(dirname "$0")/configure-sec-wazuh.sh" --apply
+# The vulnerability feed updater leaves its downloads behind; left alone they
+# filled the 25 GB root on 2026-09-23. See the script for the details.
+run bash "$(dirname "$0")/configure-sec-wazuh-cleanup.sh" --apply
 # The installer leaves Wazuh's apt repo enabled. The fleet's nightly run only
 # takes Debian-Security, but force-updates.yml does a full upgrade, which would
 # move these four independently when a release lands. They must upgrade

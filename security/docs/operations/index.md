@@ -136,6 +136,17 @@ Roughly monthly:
   are looking for is drift: a new unauthenticated service, another multi-homed
   host, an interface nobody declared.
 
+Automatic, nightly at 02:00 IST on `sec-wazuh`:
+
+- **`wazuh-vd-tmp-cleanup.timer`** deletes vulnerability feed updater scratch
+  files in `/var/ossec/queue/vd_updater/tmp` that have not been written for six
+  hours. Wazuh leaves its feed downloads there; on 2026-09-23 they reached 9 GB,
+  filled the 25 GB root, stopped the manager and silenced the guest's
+  monitoring. Installed by `install/configure-sec-wazuh-cleanup.sh`, which
+  `install-sec-wazuh.sh` runs. Check it with
+  `journalctl -u wazuh-vd-tmp-cleanup`. The disk was grown to 40 GB the same
+  day, because a full feed update needs the feed and its download side by side.
+
 ## Verification
 
 After each deployment, run something that fails if it did not work.
