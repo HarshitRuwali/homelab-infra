@@ -361,7 +361,7 @@ Everything here follows from that.
 
 | Risk | What stops it |
 |---|---|
-| Escaping to the hypervisor | VMs only, never containers: a container shares the host's kernel, so one kernel bug would give a tenant the host. No guest agent, no passthrough, a generic CPU type. |
+| Escaping to the hypervisor | VMs only, never containers: a container shares the host's kernel, so one kernel bug would give a tenant the host. No guest agent, no passthrough, a generic CPU model (`x86-64-v3` by default; `--cpu host` is refused). |
 | Joining your tailnet | Tailscale in the VM is logged in with **the tenant's** account, never yours. Your tailnet routes `10.10.0.0/24` and its ACLs allow everything, so one login with your account would hand them your network. |
 | Reaching your network | `vmbr2`, the bridge only OPNsense is on, never `vmbr0` (which carries the hypervisor's own address). The `tenant` firewall group drops every private range in both directions, except the tenant gateway. |
 | Reaching each other | Every tenant's inbound policy is DROP, the only exception being SSH from OPNsense (your setup path), and other tenants are private addresses. `ipfilter` pins each VM to its one IP, and `macfilter` to its MAC, so it can't pose as a neighbour. |
@@ -461,6 +461,14 @@ guest built from one can't be created unattended.
 - **The template holds only what every clone shares.** Name, size, bridge and
   SSH key are set on each clone. The template's description records which
   image built it and that image's date, so you can tell when it's stale.
+- **Every VM gets a named CPU model, `x86-64-v3` by default.** Left unset,
+  `qm` falls back to `kvm64`, which hides SSE4.2, POPCNT and AVX2. Modern
+  runtimes need those: Claude Code (a Bun binary) just spins at startup on
+  `kvm64`. `x86-64-v3` has AVX2 and still hides the exact host CPU. Change it
+  with `--cpu` on `template`, `vm` and `tenant`, or `CPU_TYPE` for every run;
+  the script refuses a model the host can't run. To fix an existing VM:
+  `qm set <vmid> --cpu x86-64-v3`, then `qm shutdown` and `qm start` (a reboot
+  from inside doesn't apply it).
 - **Consoles need a password to log in.** Every VM has a serial port, for
   the web UI's xterm.js and `qm terminal <vmid>`. The display is the default
   VGA, so the noVNC console shows tty1, except on Debian genericcloud, which
@@ -493,4 +501,5 @@ guest built from one can't be created unattended.
 | `TENANT_NET_RATE` | `12.5` | MB/s per tenant NIC |
 | `TENANT_DISK_MBPS` | `100` | MB/s each way per tenant disk |
 | `TENANT_DISK_IOPS` | `2000` | IOPS each way per tenant disk |
+| `CPU_TYPE` | `x86-64-v3` | CPU model for templates and VMs |
 | `TENANT_CPUUNITS` | `50` | CPU weight; your guests have 100 |

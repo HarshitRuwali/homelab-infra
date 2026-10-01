@@ -27,6 +27,7 @@
 #   --image FILE    cloud image, a file name in the ISO or import dir
 #                   (default: newest debian-*-genericcloud-amd64.qcow2)
 #   --name NAME     template name                     (default: tmpl-<distro>)
+#   --cpu MODEL     CPU model clones inherit          (default x86-64-v3)
 #
 # vm and lxc options:
 #   --name NAME     hostname, required
@@ -36,12 +37,14 @@
 #   --disk GB       default 8
 #   --bridge BR     default vmbr0
 #   --template N    vm only: template VMID to clone   (default 9000)
+#   --cpu MODEL     vm only: CPU model                (default x86-64-v3)
 #   --image X       lxc only: template file, or a family such as
 #                   ubuntu-24.04-standard             (default debian-13-standard)
 #   --no-start      create it, leave it stopped
 #
 # tenant options (a VM, always on the tenant bridge; --bridge is refused):
-#   --name, --vmid, --cores, --memory, --disk, --template, --no-start as above
+#   --name, --vmid, --cores, --memory, --disk, --template, --cpu, --no-start
+#                   as above; --cpu host is refused
 #   --user NAME     the tenant's login, required
 #   --key FILE      SSH public key for setup, required: yours, until handover
 #   --ip ADDR       its address in the tenant /24, required
@@ -57,8 +60,8 @@
 #                   one this hypervisor's root trusts, which would be yours.
 #
 # Environment: STORAGE (guest disks, default local-lvm), STORAGE_TMPL (LXC
-# templates, default local), SSH_PUBKEY (default ~/.ssh/id_ed25519.pub), and
-# TENANT_* (see the configuration block).
+# templates, default local), SSH_PUBKEY (default ~/.ssh/id_ed25519.pub),
+# CPU_TYPE (default x86-64-v3) and TENANT_* (see the configuration block).
 #
 # Existing guests are never modified. A half-built guest is destroyed, so a
 # rerun starts clean instead of skipping over it.
@@ -78,6 +81,12 @@ IMAGE_DIRS=(/var/lib/vz/template/iso /var/lib/vz/import)
 LXC_CACHE=/var/lib/vz/template/cache
 
 TEMPLATE_VMID=9000
+# The CPU model every VM gets. Unset, qm falls back to kvm64, which hides
+# SSE4.2, POPCNT and AVX2: modern runtimes (Bun, so Claude Code) spin or die
+# on it. x86-64-v3 is a generic model with AVX2 that still hides the exact
+# host CPU, which matters for tenants. Set on clones too, since a clone of an
+# older template would otherwise inherit kvm64.
+CPU_TYPE="${CPU_TYPE:-x86-64-v3}"
 LXC_FAMILY=debian-13-standard
 # The login cloud-init creates on every VM, as on sec-wazuh.
 CI_USER="admin"
@@ -143,7 +152,7 @@ case "$CMD" in
   *) echo "unknown command: $CMD (images, template, vm, lxc, firewall, tenant, handover)" >&2; exit 2 ;;
 esac
 
-NAME="" VMID="" CORES=1 MEMORY=1024 DISK=8 BRIDGE=vmbr0 IMAGE="" START=1
+NAME="" VMID="" CORES=1 MEMORY=1024 DISK=8 BRIDGE=vmbr0 IMAGE="" START=1 CPU=""
 FROM_TEMPLATE="$TEMPLATE_VMID" BRIDGE_SET=0
 T_USER="" T_KEY="" T_IP="" T_ALLOW="" T_UNCAPPED=0
 while [[ $# -gt 0 ]]; do
@@ -162,6 +171,7 @@ while [[ $# -gt 0 ]]; do
     --uncapped) T_UNCAPPED=1; shift ;;
     --image)    IMAGE="${2:?--image needs a value}"; shift 2 ;;
     --template) FROM_TEMPLATE="${2:?--template needs a value}"; shift 2 ;;
+    --cpu)      CPU="${2:?--cpu needs a value}"; shift 2 ;;
     --no-start) START=0; shift ;;
     -h|--help)  usage 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -185,6 +195,15 @@ fi
 if [[ "$CMD" != tenant && "$CMD" != handover && -n "$T_KEY" ]]; then
   die "--key is for tenant and handover; your own guests take SSH_PUBKEY"
 fi
+case "$CMD" in
+  template|vm|tenant) ;;
+  *) [[ -z "$CPU" ]] || die "--cpu is for template, vm and tenant" ;;
+esac
+CPU="${CPU:-$CPU_TYPE}"
+[[ "$CPU" =~ ^[A-Za-z0-9._-]+$ ]] || die "--cpu '$CPU' is not a CPU model name"
+# Passthrough tells a hostile guest exactly what it runs on, and pins it to
+# this host's microcode and errata. A named model is enough for any workload.
+[[ "$CMD" != tenant || "$CPU" != host ]] || die "a tenant never gets --cpu host; use a named model such as x86-64-v3"
 
 is_int() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
 for _opt in cores:CORES memory:MEMORY disk:DISK template:FROM_TEMPLATE; do
@@ -195,6 +214,21 @@ done
 (( MEMORY >= 128 )) || die "--memory is in MB; ${MEMORY} is too small"
 
 # ----------------------------------------------------------------- inspection
+
+# The x86-64-vN models need the matching instructions on the host, or the VM
+# will not start. `host` and named models are left to qm to judge.
+check_cpu() {
+  local need=""
+  case "$CPU" in
+    x86-64-v2*) need=sse4_2 ;;
+    x86-64-v3*) need=avx2 ;;
+    x86-64-v4*) need=avx512f ;;
+  esac
+  if [[ -n "$need" ]] && ! grep -m1 '^flags' /proc/cpuinfo | grep -w "$need" >/dev/null; then
+    die "cpu $CPU needs $need, which this host does not have; pass --cpu x86-64-v2-AES or another model"
+  fi
+  ok "cpu $CPU"
+}
 
 guest_exists() { qm status "$1" >/dev/null 2>&1 || pct status "$1" >/dev/null 2>&1; }
 
@@ -412,6 +446,7 @@ cmd_template() {
   resolve_cloud_image
   check_storage "$STORAGE" images
   check_bridge "$BRIDGE"
+  check_cpu
 
   # debian-13-genericcloud-amd64.qcow2 -> tmpl-debian-13
   if [[ -z "$NAME" ]]; then
@@ -448,6 +483,7 @@ cmd_template() {
       --net0 "virtio,bridge=${BRIDGE},firewall=1" \
       --scsihw virtio-scsi-single \
       --ostype l26 \
+      --cpu "$CPU" \
       --agent enabled=1 \
       --serial0 socket --vga "$vga" \
       --description "VM template from ${IMAGE_PATH##*/} dated $(date -r "$IMAGE_PATH" +%F). Built by proxmox/pve-guest.sh"
@@ -490,6 +526,7 @@ cmd_vm() {
   local tmpl_name="$TMPL_NAME"
   check_storage "$STORAGE" images
   check_bridge "$BRIDGE"
+  check_cpu
   check_ssh_key
   check_name
   check_vmid
@@ -503,6 +540,7 @@ cmd_vm() {
   arm_cleanup qm "$VMID"
   run qm set "$VMID" \
       --cores "$CORES" \
+      --cpu "$CPU" \
       --memory "$MEMORY" \
       --net0 "virtio,bridge=${BRIDGE},firewall=1" \
       --onboot 1 \
@@ -911,6 +949,7 @@ cmd_tenant() {
   check_template
   check_storage "$STORAGE" images
   check_bridge "$BRIDGE"
+  check_cpu
   check_tenant
   check_name
   check_vmid
@@ -941,6 +980,7 @@ cmd_tenant() {
   # hostile guest says, and the IP is static so nothing needs asking.
   run qm set "$VMID" \
       --cores "$CORES" \
+      --cpu "$CPU" \
       --memory "$MEMORY" \
       --balloon 0 \
       "${cpuunits[@]}" \
