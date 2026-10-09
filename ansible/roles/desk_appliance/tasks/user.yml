@@ -37,10 +37,29 @@
     desk_appliance_user_present: >-
       {{ ansible_facts.getent_passwd[desk_appliance_user] is not none }}
 
+# With create_user false nothing will make the account, so a missing one is a
+# mistake to stop on, not something to skip past: every per-user task below
+# (autologin, XFCE and audio files, group membership) would otherwise be
+# skipped and the play would report success on a box that cannot log in. This
+# holds under --check too, because nothing in a dry run creates it either.
+- name: Refuse a missing appliance user that the role is not to create
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_user_present | bool
+    fail_msg: >-
+      {{ desk_appliance_user }} does not exist on {{ inventory_hostname }} and
+      desk_appliance_create_user is false. Create the account, or set
+      desk_appliance_create_user: true. Without it LightDM autologin and every
+      per-user setting would be silently skipped.
+    quiet: true
+  when: not desk_appliance_create_user | bool
+
 - name: Say so when --check cannot see the user yet
   ansible.builtin.debug:
     msg: >-
       {{ desk_appliance_user }} does not exist yet, so the per-user tasks are
       skipped in this dry run. They run on a real run, after the user is
       created.
-  when: not desk_appliance_user_present | bool
+  when:
+    - desk_appliance_create_user | bool
+    - not desk_appliance_user_present | bool

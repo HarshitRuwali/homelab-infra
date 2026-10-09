@@ -13,6 +13,18 @@
   ansible.builtin.command: udevadm control --reload-rules
   changed_when: true
 
+# `change`, not `add`: the devices are already present and only their rules
+# changed. A synthetic `add` event makes consumers treat the tty as newly
+# plugged in, where `change` just re-runs the rules so the new symlink appears.
 - name: Replay udev events for serial devices
-  ansible.builtin.command: udevadm trigger --subsystem-match=tty --action=add
+  ansible.builtin.command: udevadm trigger --subsystem-match=tty --action=change
   changed_when: true
+
+# SIGHUP reloads live-restore without restarting dockerd, so running containers
+# are not bounced. Under --check on a fresh host the unit does not exist yet.
+- name: Reload Docker
+  ansible.builtin.systemd:
+    name: docker
+    state: reloaded
+  register: desk_appliance_docker_reload
+  failed_when: desk_appliance_docker_reload is failed and not ansible_check_mode

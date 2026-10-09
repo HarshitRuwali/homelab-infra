@@ -9,7 +9,8 @@
 
 # The packages enable these for every user on install; stating it here keeps
 # the role correct if a preset or an earlier change turned them off. Under
-# --check on a fresh host the units do not exist yet, hence the ignore.
+# --check on a fresh host the units do not exist yet, so a failure is tolerated
+# in check mode only (failed_when, not ignore_errors: a real run still fails).
 - name: Enable the PipeWire user units for all users
   ansible.builtin.systemd:
     name: "{{ item }}"
@@ -19,7 +20,8 @@
     - pipewire.socket
     - pipewire-pulse.socket
     - wireplumber.service
-  ignore_errors: "{{ ansible_check_mode }}"
+  register: desk_appliance_pw_units
+  failed_when: desk_appliance_pw_units is failed and not ansible_check_mode
 
 - name: Put the appliance user in the audio group
   ansible.builtin.user:

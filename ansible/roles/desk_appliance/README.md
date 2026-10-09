@@ -36,12 +36,12 @@ Everything host-specific (names, ids) is a variable; nothing is baked in.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `desk_appliance_user` | `iris` | Autologin account; created if missing. Not `root`. |
-| `desk_appliance_home` | `/home/<user>` | |
+| `desk_appliance_user` | `appliance` | Autologin account; created if missing. Not `root`. Set it per host in `host_vars` (see Example). |
+| `desk_appliance_home` | `/home/<user>` | With `desk_appliance_create_user: false` and an existing account, the home recorded in `passwd` is used instead. |
 | `desk_appliance_user_shell` | `/bin/bash` | Must be a real shell: LightDM's autologin PAM stack refuses `nologin`. |
-| `desk_appliance_create_user` | `true` | `false` if the account already exists. |
+| `desk_appliance_create_user` | `true` | `false` if the account already exists; the play then fails when it does not. |
 | `desk_appliance_session` | `xfce` | X11 session file name in `/usr/share/xsessions`. The role fails if it is not there. XFCE settings are only written when this is `xfce`. |
-| `desk_appliance_desktop_packages` | Xorg, LightDM and XFCE package list | Installed without recommends. |
+| `desk_appliance_desktop_packages` | Xorg (with all video drivers and Mesa DRI), LightDM and XFCE package list | Installed without recommends, so drivers that Ubuntu only recommends are listed explicitly. |
 | `desk_appliance_extra_packages` | `[]` | Anything else the desktop needs. |
 | `desk_appliance_hidden_autostart` | `xfce4-screensaver`, `light-locker`, `xscreensaver`, `gnome-screensaver` | Per-user `Hidden=true` overrides. |
 | `desk_appliance_audio_packages` | PipeWire, WirePlumber and tools list | |
@@ -56,6 +56,7 @@ Everything host-specific (names, ids) is a variable; nothing is baked in.
 | `desk_appliance_serial_devices` | `[]` | List of `name`, `vendor_id`, `product_id` and optional `serial`. Ids are four hex digits, quoted. |
 | `desk_appliance_docker_source` | `distro` | `distro` (`docker.io`, `docker-compose-v2`) or `docker_ce` (Docker's repository). |
 | `desk_appliance_docker_packages` | per-source package lists | |
+| `desk_appliance_docker_live_restore` | `true` | Writes `/etc/docker/daemon.json` with `{"live-restore": true}` only if that file is absent. See Patching. |
 | `desk_appliance_docker_arch` | derived from the host | apt architecture name for the Docker repository. |
 | `desk_appliance_docker_apt_url` | `https://download.docker.com/linux/ubuntu` | |
 | `desk_appliance_docker_apt_key_url` | `https://download.docker.com/linux/ubuntu/gpg` | |
@@ -87,6 +88,7 @@ all:
 
 ```yaml
 # inventory/host_vars/desk-01.yml
+# The default account is `appliance`; name the real one per host.
 desk_appliance_user: iris
 desk_appliance_serial_devices:
   - name: ttydevice
@@ -138,13 +140,33 @@ host, and this role fails early on one that is in `autoupdate` or
 - Updates come from the security origins only. The distro's own origin list
   is cleared first, because apt list options add to rather than replace an
   earlier file.
-- A reboot happens only when an update leaves `/var/run/reboot-required`.
+- The reboot is conditional on `/run/reboot-required` existing at the reboot
+  time, not on the nightly run having caused it. A flag left earlier in the day
+  by `playbooks/force-updates.yml` (which skips this group for that reason) or
+  by a manual `apt upgrade` also reboots the host at the next window. Reboot
+  yourself first, or expect the reboot at the window.
 - `apt-daily-upgrade.timer` is moved to 03:30 so the run ends before the
   04:30 reboot time. If a run ends after the reboot time, the reboot is
   scheduled for the next day. Change the timer and the reboot time together.
 - `desk_appliance_docker_source: docker_ce` installs from a repository that is
   not in the security-only origin list. Its updates need a manual
   `apt upgrade`, or an origin added to `desk_appliance_uu_origins`.
+- A `docker.io` (or `docker-ce`) security update restarts `dockerd` when it is
+  applied, which stops every container unless `live-restore` is set.
+  `desk_appliance_docker_live_restore` (default `true`) writes
+  `/etc/docker/daemon.json` with `{"live-restore": true}` only when that file
+  does not exist. An existing `daemon.json`, hand-written or not, is never
+  touched: add the key there yourself. `live-restore` does not work with Swarm
+  mode, and turning the variable off later does not remove a file the role
+  already wrote.
+- A host that used to be in `autoupdate` or `no_autoupdate` still has the
+  fleet role's files on disk. The role removes
+  `/etc/apt/apt.conf.d/52unattended-upgrades-fleet`,
+  `/etc/systemd/system/apt-daily-upgrade.timer.d/fleet.conf` and, when it
+  carries the fleet role's "Managed by" header, `/etc/apt/apt.conf.d/20auto-upgrades`
+  (Ubuntu's own file of that name is left alone). After configuring, it asks
+  systemd (`systemctl show apt-daily-upgrade.timer`) and fails if the timer
+  does not fire only at `desk_appliance_upgrade_oncalendar`.
 
 ## Things to know
 
@@ -154,8 +176,12 @@ host, and this role fails early on one that is in `autoupdate` or
   next run. They are per-user because `xfce4-power-manager` ships its own file
   under `/etc/xdg` as a package conffile.
 - Under `--check` on a host that has not been configured yet, per-user tasks
-  are skipped (the user does not exist) and the unit-enabling tasks ignore
-  their "unit not found" errors. A second `--check` after a real run is exact.
+  are skipped (the user does not exist) and the unit-enabling tasks tolerate
+  their "unit not found" failures. The update checks (`apt-config dump`, the
+  timer read-back, the `unattended-upgrade --dry-run`) are read-only and do run
+  under `--check`, except in a dry run that is about to change the files they
+  read, where they would judge the old configuration and are skipped. A second
+  `--check` after a real run runs all of them and is exact.
 - Ubuntu 26.04 also ships an XFCE Wayland session. The named session in the
   LightDM drop-in is what keeps the appliance on X11.
 - LightDM autologin requires the user to have a real shell; the password stays
@@ -172,15 +198,25 @@ host, and this role fails early on one that is in `autoupdate` or
 - Manage Wayland, or the lock and power settings of a desktop other than XFCE.
 - Install a browser or any desktop autostart application beyond the session
   itself and the one `xset` entry.
-- Reboot a host that is not due one: reboots follow `reboot-required` only.
+- Reboot a host that is not due one: reboots follow `/run/reboot-required` only, which also means a flag from any source (see Patching).
 
 ## Verification
 
 Checked in an `ubuntu:26.04` container running systemd: package names resolve,
 `--check` on a fresh host completes, a real run completes, a second run
-reports no changes, the rendered apt configuration reads back as intended
-(`apt-config dump`), the udev rule passes `udevadm verify`, and a PipeWire
-daemon started with the echo-cancel drop-in creates the four named nodes.
+reports no changes and a second `--check` is clean, the rendered apt
+configuration reads back as intended (`apt-config dump`), systemd reports the
+upgrade timer firing only at the configured time, leftover fleet
+`unattended_upgrades` files are removed, the udev rule passes
+`udevadm verify`, and a PipeWire daemon started with the echo-cancel drop-in
+creates the four named nodes.
+
+To reproduce: build an `ubuntu:26.04` image with `systemd systemd-sysv dbus
+python3 python3-apt ansible-core sudo ca-certificates udev iproute2 procps`
+installed (`CMD ["/usr/lib/systemd/systemd"]`), start it with `--privileged
+--cgroupns=host`, `/sys/fs/cgroup` mounted read-write and tmpfs on `/run`,
+mount `ansible/` read-only, and run `ansible-playbook` against a local
+inventory with one host in `desk_appliances`.
 Not checked: anything needing hardware or a display (autologin into a running
 desktop, DPMS, USB serial matching, WirePlumber default-device selection,
 suspend behaviour) and the `arm64` Docker repository path.

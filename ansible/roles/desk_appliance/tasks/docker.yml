@@ -52,20 +52,50 @@
         state: present
         update_cache: true
 
+# Written before the engine is installed so the first start already reads it.
+# `force: false` makes this create-only: an existing daemon.json, hand-written
+# or not, is never touched (JSON has no comment to mark ownership with, so
+# "already ours" cannot be told apart from "someone else's"). Turning the
+# variable off later does not remove a file this role wrote.
+- name: Ensure the Docker configuration directory exists
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: desk_appliance_docker_live_restore | bool
+
+- name: Keep containers running while the Docker daemon restarts
+  ansible.builtin.copy:
+    content: |
+      {"live-restore": true}
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+  when: desk_appliance_docker_live_restore | bool
+  notify: Reload Docker
+
 - name: Install the Docker engine and the Compose plugin
   ansible.builtin.apt:
     name: "{{ desk_appliance_docker_packages[desk_appliance_docker_source] }}"
     state: present
+    install_recommends: false
     update_cache: true
     cache_valid_time: 3600
 
-# Under --check on a fresh host the unit does not exist yet, hence the ignore.
+# Under --check on a fresh host the unit does not exist yet, so a failure is
+# tolerated in check mode only (failed_when, not ignore_errors: a real run
+# still fails).
 - name: Enable and start Docker
   ansible.builtin.systemd:
     name: docker
     enabled: true
     state: started
-  ignore_errors: "{{ ansible_check_mode }}"
+  register: desk_appliance_docker_unit
+  failed_when: desk_appliance_docker_unit is failed and not ansible_check_mode
 
 # The docker group does not exist until the engine package creates it, so it is
 # looked up rather than assumed (--check on a fresh host has not installed it).

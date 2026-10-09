@@ -14,8 +14,16 @@
 # The account LightDM logs into automatically. It is created here (locked
 # password, no sudo) because autologin needs no password and the box should not
 # carry a usable one for it.
-desk_appliance_user: iris
-desk_appliance_home: "/home/{{ desk_appliance_user }}"
+desk_appliance_user: appliance
+# /home/<user> unless the role is not creating the account and it already
+# exists: then the home directory recorded in passwd is used, so an account
+# with a non-standard home works. The passwd entry comes from the getent lookup
+# in tasks/user.yml; before that task has run the /home/<user> fallback applies.
+desk_appliance_home: >-
+  {% set passwd = ansible_facts.getent_passwd | default({}) -%}
+  {% set entry = passwd.get(desk_appliance_user) -%}
+  {{ entry[4] if (entry and not desk_appliance_create_user | bool)
+     else '/home/' ~ desk_appliance_user }}
 desk_appliance_user_shell: /bin/bash
 desk_appliance_create_user: true
 
@@ -30,10 +38,15 @@ desk_appliance_create_user: true
 # LightDM and xset layers still apply to it.
 desk_appliance_session: xfce
 
-# Installed without recommends, to keep the session small. xserver-xorg is the
-# X server plus input and video drivers; x11-xserver-utils provides xset.
+# Installed without recommends, to keep the session small. On Ubuntu 26.04
+# xserver-xorg only depends on xserver-xorg-core and the input drivers; the
+# video drivers and Mesa are Recommends, so they are listed explicitly:
+# xserver-xorg-video-all for the Xorg video drivers and libgl1-mesa-dri for the
+# Mesa DRI drivers. x11-xserver-utils provides xset.
 desk_appliance_desktop_packages:
   - xserver-xorg
+  - xserver-xorg-video-all
+  - libgl1-mesa-dri
   - x11-xserver-utils
   - dbus-x11
   - lightdm
@@ -124,6 +137,14 @@ desk_appliance_docker_packages:
     - containerd.io
     - docker-buildx-plugin
     - docker-compose-plugin
+
+# A docker.io (or docker-ce) security update restarts dockerd when the
+# unattended upgrade applies it, which stops every container unless
+# `live-restore` is on. true writes /etc/docker/daemon.json with
+# {"live-restore": true} ONLY when that file does not exist; an existing
+# daemon.json is never modified, so set the key there by hand in that case.
+# live-restore does not work with Swarm mode.
+desk_appliance_docker_live_restore: true
 
 # Docker's apt architecture name for this host.
 desk_appliance_docker_arch: >-
