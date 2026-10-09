@@ -7,8 +7,10 @@
     <property name="dpms-on-ac-off" type="uint" value="0"/>
     <property name="dpms-on-battery-sleep" type="uint" value="0"/>
     <property name="dpms-on-battery-off" type="uint" value="0"/>
-    <property name="inactivity-on-ac" type="uint" value="14"/>
-    <property name="inactivity-on-battery" type="uint" value="14"/>
+    <!-- Inactivity sleep: 0 is "Never" (xfce4-power-manager's own default). Any
+         other value is a number of minutes before the machine suspends. -->
+    <property name="inactivity-on-ac" type="uint" value="0"/>
+    <property name="inactivity-on-battery" type="uint" value="0"/>
     <property name="lid-action-on-ac" type="uint" value="0"/>
     <property name="lid-action-on-battery" type="uint" value="0"/>
     <property name="sleep-button-action" type="uint" value="0"/>

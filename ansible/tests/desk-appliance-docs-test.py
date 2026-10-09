@@ -12,6 +12,8 @@ Checks:
   * every tag in the README table is used in tasks/main.yml, and the reverse
   * the roles, playbooks and groups named under "Run alongside" exist
   * every file tasks/main.yml imports exists
+  * every `--tags a,b` token in a README code block is a tag the role defines
+  * every `src:` template named in tasks/*.yml exists under templates/
   * the playbook, the role and the group are named consistently in the
     fleet README, the docs reference and the example inventory
 """
@@ -89,6 +91,24 @@ tag_line = re.search(r"# Tags, one per concern: (.*)\.", playbook)
 if not tag_line or set(re.findall(r"[a-z]+", tag_line.group(1))) != code_tags:
     fail("playbooks/desk-appliance.yml tag comment differs from tasks/main.yml")
 
+# Tags shown in README command examples must be ones the role really defines
+# (plus `always`, which user.yml carries).
+for block in re.findall(r"```[a-z]*\n(.*?)```", readme, re.S):
+    for tag_arg in re.findall(r"--tags[ =]([A-Za-z0-9_,-]+)", block):
+        for tag in tag_arg.split(","):
+            if tag not in code_tags | {"always"}:
+                fail(f"README example uses --tags {tag}, which the role does not define")
+
+# --- templates named by tasks ---------------------------------------------------
+for task_file in sorted((ROLE / "tasks").glob("*.yml")):
+    for src in re.findall(r"^\s+src: ([^\s#]+)", task_file.read_text(), re.M):
+        # src: also names a symlink target in ansible.builtin.file (an absolute
+        # path); only bare names are templates.
+        if "/" in src or "{{" in src:
+            continue
+        if not (ROLE / "templates" / src).is_file():
+            fail(f"{task_file.name} names template {src}, which templates/ does not have")
+
 # --- imported task files ---------------------------------------------------------
 for name in re.findall(r"import_tasks: ([a-z_.]+)", main_tasks):
     if not (ROLE / "tasks" / name).is_file():
@@ -119,6 +139,13 @@ surfaces = {
     "README.md": ["desk-appliance.yml", "desk_appliance", "desk_appliances"],
     "docs/reference/playbooks.md": ["desk-appliance.yml", "desk_appliance", "desk_appliances"],
     "docs/reference/variables.md": ["desk_appliance"],
+    # The fleet policy page carries the desk-appliance exception to
+    # "never reboots", and links the role README.
+    "docs/fleet/patching.md": [
+        "desk_appliances",
+        "roles/desk_appliance/README.md",
+        "monitored:!desk_appliances",
+    ],
     "inventory/hosts.example.yml": ["desk_appliances"],
 }
 for rel, needles in surfaces.items():
@@ -126,6 +153,11 @@ for rel, needles in surfaces.items():
     for needle in needles:
         if needle not in text:
             fail(f"ansible/{rel} no longer mentions {needle}")
+# The desk appliances reboot themselves, so the forced-update playbook (which a
+# human runs by day) must leave them out.
+force_updates = (ANSIBLE / "playbooks" / "force-updates.yml").read_text()
+if len(re.findall(r"^\s+hosts: monitored:!desk_appliances$", force_updates, re.M)) != 2:
+    fail("playbooks/force-updates.yml plays do not all exclude desk_appliances")
 for rel in re.findall(r"`(roles/desk_appliance/[A-Za-z_./]+)`", "".join(
     (ANSIBLE / r).read_text() for r in surfaces
 )):

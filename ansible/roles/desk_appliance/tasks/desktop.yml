@@ -60,9 +60,12 @@
 
 # Enabled, not started. Starting the display manager mid-play would switch the
 # console to the desktop under whoever is running this; the next boot starts it.
-# Under --check on a fresh host the unit does not exist yet, hence the ignore.
+# Under --check on a fresh host the unit does not exist yet, so a failure is
+# tolerated in check mode only. failed_when rather than ignore_errors: a real
+# run still fails, and a tolerated check-mode failure is not reported as one.
 - name: Enable LightDM
   ansible.builtin.systemd:
     name: lightdm
     enabled: true
-  ignore_errors: "{{ ansible_check_mode }}"
+  register: desk_appliance_lightdm_unit
+  failed_when: desk_appliance_lightdm_unit is failed and not ansible_check_mode

@@ -33,6 +33,19 @@
     - hibernate.target
     - hybrid-sleep.target
 
+# Created here as well as in desktop.yml and by the packages: `--tags power`
+# alone must work on a host that has not had the desktop layer yet.
+- name: Ensure the LightDM and XDG autostart directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /etc/lightdm/lightdm.conf.d
+    - /etc/xdg/autostart
+
 - name: Disable X server screen saver and DPMS
   ansible.builtin.template:
     src: lightdm-no-blank.conf.j2
