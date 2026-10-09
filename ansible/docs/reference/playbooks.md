@@ -17,6 +17,7 @@ A reference list. For what a playbook or a role *is*, see
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
 | `docker-updates.yml` | `autoupdate` | containers, only with `run_now` | container update schedule |
 | `rotate-collector-password.yml` | `central` | `nginx`, central `alloy` | rotating collector auth |
+| `desk-appliance.yml` | `desk_appliances` | nothing | an always-on X11 desk appliance; not part of `site.yml` |
 | `force-updates.yml` | `monitored` | **services, via apt** | installing pending updates NOW; never reboots |
 
 ### Common invocations
@@ -82,6 +83,21 @@ result.
 
 The Grafana-to-Matrix relay: a system user, a venv, a systemd unit and a smoke
 test. Refuses to deploy with placeholder credentials.
+
+### `desk_appliance`
+
+Baseline for an always-on desk appliance, applied by membership of
+`desk_appliances` only: LightDM autologin into a named X11 session, no
+blanking or suspend, PipeWire, a serial udev symlink, Docker, and security
+updates with an automatic reboot window. Tagged per concern: `desktop`,
+`power`, `audio`, `serial`, `docker`, `updates`.
+
+!!! warning "The one host class that reboots itself"
+    It sets `Automatic-Reboot "true"`, so it fails early on a host in
+    `autoupdate` or `no_autoupdate`, whose role asserts the opposite.
+
+Variables and behaviour are documented in the role itself:
+`roles/desk_appliance/README.md`.
 
 ### `grafana_alerting`
 

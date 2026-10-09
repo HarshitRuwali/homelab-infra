@@ -1,0 +1,7 @@
+# Managed by ansible/roles/desk_appliance. Do not edit by hand.
+#
+# -core is the Debian default for this setting, kept. -s 0 turns the X server's
+# own screen saver off and -dpms stops it powering the monitor down, before
+# any session exists to do it.
+[Seat:*]
+xserver-command=X -core -s 0 -dpms

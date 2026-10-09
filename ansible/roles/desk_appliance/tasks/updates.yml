@@ -1,0 +1,117 @@
+---
+# unattended_upgrades (the fleet role) asserts Automatic-Reboot is false and
+# writes the same timer drop-in point. Running both on one host would fail that
+# assert, or flip-flop the timer. This role is the deliberate exception to the
+# fleet's never-reboot policy, so the two are kept apart by inventory.
+- name: Refuse a host that is also in a fleet patching group
+  ansible.builtin.assert:
+    that:
+      - "'autoupdate' not in group_names"
+      - "'no_autoupdate' not in group_names"
+    fail_msg: >-
+      {{ inventory_hostname }} is in autoupdate or no_autoupdate. The fleet
+      unattended_upgrades role forbids automatic reboots and would conflict with
+      this one. Take the host out of those groups; desk_appliance owns its
+      patching.
+    quiet: true
+
+- name: Check the reboot time
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_reboot_time is match('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+    fail_msg: >-
+      desk_appliance_reboot_time must be 24 hour HH:MM, quoted so YAML does not
+      read it as a number. Got: {{ desk_appliance_reboot_time }}
+    quiet: true
+
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Numbered above the distro's 50unattended-upgrades so these values win.
+- name: Configure security-only updates with a reboot window
+  ansible.builtin.template:
+    src: 53desk-appliance-unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/53desk-appliance-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Ensure the apt-daily-upgrade timer override directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/apt-daily-upgrade.timer.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Move the apt-daily-upgrade timer ahead of the reboot window
+  ansible.builtin.template:
+    src: apt-daily-upgrade-desk.conf.j2
+    dest: /etc/systemd/system/apt-daily-upgrade.timer.d/desk-appliance.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers before touching timers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the apt timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+
+# --- Validation gates ----------------------------------------------------
+# Both read what is on disk, so under --check on a host that has not been
+# configured yet they would judge the old config. They run on real runs only.
+
+- name: Read back the effective apt configuration
+  ansible.builtin.command: apt-config dump
+  register: desk_appliance_apt_config
+  changed_when: false
+  when: not ansible_check_mode
+
+- name: Assert the reboot policy took effect
+  ansible.builtin.assert:
+    that:
+      - >-
+        'Unattended-Upgrade::Automatic-Reboot "true"'
+        in desk_appliance_apt_config.stdout
+      - >-
+        ('Unattended-Upgrade::Automatic-Reboot-Time "'
+        ~ desk_appliance_reboot_time ~ '"')
+        in desk_appliance_apt_config.stdout
+    fail_msg: >-
+      The effective apt configuration on {{ inventory_hostname }} does not carry
+      the reboot policy. Look for a later file in /etc/apt/apt.conf.d/
+      overriding 53desk-appliance-unattended-upgrades.
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Dry-run unattended-upgrades
+  ansible.builtin.command: unattended-upgrade --dry-run --debug
+  register: desk_appliance_uu_dryrun
+  changed_when: false
+  failed_when: false
+  when: not ansible_check_mode
+
+- name: Assert the dry run did not blow up
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_uu_dryrun.rc == 0
+      - "'Traceback' not in desk_appliance_uu_dryrun.stdout"
+      - "'Traceback' not in desk_appliance_uu_dryrun.stderr"
+    fail_msg: >-
+      unattended-upgrade --dry-run failed on {{ inventory_hostname }}.
+      rc={{ desk_appliance_uu_dryrun.rc }}. Tail:
+      {{ (desk_appliance_uu_dryrun.stdout | default(''))[-2000:] }}
+    quiet: true
+  when: not ansible_check_mode

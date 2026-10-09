@@ -1,0 +1,31 @@
+// Managed by ansible/roles/desk_appliance. Do not edit by hand.
+//
+// Numbered above the distro's 50unattended-upgrades so these values win.
+
+// apt list options ADD to what an earlier file set. Clear the distro's
+// origins first, otherwise "security only" would be the distro default plus
+// this list.
+#clear Unattended-Upgrade::Allowed-Origins;
+#clear Unattended-Upgrade::Origins-Pattern;
+Unattended-Upgrade::Origins-Pattern {
+{% for origin in desk_appliance_uu_origins %}
+        "{{ origin }}";
+{% endfor %}
+};
+
+// Reboot only when an update left /var/run/reboot-required, at the time below.
+// WithUsers must be true: the autologin session is always a logged-in user,
+// and with it false unattended-upgrades never reboots.
+Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot-WithUsers "{{ desk_appliance_reboot_with_users | bool | ternary('true', 'false') }}";
+Unattended-Upgrade::Automatic-Reboot-Time "{{ desk_appliance_reboot_time }}";
+
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::SyslogEnable "true";
+Unattended-Upgrade::Mail "";
+
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::Unattended-Upgrade "1";

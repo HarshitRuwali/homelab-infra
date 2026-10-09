@@ -1,0 +1,100 @@
+---
+- name: Install PipeWire, WirePlumber and the ALSA and Pulse layers
+  ansible.builtin.apt:
+    name: "{{ desk_appliance_audio_packages }}"
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+
+# The packages enable these for every user on install; stating it here keeps
+# the role correct if a preset or an earlier change turned them off. Under
+# --check on a fresh host the units do not exist yet, hence the ignore.
+- name: Enable the PipeWire user units for all users
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    scope: global
+    enabled: true
+  loop:
+    - pipewire.socket
+    - pipewire-pulse.socket
+    - wireplumber.service
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Put the appliance user in the audio group
+  ansible.builtin.user:
+    name: "{{ desk_appliance_user }}"
+    groups: audio
+    append: true
+  when: desk_appliance_user_present | bool
+
+- name: Pin the default sink and source
+  when:
+    - desk_appliance_user_present | bool
+    - >-
+      desk_appliance_audio_default_sink is defined
+      or desk_appliance_audio_default_source is defined
+  block:
+    - name: Ensure the WirePlumber drop-in directory exists
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ desk_appliance_user }}"
+        group: "{{ desk_appliance_user }}"
+        mode: "0755"
+      loop:
+        - "{{ desk_appliance_home }}/.config"
+        - "{{ desk_appliance_home }}/.config/wireplumber"
+        - "{{ desk_appliance_home }}/.config/wireplumber/wireplumber.conf.d"
+
+    - name: Write the WirePlumber default device priorities
+      ansible.builtin.template:
+        src: wireplumber-defaults.conf.j2
+        dest: "{{ desk_appliance_wireplumber_file }}"
+        owner: "{{ desk_appliance_user }}"
+        group: "{{ desk_appliance_user }}"
+        mode: "0644"
+
+- name: Remove the WirePlumber default device priorities when neither is set
+  ansible.builtin.file:
+    path: "{{ desk_appliance_wireplumber_file }}"
+    state: absent
+  when:
+    - desk_appliance_audio_default_sink is not defined
+    - desk_appliance_audio_default_source is not defined
+
+- name: Configure PipeWire echo cancellation
+  when:
+    - desk_appliance_echo_cancel | bool
+    - desk_appliance_user_present | bool
+  block:
+    - name: Ensure the PipeWire drop-in directory exists
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ desk_appliance_user }}"
+        group: "{{ desk_appliance_user }}"
+        mode: "0755"
+      loop:
+        - "{{ desk_appliance_home }}/.config"
+        - "{{ desk_appliance_home }}/.config/pipewire"
+        - "{{ desk_appliance_home }}/.config/pipewire/pipewire.conf.d"
+
+    - name: Write the echo-cancel module configuration
+      ansible.builtin.template:
+        src: pipewire-echo-cancel.conf.j2
+        dest: "{{ desk_appliance_echo_cancel_file }}"
+        owner: "{{ desk_appliance_user }}"
+        group: "{{ desk_appliance_user }}"
+        mode: "0644"
+
+- name: Remove the echo-cancel module configuration when disabled
+  ansible.builtin.file:
+    path: "{{ desk_appliance_echo_cancel_file }}"
+    state: absent
+  when: not desk_appliance_echo_cancel | bool
+
+# Deliberately no restart of pipewire or wireplumber here. They are user
+# services of a session that is already running, and restarting them from root
+# mid-play drops whatever the agent is playing or recording. The drop-ins are
+# read when the session next starts, which a reboot does.

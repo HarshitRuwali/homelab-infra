@@ -1,0 +1,11 @@
+# Managed by ansible/roles/desk_appliance. Do not edit by hand.
+[Timer]
+# Clear the vendor OnCalendar before setting ours, otherwise systemd unions
+# the two and the job also runs at the distro default time.
+OnCalendar=
+OnCalendar={{ desk_appliance_upgrade_oncalendar }}
+
+# The run must finish before desk_appliance_reboot_time, or unattended-upgrades
+# schedules the reboot for the following day.
+RandomizedDelaySec={{ desk_appliance_upgrade_randomized_delay }}
+Persistent=true

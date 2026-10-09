@@ -1,0 +1,34 @@
+# Managed by ansible/roles/desk_appliance. Do not edit by hand.
+#
+# Echo cancellation with the WebRTC backend. capture and playback are the
+# module's streams to the real microphone and speaker; source and sink are the
+# virtual devices applications should record from and play to.
+context.modules = [
+  {
+    name = libpipewire-module-echo-cancel
+    args = {
+      library.name = aec/libspa-aec-webrtc
+{% if desk_appliance_echo_cancel_aec_args | length > 0 %}
+      aec.args = {
+{% for key, value in desk_appliance_echo_cancel_aec_args.items() %}
+        {{ key }} = {{ value | to_json }}
+{% endfor %}
+      }
+{% endif %}
+      capture.props = {
+        node.name = "{{ desk_appliance_echo_cancel_capture_name }}"
+        node.passive = true
+      }
+      source.props = {
+        node.name = "{{ desk_appliance_echo_cancel_source_name }}"
+      }
+      sink.props = {
+        node.name = "{{ desk_appliance_echo_cancel_sink_name }}"
+      }
+      playback.props = {
+        node.name = "{{ desk_appliance_echo_cancel_playback_name }}"
+        node.passive = true
+      }
+    }
+  }
+]
