@@ -1,7 +1,8 @@
 # Package patching
 
 Every host in `autoupdate` applies **every** available update nightly and
-**never reboots**.
+**never reboots**. The one exception is the opt-in `desk_appliances` group,
+described [below](#desk-appliances-the-exception).
 
 ## The policy
 
@@ -56,6 +57,22 @@ ansible autoupdate -m shell \
     Kernel updates accumulate until a human acts. `fleet-reboot-required-too-long`
     nags at seven days, and that alert is what makes "never auto-reboot" a
     safe policy rather than a way to silently run unpatched kernels.
+
+### Desk appliances: the exception
+
+Hosts in the opt-in `desk_appliances` group are the one place this policy does
+not hold. The [`desk_appliance` role](https://github.com/HarshitRuwali/homelab-infra/blob/master/ansible/roles/desk_appliance/README.md)
+sets `Automatic-Reboot "true"` and reboots at a set time (04:30 by default)
+whenever `/run/reboot-required` exists at that moment. That includes a flag
+left by a daytime `apt upgrade`, not only by the nightly security run.
+
+They are kept out of `autoupdate` and `no_autoupdate`: the role refuses to run
+on a host in either, because the `unattended_upgrades` role above asserts the
+opposite setting. `force-updates.yml` leaves them out too (`hosts:
+monitored:!desk_appliances`), so a fleet-wide forced pass never leaves one of
+them with a reboot flag waiting for its window. The role also sets
+`Automatic-Reboot-Time` on purpose, the setting the box above warns about:
+there it is the reboot schedule rather than an accident.
 
 ### `MinimalSteps` and `AutoFixInterruptedDpkg`
 

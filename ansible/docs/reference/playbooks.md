@@ -17,8 +17,8 @@ A reference list. For what a playbook or a role *is*, see
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
 | `docker-updates.yml` | `autoupdate` | containers, only with `run_now` | container update schedule |
 | `rotate-collector-password.yml` | `central` | `nginx`, central `alloy` | rotating collector auth |
-| `desk-appliance.yml` | `desk_appliances` | nothing | an always-on X11 desk appliance; not part of `site.yml` |
-| `force-updates.yml` | `monitored` | **services, via apt** | installing pending updates NOW; never reboots |
+| `desk-appliance.yml` | `desk_appliances` | `docker` (started on first install, reloaded for `live-restore`); udev rules reloaded; `systemd-logind` told to re-read its config; never a running session | an always-on X11 desk appliance; not part of `site.yml` |
+| `force-updates.yml` | `monitored`, except `desk_appliances` | **services, via apt** | installing pending updates NOW; never reboots |
 
 ### Common invocations
 
