@@ -1,0 +1,103 @@
+---
+# Three layers, because each one alone has a hole:
+#   1. logind and the sleep targets: the machine itself never suspends.
+#   2. the X server and an autostart `xset`: the display never blanks or
+#      powers down, whatever the desktop does.
+#   3. the desktop's own power and lock settings, which otherwise re-enable
+#      blanking from inside the session after the layers below it are quiet.
+
+- name: Ensure the logind drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Ignore lid, suspend and hibernate events in logind
+  ansible.builtin.template:
+    src: logind-no-suspend.conf.j2
+    dest: /etc/systemd/logind.conf.d/50-desk-appliance.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload logind
+
+- name: Mask the sleep targets
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: true
+  loop:
+    - sleep.target
+    - suspend.target
+    - hibernate.target
+    - hybrid-sleep.target
+
+- name: Disable X server screen saver and DPMS
+  ansible.builtin.template:
+    src: lightdm-no-blank.conf.j2
+    dest: /etc/lightdm/lightdm.conf.d/51-desk-appliance-no-blank.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Run xset at session start as a second guard
+  ansible.builtin.template:
+    src: desk-appliance-xset.desktop.j2
+    dest: /etc/xdg/autostart/desk-appliance-xset.desktop
+    owner: root
+    group: root
+    mode: "0644"
+
+# Per-user xfconf files, not system-wide ones: xfce4-power-manager ships its
+# own /etc/xdg/.../xfce4-power-manager.xml as a package conffile, and
+# replacing it would turn every package upgrade into a conffile prompt. A
+# value changed through the GUI is put back on the next run: this role owns
+# the file.
+- name: Set the XFCE power and lock settings
+  when:
+    - desk_appliance_session == 'xfce'
+    - desk_appliance_user_present | bool
+  block:
+    - name: Ensure the per-user XFCE directories exist
+      ansible.builtin.file:
+        path: "{{ desk_appliance_home }}/{{ item }}"
+        state: directory
+        owner: "{{ desk_appliance_user }}"
+        group: "{{ desk_appliance_user }}"
+        mode: "0755"
+      loop:
+        - .config
+        - .config/autostart
+        - .config/xfce4
+        - .config/xfce4/xfconf
+        - .config/xfce4/xfconf/xfce-perchannel-xml
+
+    - name: Write the XFCE power manager settings
+      ansible.builtin.template:
+        src: xfce4-power-manager.xml.j2
+        dest: "{{ desk_appliance_xfconf_dir }}/xfce4-power-manager.xml"
+        owner: "{{ desk_appliance_user }}"
+        group: "{{ desk_appliance_user }}"
+        mode: "0644"
+
+    - name: Write the XFCE screensaver and lock settings
+      ansible.builtin.template:
+        src: xfce4-screensaver.xml.j2
+        dest: "{{ desk_appliance_xfconf_dir }}/xfce4-screensaver.xml"
+        owner: "{{ desk_appliance_user }}"
+        group: "{{ desk_appliance_user }}"
+        mode: "0644"
+
+    - name: Hide the screen locker autostart entries
+      ansible.builtin.copy:
+        content: |
+          [Desktop Entry]
+          Type=Application
+          Name={{ item }}
+          Hidden=true
+        dest: "{{ desk_appliance_home }}/.config/autostart/{{ item }}.desktop"
+        owner: "{{ desk_appliance_user }}"
+        group: "{{ desk_appliance_user }}"
+        mode: "0644"
+      loop: "{{ desk_appliance_hidden_autostart }}"

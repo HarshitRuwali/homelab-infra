@@ -1,0 +1,35 @@
+---
+# Always-on desk appliance baseline: an X11 desktop with LightDM autologin, no
+# blanking or suspend, PipeWire audio, a stable serial symlink, Docker, and
+# unattended security updates with a reboot window.
+#
+#   ansible-playbook playbooks/desk-appliance.yml --check --diff
+#   ansible-playbook playbooks/desk-appliance.yml --limit <host>
+#   ansible-playbook playbooks/desk-appliance.yml --tags power
+#
+# Tags, one per concern: desktop, power, audio, serial, docker, updates.
+#
+# SCOPE is `desk_appliances`, an overlay group like `wazuh_agents`: membership
+# is the ONLY thing that enables the role. Add the host to that group in the
+# gitignored inventory/hosts.local.yml (see hosts.example.yml); this file names
+# no host. Keep the host OUT of `autoupdate` and `no_autoupdate`: this role
+# owns its own patching, including automatic reboots, which is the one
+# deliberate exception to the fleet's never-reboot policy. The role refuses to
+# run on a host that is in either group.
+#
+# NOT in site.yml, same as wazuh-agents.yml: this is a host-class baseline you
+# run on purpose, not part of the everyday fleet pass.
+#
+# RUN ALONGSIDE, from their own playbooks, for a host that is also monitored:
+#   collectors.yml     alloy_collector (host also in `monitored`)
+#   wazuh-agents.yml   wazuh_agent (host also in `wazuh_agents`)
+# Tailscale is joined by hand and is deliberately not handled here.
+#
+# The desktop, audio and LightDM settings take effect at the next login or
+# boot. Reboot once after the first run.
+
+- name: Configure the desk appliance baseline
+  hosts: desk_appliances
+  become: true
+  roles:
+    - desk_appliance

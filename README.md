@@ -75,7 +75,8 @@ ansible-playbook playbooks/site.yml         # everything, idempotent
 
 `site.yml` **configures** the machinery; it does not itself install packages or
 pull images. Those apply on a schedule: 03:00 for packages, 04:00 for
-containers. Nothing ever reboots a machine.
+containers. Nothing ever reboots a machine, except hosts in the opt-in
+`desk_appliances` group (`ansible/roles/desk_appliance`).
 
 </details>
 

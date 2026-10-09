@@ -1,0 +1,8 @@
+# Managed by ansible/roles/desk_appliance. Do not edit by hand.
+#
+# Stable /dev/<name> symlinks for USB serial devices, matched on the USB vendor
+# and product id of the parent device. The node itself stays /dev/ttyUSBn or
+# /dev/ttyACMn; the symlink does not move when the numbering does.
+{% for dev in desk_appliance_serial_devices %}
+SUBSYSTEM=="tty", ATTRS{idVendor}=="{{ dev.vendor_id | string | lower }}", ATTRS{idProduct}=="{{ dev.product_id | string | lower }}"{% if dev.serial is defined %}, ATTRS{serial}=="{{ dev.serial }}"{% endif %}, SYMLINK+="{{ dev.name }}", GROUP="dialout", MODE="0660"
+{% endfor %}

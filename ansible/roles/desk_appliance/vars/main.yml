@@ -1,0 +1,13 @@
+---
+# Internal paths, derived from the user's home. Not settings: override
+# desk_appliance_home or desk_appliance_user instead.
+desk_appliance_pipewire_dir: >-
+  {{ desk_appliance_home }}/.config/pipewire/pipewire.conf.d
+desk_appliance_wireplumber_dir: >-
+  {{ desk_appliance_home }}/.config/wireplumber/wireplumber.conf.d
+desk_appliance_xfconf_dir: >-
+  {{ desk_appliance_home }}/.config/xfce4/xfconf/xfce-perchannel-xml
+desk_appliance_echo_cancel_file: >-
+  {{ desk_appliance_pipewire_dir }}/50-desk-appliance-echo-cancel.conf
+desk_appliance_wireplumber_file: >-
+  {{ desk_appliance_wireplumber_dir }}/51-desk-appliance-defaults.conf

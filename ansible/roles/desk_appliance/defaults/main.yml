@@ -1,0 +1,157 @@
+---
+# An always-on desk appliance: a mini PC with a real X11 desktop session that
+# an agent (or a person) drives, kept awake, patched and rebooted unattended.
+#
+# Applied by GROUP MEMBERSHIP (`desk_appliances`), never by an in-role
+# `when:`, for the same reason unattended_upgrades is. See
+# playbooks/desk-appliance.yml and inventory/hosts.example.yml.
+#
+# Every host-specific value is a variable. Variables with no default below are
+# optional and simply switch their feature off while unset; nothing here is
+# required to be set for a first run.
+
+# --- Appliance user --------------------------------------------------------
+# The account LightDM logs into automatically. It is created here (locked
+# password, no sudo) because autologin needs no password and the box should not
+# carry a usable one for it.
+desk_appliance_user: iris
+desk_appliance_home: "/home/{{ desk_appliance_user }}"
+desk_appliance_user_shell: /bin/bash
+desk_appliance_create_user: true
+
+# --- Desktop (tag: desktop) --------------------------------------------------
+# Session name = the file name (without .desktop) under /usr/share/xsessions.
+# It is also what LightDM autologs into, which is how Wayland is excluded:
+# Ubuntu 26.04 ships an XFCE Wayland session (xfce-wayland.desktop) next to the
+# X11 one, so the session has to be named, not left to the default.
+#
+# The XFCE-specific power, lock and autostart settings are only written when
+# this is `xfce`. Another desktop needs its own power settings; the logind,
+# LightDM and xset layers still apply to it.
+desk_appliance_session: xfce
+
+# Installed without recommends, to keep the session small. xserver-xorg is the
+# X server plus input and video drivers; x11-xserver-utils provides xset.
+desk_appliance_desktop_packages:
+  - xserver-xorg
+  - x11-xserver-utils
+  - dbus-x11
+  - lightdm
+  - lightdm-gtk-greeter
+  - xfce4
+  - xfce4-session
+  - xfce4-power-manager
+  - xfce4-terminal
+
+# Anything else the appliance needs on its desktop (xdotool, a browser, ...).
+# Kept out of the list above so overriding that list does not drop it.
+desk_appliance_extra_packages: []
+
+# --- Power and screen blanking (tag: power) ----------------------------------
+# Autostart entries that would lock or blank the screen. Each gets a per-user
+# `Hidden=true` override, so installing one of these later (it is often pulled
+# in as a recommend) cannot bring a lock screen back.
+desk_appliance_hidden_autostart:
+  - xfce4-screensaver
+  - light-locker
+  - xscreensaver
+  - gnome-screensaver
+
+# --- Audio (tag: audio) -------------------------------------------------
+# PipeWire as the sound server, with the ALSA and PulseAudio compatibility
+# layers and WirePlumber as the session manager. libspa-0.2-modules carries the
+# WebRTC echo-cancel backend. pulseaudio-utils (pactl) and alsa-utils (aplay,
+# arecord, amixer) are the tools used to inspect and test the result.
+desk_appliance_audio_packages:
+  - pipewire
+  - pipewire-alsa
+  - pipewire-pulse
+  - wireplumber
+  - libspa-0.2-modules
+  - pulseaudio-utils
+  - alsa-utils
+
+# Default output and input, by PipeWire node name (`pw-cli ls Node`, or
+# `wpctl status` then `wpctl inspect <id>`). Unset means WirePlumber chooses.
+# Applied as a WirePlumber ALSA priority rule, so it covers ALSA nodes
+# (built-in and USB audio), not Bluetooth.
+# desk_appliance_audio_default_sink: alsa_output.example
+# desk_appliance_audio_default_source: alsa_input.example
+
+# Echo cancellation: the WebRTC backend of libpipewire-module-echo-cancel, so a
+# voice loop does not hear its own speaker. Off by default; when false the
+# drop-in is removed.
+desk_appliance_echo_cancel: false
+# Node names for the module's four nodes. The capture and playback nodes are
+# the module's connections to the real microphone and speaker; the source and
+# sink are the virtual devices applications should use.
+desk_appliance_echo_cancel_capture_name: echo-cancel-capture
+desk_appliance_echo_cancel_playback_name: echo-cancel-playback
+desk_appliance_echo_cancel_source_name: echo-cancel-source
+desk_appliance_echo_cancel_sink_name: echo-cancel-sink
+# Keys passed to the backend as `aec.args`. Empty uses the backend defaults.
+desk_appliance_echo_cancel_aec_args: {}
+
+# --- Serial (tag: serial) -----------------------------------------------------
+# Stable /dev/<name> symlinks for USB serial devices, matched by USB vendor and
+# product id. Empty means no udev rule is written. Each entry:
+#
+#   - name: <symlink name, no /dev prefix>
+#     vendor_id: "<4 hex digits>"
+#     product_id: "<4 hex digits>"
+#     serial: "<optional USB serial string, for two identical devices>"
+#
+# `lsusb` prints the ids as vendor:product.
+desk_appliance_serial_devices: []
+
+# --- Docker (tag: docker) -----------------------------------------------
+# `distro`  : docker.io and docker-compose-v2 from Ubuntu. Security fixes arrive
+#             through the security pocket, which is what the unattended
+#             upgrades below apply.
+# `docker_ce`: docker-ce and docker-compose-plugin from download.docker.com.
+#             Newer, but that repository is not in the security-only origin
+#             list, so its updates need a manual apt upgrade (or an entry in
+#             desk_appliance_uu_origins).
+desk_appliance_docker_source: distro
+
+desk_appliance_docker_packages:
+  distro:
+    - docker.io
+    - docker-compose-v2
+  docker_ce:
+    - docker-ce
+    - docker-ce-cli
+    - containerd.io
+    - docker-buildx-plugin
+    - docker-compose-plugin
+
+# Docker's apt architecture name for this host.
+desk_appliance_docker_arch: >-
+  {{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}
+
+desk_appliance_docker_apt_url: https://download.docker.com/linux/ubuntu
+desk_appliance_docker_apt_key_url: https://download.docker.com/linux/ubuntu/gpg
+desk_appliance_docker_apt_keyring: /etc/apt/keyrings/docker.asc
+
+# --- Unattended security updates (tag: updates) -------------------------
+# Origins that may be applied unattended. `${distro_codename}` is expanded by
+# unattended-upgrades, not by Ansible. Replaces the distro's own origin list
+# rather than adding to it, so this really is security only.
+desk_appliance_uu_origins:
+  - "origin=Ubuntu,archive=${distro_codename}-security"
+  - "origin=UbuntuESM,archive=${distro_codename}-infra-security"
+  - "origin=UbuntuESM,archive=${distro_codename}-apps-security"
+
+# Reboot, only when an update asks for one (/var/run/reboot-required), at this
+# 24 hour HH:MM. The upgrade run has to FINISH before this time: if it ends
+# after it, unattended-upgrades schedules the reboot for the next day.
+desk_appliance_reboot_time: "04:30"
+
+# true because the autologin session is always a logged-in user, and without it
+# unattended-upgrades never reboots a machine that has one.
+desk_appliance_reboot_with_users: true
+
+# The apt-daily-upgrade timer. Ubuntu's own default (06:00) is after the reboot
+# window, so it is moved ahead of it.
+desk_appliance_upgrade_oncalendar: "*-*-* 03:30"
+desk_appliance_upgrade_randomized_delay: 600
