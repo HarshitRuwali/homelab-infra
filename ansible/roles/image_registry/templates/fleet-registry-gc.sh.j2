@@ -34,7 +34,7 @@ if "${COMPOSE[@]}" stop registry; then
 {% if image_registry_gc_delete_untagged | bool %}
     --delete-untagged \
 {% endif %}
-    /etc/docker/registry/config.yml || ok=0
+    "{{ image_registry_container_config }}" || ok=0
 else
   ok=0
 fi

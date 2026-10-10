@@ -18,8 +18,12 @@ nothing here has been applied to a live host.
 | `join` | Runs `tailscale up` with a tagged auth key, only while the node is not `Running`. The key goes to the command as a `0600` file in `/run`, not on the command line, and the file is removed afterwards. Then reads the state back and checks the tags took. |
 | `serve` | Applies each `tailscale_node_serve` entry with `tailscale serve --bg --https=<port> <target>`, only for entries that `tailscale serve status --json` does not already show. Fails if any Funnel is on. |
 
+Before any of those, a `preflight` step (tag `always`, so it runs for every tag
+subset including `--tags serve`) refuses the tailnet router and a node that
+advertises routes or is an exit node, and checks a dry run has `python3-apt`.
+
 The role is applied by group membership (`tailscale_nodes`), with no host
-conditional inside it. It never restarts `tailscaled`.
+conditional for policy inside it. It never restarts `tailscaled`.
 
 ## Prerequisites: Harshit's steps
 
@@ -48,14 +52,22 @@ nothing useful until they are done.
    joined. The role advertises only the tags in `tailscale_node_tags`.
 4. **LXC guests only: TUN passthrough.** An unprivileged LXC has no
    `/dev/net/tun`, and `tailscaled` cannot start without it. On the Proxmox
-   host, with the guest stopped, add these two lines to
-   `/etc/pve/lxc/<id>.conf` (they are raw `lxc.*` keys, so they go in the file,
-   not through `pct set`), then start the guest:
+   host (8.1 or later), with the guest stopped:
+
+   ```bash
+   pct set <id> --dev0 /dev/net/tun
+   ```
+
+   On an older Proxmox without device passthrough, add these two raw `lxc.*`
+   lines to `/etc/pve/lxc/<id>.conf` instead (they cannot go through
+   `pct set`):
 
    ```text
    lxc.cgroup2.devices.allow: c 10:200 rwm
    lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
    ```
+
+   Then start the guest.
 
    Check inside the guest: `ls -l /dev/net/tun` shows a character device. The
    role's first task fails with this pointer if it is missing on an LXC.
@@ -90,7 +102,7 @@ that need a value per host (`tailscale_node_tags`, `tailscale_node_serve`) defau
 | `tailscale_node_tags` | `[]` | Required for a join: a non-empty list of `tag:<name>`. An untagged server would belong to whoever made the key. |
 | `tailscale_node_hostname` | `inventory_hostname` | Machine name on the tailnet; the first label of its `ts.net` name and certificate. |
 | `tailscale_node_accept_dns` | `false` | Servers keep their own resolver. |
-| `tailscale_node_serve` | `[]` | List of `https_port` and `target`. The target must be `http://127.0.0.1:<port>` (or `https://`). |
+| `tailscale_node_serve` | `[]` | List of `https_port` and `target`. The target must be `http://127.0.0.1:<port>`: loopback, plain HTTP. |
 
 `vars/main.yml` holds derived values (the repository URL, the key URL, the key
 file path). They are not settings.
@@ -188,15 +200,25 @@ the registry.
   runs only while `tailscale status --json` reports a state other than
   `Running`. `NeedsMachineAuth` means device approval is on: approve the node in
   the admin console; the post-join check says so.
-- **The router backstop.** The join step refuses a node whose status already
-  shows it as an exit node or as serving subnet routes. Group membership is the
-  control; this is best effort, because those fields only appear once routes are
-  approved.
+- **The router guard.** Group membership is the control. The `preflight` step
+  (tag `always`, before anything is installed or upgraded, so it also holds for
+  `--tags serve` and for `tailscale_node_manage_upgrades: true`) is the backstop:
+  it refuses the host named `tailscale-router`, a node whose
+  `tailscale debug prefs` shows advertised routes (which includes an exit node,
+  whether or not the routes are approved, and whether the node is running),
+  and a node whose status shows `ExitNodeOption`. The join step repeats the status check.
+  `tailscale debug` is not a stable interface: if it does not answer, the prefs
+  check is skipped and only the name and status checks apply.
+- **A joined node's tags are checked, not changed.** A node that is already
+  `Running` is not rejoined. If its tags differ from `tailscale_node_tags` the
+  run fails and says how to retag (admin console, or `tailscale up --reset`
+  with a new auth key and `--force-reauth`).
 - **`--check` on a bare host.** A dry run on a host that has never been
   configured skips the join and the serve steps (nothing to read yet), and the
   package step tolerates the repository not being there yet. The repository
-  task itself needs `gnupg` on the host. A second `--check` after a real run is
-  exact.
+  task itself needs `gnupg` on the host, and the apt modules need `python3-apt`
+  (a real run installs it; the preflight step says so if a dry run finds it
+  missing). A second `--check` after a real run is exact.
 - **Synapse behind the proxy.** Synapse sees every request as coming from
   `127.0.0.1` unless its listener sets `x_forwarded: true` in
   `homeserver.yaml`, which this repository does not manage.
@@ -218,8 +240,9 @@ the registry.
 
 ## Verification
 
-Checked in an `ubuntu:26.04` container running systemd, with `--check` on a
-fresh container, a real run, a second run that reported no changes, and a
+Checked in an `ubuntu:26.04` container running systemd with `python3-apt`
+preinstalled (a bare Debian 13 host without it fails a dry run at the first apt
+task; the preflight step now says so), with `--check` on a fresh container, a real run, a second run that reported no changes, and a
 second `--check` that reported no changes. That covered the signing key
 download against the pinned checksum, the repository, the package, the
 `tailscaled` service (which came up in `NeedsLogin`), and the state parsing
@@ -230,7 +253,9 @@ returns the documented JSON shapes, not against a tailnet: a first run joined
 and published, a second run changed nothing, and a second `--check` changed
 nothing. Against the stub it also refused a placeholder key, an empty tag list,
 a non-loopback serve target, a node that looks like an exit node, a node with
-Funnel on, and a serve entry on a node that is not joined. The auth key file
+Funnel on, a serve entry on a node that is not joined, the host name
+`tailscale-router`, a node whose prefs advertise routes, and a joined node
+whose tags differ from `tailscale_node_tags`. The auth key file
 mode (`0600`) and its removal were observed, and the key does not appear in the
 stub's argument log.
 
@@ -244,7 +269,7 @@ false` and the authkey left at its placeholder.
 
 Not checked: a real `tailscale up` with an auth key, the real format of
 `tailscale serve status --json` (the parsing follows Tailscale's published
-`ServeConfig` structure; a mismatch makes the role re-apply the entries on
-every run rather than fail), certificate issuance, a real LXC without TUN
+`ServeConfig` structure; if it does not match, the check after publishing in
+`serve.yml` fails the run), certificate issuance, a real LXC without TUN
 passthrough, Debian 13, the `arm64` repository, and Element push on a custom
 homeserver URL.

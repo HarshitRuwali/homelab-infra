@@ -2,7 +2,7 @@
 
 A private container image registry for the Iris project: CI pushes the images
 it builds, and the desk box pulls them. It runs the CNCF Distribution registry
-(`registry:2`) in a Docker Compose project on `127.0.0.1`, with one htpasswd
+(`registry:3`) in a Docker Compose project on `127.0.0.1`, with one htpasswd
 credential from the vault and a weekly garbage collection. The tailnet side
 (the HTTPS listener and its certificate) is the `tailscale_node` role's job.
 
@@ -20,8 +20,10 @@ registry were exercised in an `ubuntu:26.04` container with systemd (see
 | `gc` | Installs `fleet-registry-gc.sh`, its oneshot service and a weekly timer, and a metric file for the textfile collector. |
 | `service` | Runs `docker compose up -d`, then checks the registry refuses an anonymous call (401) and accepts the credential (200). |
 
+A `preflight` step (tag `always`) first checks a dry run has `python3-apt`.
+
 The role is applied by group membership (`image_registries`), with no host
-conditional inside it. Run `config` and `service` together.
+conditional for policy inside it. Run `config` and `service` together.
 
 ## Prerequisites: Harshit's steps
 
@@ -72,7 +74,7 @@ Defaults are in `defaults/main.yml`, which has the longer reasoning.
 | `image_registry_project_name` | `image-registry` | The Compose project name; what `docker_update_skip_projects` matches. |
 | `image_registry_project_dir` | `/opt/image-registry` | Holds `compose.yml`, `config.yml` and `auth/`. |
 | `image_registry_data_dir` | `/var/lib/image-registry` | The registry's blobs. Put it on a filesystem sized for your images. |
-| `image_registry_image` | `registry:2.8.3` | A patch tag. Pin by digest (`registry:2.8.3@sha256:...`) once you have chosen a release. |
+| `image_registry_image` | `registry:3.1.2` | A patch tag. Pin by digest (`registry:3.1.2@sha256:...`) once you have chosen a release. The 3.x image reads its configuration from `/etc/distribution/config.yml`, which the role mounts; going back to 2.x needs that path changed too. |
 | `image_registry_port` | `5000` | Host port on `127.0.0.1`. The `tailscale_node_serve` target must match it. |
 | `image_registry_delete_enabled` | `true` | Lets clients delete manifests, which garbage collection needs. |
 | `image_registry_user` | `registry` | The htpasswd user. |
@@ -183,6 +185,9 @@ not call them.
   credential, which also lets it push and delete. The tailnet policy is what
   limits who can reach it. Per-repository access control and anonymous read are
   features of the alternative, Zot, which is the likely next step if that matters.
+- **bcrypt cost.** `htpasswd -B` hashes at its default cost (5), so each request
+  pays a small check. That is a deliberate trade-off for a service that sees a
+  handful of CI pushes and pulls on a tailnet, not an oversight.
 - **One credential, rotated by rerunning the role.** Changing
   `vault_image_registry_push_password` and re-running rewrites the htpasswd
   file; the registry reads it again when it changes, with no restart.
@@ -195,11 +200,15 @@ not call them.
   and `..._duration_seconds` to the textfile collector. No alert rule uses
   them yet.
 - **Docker is installed only if absent.** A host with `docker.io` keeps it, and
-  the role only checks that `docker compose` works.
+  the role only checks that `docker compose` works. The Docker repository step
+  supports x86_64 and arm64 and fails on any other architecture rather than
+  guessing.
 - **Disk.** Nothing prunes images by age. Delete old tags through the API
   (deletion is enabled) and let the weekly collection reclaim the space.
 - **`--check` on a bare host.** The Docker repository task needs `gnupg` on the
-  host, and the package step tolerates the repository not being there yet. The
+  host, and the apt modules need `python3-apt` (a real run installs it; the
+  preflight step says so if a dry run finds it missing). The package step
+  tolerates the repository not being there yet. The
   startup probe does not wait under `--check`. A second `--check` after a real
   run is exact.
 
@@ -217,10 +226,15 @@ not call them.
 
 ## Verification
 
-Checked in an `ubuntu:26.04` container running systemd: `--check` on a fresh
+Checked in an `ubuntu:26.04` container running systemd with `python3-apt`
+preinstalled (a bare Debian 13 host without it fails a dry run at the first apt
+task; the preflight step now says so) and the pinned `registry:3.1.2` image:
+`--check` on a fresh
 container, a real run (Docker CE from Docker's repository, the Compose project,
 the container up on `127.0.0.1`), a second run that reported no changes and a
-second `--check` that reported no changes. Against that running registry:
+second `--check` that reported no changes. The first attempt with the 2.x configuration path failed the role's own 401
+check, because `registry:3` ignored the mounted file and ran without
+authentication; the mount now uses the 3.x path. Against the running registry:
 a push and a pull without credentials were refused, a login with a wrong
 password was refused, and with the right password a push, a pull and the
 catalog listing worked. Changing the password and re-running the role changed

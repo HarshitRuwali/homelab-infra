@@ -18,6 +18,19 @@
       Debian or Ubuntu, which is all the Docker repository step supports.
     quiet: true
 
+- name: Check the architecture Docker's repository serves
+  ansible.builtin.assert:
+    that:
+      - image_registry_docker_arch != ''
+    fail_msg: >-
+      image_registry installs Docker CE for x86_64 and arm64 only, and
+      {{ inventory_hostname }} reports {{ ansible_facts['architecture'] }}.
+      Install Docker yourself and the role will use it.
+    quiet: true
+  when:
+    - image_registry_docker_found.rc != 0
+    - image_registry_docker_install | bool
+
 # Only when there is no Docker at all. A host that has docker.io keeps it:
 # installing docker-ce over it would replace the engine under running
 # containers. Mirrors roles/wazuh_agent/tasks/repo.yml: apt_repository and a

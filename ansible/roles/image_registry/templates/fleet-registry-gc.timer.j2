@@ -3,9 +3,10 @@
 Description=Weekly image registry garbage collection
 
 [Timer]
+# No Persistent=: a collection missed while the host was off must not fire at
+# boot, where it would stop the registry just after it came up.
 OnCalendar={{ image_registry_gc_oncalendar }}
 RandomizedDelaySec={{ image_registry_gc_randomized_delay }}
-Persistent=true
 Unit=fleet-registry-gc.service
 
 [Install]

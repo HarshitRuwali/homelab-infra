@@ -17,7 +17,7 @@ A reference list. For what a playbook or a role *is*, see
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
 | `docker-updates.yml` | `autoupdate` | containers, only with `run_now` | container update schedule |
 | `rotate-collector-password.yml` | `central` | `nginx`, central `alloy` | rotating collector auth |
-| `tailscale-node.yml` | `tailscale_nodes` | nothing: `tailscaled` is never restarted | a host on the tailnet under a tag, with services published by `tailscale serve`; not part of `site.yml` |
+| `tailscale-node.yml` | `tailscale_nodes` | nothing: `tailscaled` is never restarted by this role unless `tailscale_node_manage_upgrades` is true | a host on the tailnet under a tag, with services published by `tailscale serve`; not part of `site.yml` |
 | `image-registry.yml` | `image_registries` | the registry container, only when its configuration changed; during a garbage collection | the private container image registry; not part of `site.yml` |
 | `force-updates.yml` | `monitored` | **services, via apt** | installing pending updates NOW; never reboots |
 
@@ -106,7 +106,7 @@ passthrough) and behaviour are documented in the role itself:
 ### `image_registry`
 
 Applied by membership of `image_registries` only: Docker CE if the host has
-none, a Compose project running `registry:2` on `127.0.0.1`, one htpasswd
+none, a Compose project running `registry:3` on `127.0.0.1`, one htpasswd
 credential from the vault, and a weekly garbage collection timer that stops the
 registry for its run. Tagged per concern: `docker`, `config`, `gc`, `service`.
 Reached from the tailnet through `tailscale_node` on the same host, which
