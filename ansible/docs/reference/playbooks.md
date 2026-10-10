@@ -94,7 +94,12 @@ updates with an automatic reboot window. Tagged per concern: `desktop`,
 
 !!! warning "The one host class that reboots itself"
     It sets `Automatic-Reboot "true"`, so it fails early on a host in
-    `autoupdate` or `no_autoupdate`, whose role asserts the opposite.
+    `autoupdate` or `no_autoupdate`, whose role asserts the opposite. On Kali
+    Rolling the update layer is off unless `desk_appliance_updates_enabled` is
+    set.
+
+Runs on Ubuntu 26.04 and Kali Rolling; any other distribution fails the play
+at the start.
 
 Variables and behaviour are documented in the role itself:
 `roles/desk_appliance/README.md`.

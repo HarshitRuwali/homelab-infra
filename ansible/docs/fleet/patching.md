@@ -64,7 +64,10 @@ Hosts in the opt-in `desk_appliances` group are the one place this policy does
 not hold. The [`desk_appliance` role](https://github.com/HarshitRuwali/homelab-infra/blob/master/ansible/roles/desk_appliance/README.md)
 sets `Automatic-Reboot "true"` and reboots at a set time (04:30 by default)
 whenever `/run/reboot-required` exists at that moment. That includes a flag
-left by a daytime `apt upgrade`, not only by the nightly security run.
+left by a daytime `apt upgrade`, not only by the nightly security run. On a
+Kali host the update layer, and with it the reboot, is off unless
+`desk_appliance_updates_enabled` is set: Kali is rolling, with no
+security-only pocket to apply unattended.
 
 They are kept out of `autoupdate` and `no_autoupdate`: the role refuses to run
 on a host in either, because the `unattended_upgrades` role above asserts the

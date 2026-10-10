@@ -66,7 +66,9 @@
 # own /etc/xdg/.../xfce4-power-manager.xml as a package conffile, and
 # replacing it would turn every package upgrade into a conffile prompt. A
 # value changed through the GUI is put back on the next run: this role owns
-# the file.
+# the file. `backup: true` keeps a dated copy of a file that already existed
+# (an account with a customised desktop, which is the normal case on Kali)
+# before it is replaced; a fresh account has nothing to back up.
 - name: Set the XFCE power and lock settings
   when:
     - desk_appliance_session == 'xfce'
@@ -93,6 +95,7 @@
         owner: "{{ desk_appliance_user }}"
         group: "{{ desk_appliance_user }}"
         mode: "0644"
+        backup: true
 
     - name: Write the XFCE screensaver and lock settings
       ansible.builtin.template:
@@ -101,6 +104,7 @@
         owner: "{{ desk_appliance_user }}"
         group: "{{ desk_appliance_user }}"
         mode: "0644"
+        backup: true
 
     - name: Hide the screen locker autostart entries
       ansible.builtin.copy:
