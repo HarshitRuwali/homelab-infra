@@ -12,7 +12,7 @@
       - up
       - --detach
   register: image_registry_up
-  changed_when: (image_registry_up.stdout ~ image_registry_up.stderr) is search('\b(Started|Created|Recreated)\b')
+  changed_when: (image_registry_up.stdout ~ image_registry_up.stderr) is search('\\b(Started|Created|Recreated)\\b')
 
 # Without credentials a call must be refused: that proves auth is on. 401 is
 # the answer the registry gives for an unauthenticated /v2/. Read-only, so it
