@@ -1,0 +1,18 @@
+---
+# Applied by GROUP MEMBERSHIP (`tailscale_nodes`), never by an in-role `when:`.
+# See playbooks/tailscale-node.yml.
+#
+# One file per concern, each tagged, so `--tags serve` touches only the
+# published services and never the package or the node's tailnet membership.
+
+- name: Install Tailscale and run tailscaled
+  ansible.builtin.import_tasks: install.yml
+  tags: [install]
+
+- name: Join the tailnet
+  ansible.builtin.import_tasks: join.yml
+  tags: [join]
+
+- name: Publish local services with tailscale serve
+  ansible.builtin.import_tasks: serve.yml
+  tags: [serve]

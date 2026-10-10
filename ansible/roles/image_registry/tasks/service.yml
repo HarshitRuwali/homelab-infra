@@ -1,0 +1,42 @@
+---
+# Starts the stack if it is not running. A changed configuration was already
+# applied by the "Recreate the registry" handler in config.yml, so on a run
+# that changed nothing this reports Running and no change.
+- name: Start the registry
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --file
+      - "{{ image_registry_compose_file }}"
+      - up
+      - --detach
+  register: image_registry_up
+  changed_when: (image_registry_up.stdout ~ image_registry_up.stderr) is search('\b(Started|Created|Recreated)\b')
+
+# Without credentials a call must be refused: that proves auth is on. 401 is
+# the answer the registry gives for an unauthenticated /v2/. Read-only, so it
+# runs under --check, where a host that is not set up yet cannot answer and
+# the probe does not wait.
+- name: Wait for the registry to ask for credentials
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ image_registry_port }}/v2/"
+    status_code: 401
+  register: image_registry_anon
+  until: image_registry_anon.status == 401
+  retries: "{{ 0 if ansible_check_mode else image_registry_ready_retries }}"
+  delay: "{{ image_registry_ready_delay }}"
+  check_mode: false
+  failed_when: image_registry_anon.status | default(0) != 401 and not ansible_check_mode
+
+- name: Check the push credential is accepted
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ image_registry_port }}/v2/"
+    url_username: "{{ image_registry_user }}"
+    url_password: "{{ image_registry_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: image_registry_authed
+  check_mode: false
+  no_log: true
+  failed_when: image_registry_authed.status | default(0) != 200 and not ansible_check_mode

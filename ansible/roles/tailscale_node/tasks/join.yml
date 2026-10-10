@@ -1,0 +1,104 @@
+---
+- name: Read the tailnet state
+  ansible.builtin.import_tasks: state.yml
+
+# This role must never touch the exit node and subnet router. Group membership
+# is what keeps it away; this is the backstop. A node that is already approved
+# as an exit node or that serves subnet routes is carrying other machines'
+# traffic, and it is not this role's to manage. Best effort: both fields only
+# appear once the routes are approved in the admin console.
+- name: Refuse a node that already routes for the tailnet
+  ansible.builtin.assert:
+    that:
+      - not (tailscale_node_self.ExitNodeOption | default(false))
+      - (tailscale_node_self.PrimaryRoutes | default([]) | length) == 0
+    fail_msg: >-
+      {{ inventory_hostname }} is already an exit node or serves subnet routes.
+      tailscale_node never manages the tailnet router. Remove the host from
+      tailscale_nodes.
+    quiet: true
+
+- name: Report the tailnet state
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: tailscale state is {{ tailscale_node_state }}.
+      {{ 'Joining is switched off (tailscale_node_join: false).'
+         if not tailscale_node_join | bool
+         else ('Already joined, nothing to do.'
+               if tailscale_node_state == 'Running'
+               else 'A join is needed.') }}
+
+# --- The join itself --------------------------------------------------------------
+# Runs only while the node is not on the tailnet. An auth key is consumed by
+# use, so this must not run on every pass: that is what the BackendState check
+# is for.
+- name: Join the tailnet
+  when:
+    - tailscale_node_join | bool
+    - tailscale_node_state != 'Running'
+  block:
+    - name: Check the join settings
+      ansible.builtin.assert:
+        that:
+          - tailscale_node_authkey_set | bool
+          - tailscale_node_tags | length > 0
+          - tailscale_node_tags | select('match', '^tag:[a-z0-9-]+$') | list | length == tailscale_node_tags | length
+        fail_msg: >-
+          Joining {{ inventory_hostname }} needs a real auth key (set
+          vault_tailscale_authkey in the vault, or tailscale_node_authkey) and
+          tailscale_node_tags as a non-empty list of tag:<name> values. The
+          key is not shown here.
+        quiet: true
+
+    # The key goes to tailscale through a file (`--auth-key=file:...`) in /run,
+    # a tmpfs, mode 0600, removed whether or not the join worked. That keeps it
+    # off the command line, where `ps` would show it to every local user. no_log
+    # keeps it out of the play output and the logs.
+    - name: Join the tailnet with the auth key
+      when: not ansible_check_mode
+      block:
+        - name: Write the auth key where only root can read it
+          ansible.builtin.copy:
+            content: "{{ tailscale_node_authkey }}"
+            dest: "{{ tailscale_node_authkey_file }}"
+            owner: root
+            group: root
+            mode: "0600"
+          no_log: true
+
+        - name: Run tailscale up
+          ansible.builtin.command:
+            argv:
+              - tailscale
+              - up
+              - "--auth-key=file:{{ tailscale_node_authkey_file }}"
+              - "--advertise-tags={{ tailscale_node_tags | join(',') }}"
+              - "--hostname={{ tailscale_node_hostname }}"
+              - "--accept-dns={{ tailscale_node_accept_dns | bool | lower }}"
+              - "--ssh=false"
+              - "--timeout=60s"
+          no_log: true
+          changed_when: true
+      always:
+        - name: Remove the auth key file
+          ansible.builtin.file:
+            path: "{{ tailscale_node_authkey_file }}"
+            state: absent
+
+    - name: Read the tailnet state after the join
+      ansible.builtin.import_tasks: state.yml
+      when: not ansible_check_mode
+
+    - name: Check the node is up with its tags
+      ansible.builtin.assert:
+        that:
+          - tailscale_node_state == 'Running'
+          - tailscale_node_tags | difference(tailscale_node_self.Tags | default([])) | length == 0
+        fail_msg: >-
+          After the join {{ inventory_hostname }} reports state
+          {{ tailscale_node_state }} and tags
+          {{ tailscale_node_self.Tags | default([]) }}. NeedsMachineAuth means
+          device approval is on and the node must be approved in the admin
+          console; missing tags mean the auth key does not allow them.
+        quiet: true
+      when: not ansible_check_mode

@@ -1,0 +1,24 @@
+---
+# Applied by GROUP MEMBERSHIP (`image_registries`), never by an in-role `when:`.
+# See playbooks/image-registry.yml.
+#
+# One file per concern, each tagged, so `--tags gc` touches only the garbage
+# collection timer. Run `config` and `service` together: the files are written
+# by `config` and the stack is started, or recreated to pick them up, in its
+# handlers and in `service`.
+
+- name: Install Docker
+  ansible.builtin.import_tasks: docker.yml
+  tags: [docker]
+
+- name: Write the registry configuration and credentials
+  ansible.builtin.import_tasks: config.yml
+  tags: [config]
+
+- name: Install the garbage collection timer
+  ansible.builtin.import_tasks: gc.yml
+  tags: [gc]
+
+- name: Start the registry and check it answers
+  ansible.builtin.import_tasks: service.yml
+  tags: [service]

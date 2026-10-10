@@ -1,0 +1,28 @@
+---
+# Reads the node's tailnet state into facts. Read-only, so it runs under
+# --check too (check_mode: false). When tailscale is not installed yet, or
+# tailscaled is not answering, the state is `Absent`.
+#
+# Facts set:
+#   tailscale_node_state  BackendState: Running, NeedsLogin, Stopped, ..., or
+#                         Absent when there is no answer
+#   tailscale_node_self   the "Self" block of `tailscale status --json`
+- name: Read the tailnet state
+  ansible.builtin.command: tailscale status --json
+  register: tailscale_node_status
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Record the tailnet state
+  ansible.builtin.set_fact:
+    tailscale_node_state: >-
+      {{ (tailscale_node_status.stdout | from_json).BackendState | default('Absent')
+         if (tailscale_node_status.rc | default(1)) == 0
+            and (tailscale_node_status.stdout | default('')) is match('\s*\{')
+         else 'Absent' }}
+    tailscale_node_self: >-
+      {{ ((tailscale_node_status.stdout | from_json).Self | default({}, true))
+         if (tailscale_node_status.rc | default(1)) == 0
+            and (tailscale_node_status.stdout | default('')) is match('\s*\{')
+         else {} }}

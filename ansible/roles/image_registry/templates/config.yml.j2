@@ -1,0 +1,33 @@
+# Managed by ansible/roles/image_registry. Do not edit by hand.
+#
+# Distribution registry configuration. Reached only through the loopback
+# publish in compose.yml and, from the tailnet, through `tailscale serve`.
+version: 0.1
+log:
+  level: info
+  fields:
+    service: registry
+storage:
+  filesystem:
+    rootdirectory: /var/lib/registry
+  delete:
+    enabled: {{ image_registry_delete_enabled | bool | lower }}
+  cache:
+    blobdescriptor: inmemory
+http:
+  addr: :5000
+  # Behind a TLS-terminating proxy the registry would otherwise build absolute
+  # Location headers from the request's Host and scheme. Relative ones work
+  # for every client and cannot name the wrong host.
+  relativeurls: true
+  headers:
+    X-Content-Type-Options: [nosniff]
+auth:
+  htpasswd:
+    realm: Image registry
+    path: /auth/htpasswd
+health:
+  storagedriver:
+    enabled: true
+    interval: 10s
+    threshold: 3

@@ -1,0 +1,19 @@
+# Managed by ansible/roles/image_registry. Do not edit by hand.
+#
+# The project name is what the docker_updates role's skip list matches
+# (docker_update_skip_projects).
+name: {{ image_registry_project_name }}
+
+services:
+  registry:
+    image: {{ image_registry_image }}
+    restart: unless-stopped
+    # Loopback only. `tailscale serve` is the way in from the tailnet.
+    ports:
+      - "127.0.0.1:{{ image_registry_port }}:5000"
+    volumes:
+      - {{ image_registry_data_dir }}:/var/lib/registry
+      - {{ image_registry_config_file }}:/etc/docker/registry/config.yml:ro
+      # The directory, not the file: rewriting htpasswd replaces the file, and
+      # a bind-mounted single file would keep pointing at the old one.
+      - {{ image_registry_auth_dir }}:/auth:ro

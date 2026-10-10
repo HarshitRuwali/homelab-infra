@@ -1,0 +1,12 @@
+---
+# Internal values, derived. Not settings: override the variables in
+# defaults/main.yml instead.
+image_registry_compose_file: "{{ image_registry_project_dir }}/compose.yml"
+image_registry_config_file: "{{ image_registry_project_dir }}/config.yml"
+image_registry_auth_dir: "{{ image_registry_project_dir }}/auth"
+image_registry_htpasswd_file: "{{ image_registry_auth_dir }}/htpasswd"
+image_registry_gc_script: /usr/local/bin/fleet-registry-gc.sh
+image_registry_docker_arch: >-
+  {{ 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'amd64' }}
+image_registry_password_set: "{{ image_registry_password | trim not in ['', 'REPLACE_ME'] }}"
+image_registry_container: "{{ image_registry_project_name }}-registry-1"

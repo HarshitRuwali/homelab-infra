@@ -129,6 +129,22 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | `uu_upgrade_oncalendar` | `*-*-* 03:00` | |
 | `uu_upgrade_randomized_delay` | `3600` | staggers the fleet |
 
+## Tailscale node
+
+`roles/tailscale_node/defaults/main.yml`
+
+Every variable is prefixed `tailscale_node_`. The full table, with defaults and
+what each is for, is in `roles/tailscale_node/README.md`; it is not repeated
+here.
+
+## Image registry
+
+`roles/image_registry/defaults/main.yml`
+
+Every variable is prefixed `image_registry_`. The full table, with defaults and
+what each is for, is in `roles/image_registry/README.md`; it is not repeated
+here.
+
 ## Container updates
 
 `roles/docker_updates/defaults/main.yml`
@@ -204,6 +220,8 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | `vault_matrix_bot_password` | relay |
 | `vault_matrix_webhook_api_key` | Grafana contact point, `$__env{}` |
 | `vault_matrix_alert_room_id` | internal room ID, **not** the alias |
+| `vault_tailscale_authkey` | `tailscale_node` join: a tagged auth key, only read while a node is not yet on the tailnet |
+| `vault_image_registry_push_password` | `image_registry`: the htpasswd password for the registry's one user |
 
 ```bash
 cd ansible                                              # from the repository root

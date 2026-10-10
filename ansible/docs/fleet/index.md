@@ -68,6 +68,8 @@ host is in as many as apply.
 | `central` | monitor-lxc | **what it runs**: the monitoring stack itself |
 | `autoupdate` | every host except t7920 | **whether** it is auto-patched |
 | `no_autoupdate` | t7920 | monitored, package lists refreshed, but **never** patched automatically |
+| `tailscale_nodes` | matrix (planned), the image registry guest (planned) | **whether** it joins the tailnet under a tag and publishes services with `tailscale serve`; never `tailscale-router` |
+| `image_registries` | the image registry guest (planned) | **what it runs**: the private container image registry |
 
 Do not fold an overlay into the platform tree. `lxc_debian` holds both
 `tailscale-router` (reached directly over the tailnet) and `monitor-lxc`

@@ -1,0 +1,42 @@
+---
+# Reads the serve configuration into facts. Read-only, so it runs under
+# --check too. Only asks when the node is on the tailnet; otherwise the facts
+# are empty.
+#
+# Facts set:
+#   tailscale_node_serve_applied  "<port>=<target>" for every HTTPS listener
+#                                 that proxies a path "/"
+#   tailscale_node_funnel_on      host:port keys that Funnel exposes to the
+#                                 public internet (must stay empty)
+- name: Read the serve configuration
+  ansible.builtin.command: tailscale serve status --json
+  register: tailscale_node_serve_raw
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: tailscale_node_state == 'Running'
+
+- name: Record the serve configuration
+  ansible.builtin.set_fact:
+    tailscale_node_serve_cfg: >-
+      {{ (tailscale_node_serve_raw.stdout | from_json)
+         if tailscale_node_state == 'Running'
+            and (tailscale_node_serve_raw.rc | default(1)) == 0
+            and (tailscale_node_serve_raw.stdout | default('')) is match('\s*\{')
+         else {} }}
+
+- name: Work out what is applied
+  ansible.builtin.set_fact:
+    tailscale_node_serve_applied: >-
+      {%- set ns = namespace(found=[]) -%}
+      {%- for hostport, web in (tailscale_node_serve_cfg.Web | default({})).items() -%}
+        {%- set port = hostport.split(':')[-1] -%}
+        {%- if (tailscale_node_serve_cfg.TCP | default({})).get(port, {}).get('HTTPS', false) -%}
+          {%- set proxy = ((web.Handlers | default({})).get('/', {})).get('Proxy', '') -%}
+          {%- set ns.found = ns.found + [port ~ '=' ~ proxy] -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ ns.found }}
+    tailscale_node_funnel_on: >-
+      {{ (tailscale_node_serve_cfg.AllowFunnel | default({}))
+         | dict2items | selectattr('value') | map(attribute='key') | list }}
