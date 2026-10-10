@@ -10,6 +10,15 @@
 # optional and simply switch their feature off while unset; nothing here is
 # required to be set for a first run.
 
+# --- Platform ------------------------------------------------------------------
+# ansible_distribution values the role has been exercised on: Ubuntu 26.04 and
+# Kali Rolling (see the README, Verification). Anything else stops the play at
+# the start instead of running with Ubuntu's package names and update origins
+# and quietly doing nothing. Add a name here only after trying the role on it.
+desk_appliance_supported_distributions:
+  - Ubuntu
+  - Kali
+
 # --- Appliance user --------------------------------------------------------
 # The account LightDM logs into automatically. It is created here (locked
 # password, no sudo) because autologin needs no password and the box should not
@@ -127,10 +136,12 @@ desk_appliance_serial_devices: []
 #             desk_appliance_uu_origins).
 desk_appliance_docker_source: distro
 
+# The Compose v2 plugin is docker-compose-v2 on Ubuntu and docker-compose on
+# Kali (Debian's name for it).
 desk_appliance_docker_packages:
   distro:
     - docker.io
-    - docker-compose-v2
+    - "{{ 'docker-compose' if ansible_facts.distribution == 'Kali' else 'docker-compose-v2' }}"
   docker_ce:
     - docker-ce
     - docker-ce-cli
@@ -150,18 +161,36 @@ desk_appliance_docker_live_restore: true
 desk_appliance_docker_arch: >-
   {{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}
 
-desk_appliance_docker_apt_url: https://download.docker.com/linux/ubuntu
-desk_appliance_docker_apt_key_url: https://download.docker.com/linux/ubuntu/gpg
+# docker_ce only. Docker publishes no repository for Kali, so Kali takes
+# Docker's Debian one, at the Debian release named by the suite below. Ubuntu
+# uses its own release codename. The suite is a variable because Kali's own
+# codename (kali-rolling) is not a directory in either repository.
+desk_appliance_docker_apt_url: >-
+  https://download.docker.com/linux/{{ 'debian' if ansible_facts.distribution == 'Kali'
+  else 'ubuntu' }}
+desk_appliance_docker_apt_key_url: "{{ desk_appliance_docker_apt_url }}/gpg"
+desk_appliance_docker_apt_suite: >-
+  {{ 'trixie' if ansible_facts.distribution == 'Kali' else ansible_facts.distribution_release }}
 desk_appliance_docker_apt_keyring: /etc/apt/keyrings/docker.asc
 
 # --- Unattended security updates (tag: updates) -------------------------
+# false skips the whole update layer (no unattended-upgrades, no reboot window,
+# no timer change) and removes this role's own update files if an earlier run
+# wrote them. Off by default on Kali: it is a rolling distribution with no
+# security-only pocket, so "updates" means every kali-rolling package, kernel
+# and desktop libraries included, applied with nobody watching. Turn it on only
+# if that is wanted; see the README, Kali.
+desk_appliance_updates_enabled: "{{ ansible_facts.distribution != 'Kali' }}"
+
 # Origins that may be applied unattended. `${distro_codename}` is expanded by
 # unattended-upgrades, not by Ansible. Replaces the distro's own origin list
-# rather than adding to it, so this really is security only.
-desk_appliance_uu_origins:
-  - "origin=Ubuntu,archive=${distro_codename}-security"
-  - "origin=UbuntuESM,archive=${distro_codename}-infra-security"
-  - "origin=UbuntuESM,archive=${distro_codename}-apps-security"
+# rather than adding to it. On Ubuntu this really is security only. Kali has
+# no such split, so its default is the whole kali-rolling archive.
+desk_appliance_uu_origins: >-
+  {{ ["origin=Kali,codename=${distro_codename}"] if ansible_facts.distribution == 'Kali'
+  else ["origin=Ubuntu,archive=${distro_codename}-security",
+  "origin=UbuntuESM,archive=${distro_codename}-infra-security",
+  "origin=UbuntuESM,archive=${distro_codename}-apps-security"] }}
 
 # Reboot, only when an update asks for one (/var/run/reboot-required), at this
 # 24 hour HH:MM. The upgrade run has to FINISH before this time: if it ends

@@ -11,7 +11,9 @@ Checks:
   * a scalar default shown in the README matches defaults/main.yml
   * every tag in the README table is used in tasks/main.yml, and the reverse
   * the roles, playbooks and groups named under "Run alongside" exist
-  * every file tasks/main.yml imports exists
+  * every file a tasks/*.yml file imports exists
+  * every distribution in desk_appliance_supported_distributions is named in
+    the README's "Supported platforms" section
   * every `--tags a,b` token in a README code block is a tag the role defines
   * every `src:` template named in tasks/*.yml exists under templates/
   * the playbook, the role and the group are named consistently in the
@@ -110,9 +112,23 @@ for task_file in sorted((ROLE / "tasks").glob("*.yml")):
             fail(f"{task_file.name} names template {src}, which templates/ does not have")
 
 # --- imported task files ---------------------------------------------------------
-for name in re.findall(r"import_tasks: ([a-z_.]+)", main_tasks):
-    if not (ROLE / "tasks" / name).is_file():
-        fail(f"tasks/main.yml imports missing file {name}")
+# main.yml imports one file per concern; updates.yml imports updates_apply.yml.
+for task_file in sorted((ROLE / "tasks").glob("*.yml")):
+    for name in re.findall(r"import_tasks: ([a-z_.]+)", task_file.read_text()):
+        if not (ROLE / "tasks" / name).is_file():
+            fail(f"{task_file.name} imports missing file {name}")
+
+# --- supported platforms ------------------------------------------------------------
+supported = re.search(
+    r"^desk_appliance_supported_distributions:\n((?:[ ]+- .*\n)+)", defaults, re.M
+)
+platforms_doc = readme.split("## Supported platforms")[1].split("\n## ")[0]
+if not supported:
+    fail("defaults/main.yml has no desk_appliance_supported_distributions list")
+else:
+    for name in re.findall(r"- (\S+)", supported.group(1)):
+        if name not in platforms_doc:
+            fail(f"README 'Supported platforms' does not name {name}")
 
 # --- run alongside -----------------------------------------------------------------
 alongside = readme.split("## Run alongside")[1].split("##")[0]

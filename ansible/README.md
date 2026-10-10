@@ -129,7 +129,8 @@ given variable belongs to and why. Start there.
 ## Design commitments
 
 - **Machines never reboot themselves**, under any policy, except hosts in the
-  opt-in `desk_appliances` group, which reboot in a set window and are kept
+  opt-in `desk_appliances` group, which reboot in a set window (Kali hosts
+  only when `desk_appliance_updates_enabled` is set) and are kept
   out of `autoupdate` and `no_autoupdate`. Kernel updates
   therefore accumulate until a human acts, which is why
   `fleet-reboot-required-too-long` nags at seven days.

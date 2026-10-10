@@ -5,10 +5,12 @@ session that an agent (or a person) drives. It logs itself in, never blanks,
 locks or suspends, has audio and a stable serial symlink, runs Docker, and
 patches and reboots itself in the small hours.
 
-Target: Ubuntu 26.04, x86_64. The package names and the generated
-configuration were exercised in an `ubuntu:26.04` container with systemd
-(see [Verification](#verification)); nothing here has been run on the
-hardware itself.
+Target: Ubuntu 26.04 and Kali Rolling, x86_64 (see
+[Supported platforms](#supported-platforms)). The package names and the
+generated configuration were exercised in an `ubuntu:26.04` and a
+`kalilinux/kali-rolling` container with systemd (see
+[Verification](#verification)); nothing here has been run on the hardware
+itself.
 
 ## What it does
 
@@ -19,7 +21,7 @@ hardware itself.
 | `audio` | PipeWire with ALSA and Pulse layers and WirePlumber; the user in `audio`; optional default sink and source; optional WebRTC echo cancellation. |
 | `serial` | The user in `dialout`; a udev rule giving each listed USB serial device a stable `/dev/<name>` symlink. |
 | `docker` | Docker engine and the Compose plugin from Ubuntu or from Docker's repository; the user in `docker`. |
-| `updates` | `unattended-upgrades` for security updates only, with an automatic reboot at a set time when one is needed. |
+| `updates` | `unattended-upgrades` for security updates only, with an automatic reboot at a set time when one is needed. Off by default on Kali (see [Kali Rolling](#kali-rolling)). |
 
 The appliance user is created by the role (locked password, no sudo) under
 the `always` tag, so every tag subset has an account to work with.
@@ -27,6 +29,18 @@ the `always` tag, so every tag subset has an account to work with.
 The role is applied by group membership (`desk_appliances`), with no host
 conditional inside it. It refuses to run on a host that is also in
 `autoupdate` or `no_autoupdate`; see [Patching](#patching-and-reboots).
+
+## Supported platforms
+
+| Platform | Status | Differences |
+|---|---|---|
+| Ubuntu 26.04 | the original target | none |
+| Kali Rolling | exercised in a container | Compose package name, Docker repository, unattended updates off by default; see [Kali Rolling](#kali-rolling) |
+
+The role stops at the start of the play on any other `ansible_distribution`
+(`desk_appliance_supported_distributions`). On a distribution it has not been
+tried on, the package names and the update origins would be wrong, and the
+update layer would pass its own checks while patching nothing.
 
 ## Variables
 
@@ -36,6 +50,7 @@ Everything host-specific (names, ids) is a variable; nothing is baked in.
 
 | Variable | Default | Notes |
 |---|---|---|
+| `desk_appliance_supported_distributions` | `Ubuntu`, `Kali` | `ansible_distribution` values the role runs on. Any other fails the play at the start. |
 | `desk_appliance_user` | `appliance` | Autologin account; created if missing. Not `root`. Set it per host in `host_vars` (see Example). |
 | `desk_appliance_home` | `/home/<user>` | With `desk_appliance_create_user: false` and an existing account, the home recorded in `passwd` is used instead. |
 | `desk_appliance_user_shell` | `/bin/bash` | Must be a real shell: LightDM's autologin PAM stack refuses `nologin`. |
@@ -55,13 +70,15 @@ Everything host-specific (names, ids) is a variable; nothing is baked in.
 | `desk_appliance_echo_cancel_aec_args` | `{}` | Keys passed to the WebRTC backend, for example `webrtc.gain_control: true`. |
 | `desk_appliance_serial_devices` | `[]` | List of `name`, `vendor_id`, `product_id` and optional `serial`. Ids are four hex digits, quoted. |
 | `desk_appliance_docker_source` | `distro` | `distro` (`docker.io`, `docker-compose-v2`) or `docker_ce` (Docker's repository). |
-| `desk_appliance_docker_packages` | per-source package lists | |
+| `desk_appliance_docker_packages` | per-source package lists | The Compose plugin is `docker-compose-v2` on Ubuntu and `docker-compose` on Kali. |
 | `desk_appliance_docker_live_restore` | `true` | Writes `/etc/docker/daemon.json` with `{"live-restore": true}` only if that file is absent. See Patching. |
 | `desk_appliance_docker_arch` | derived from the host | apt architecture name for the Docker repository. |
-| `desk_appliance_docker_apt_url` | `https://download.docker.com/linux/ubuntu` | |
-| `desk_appliance_docker_apt_key_url` | `https://download.docker.com/linux/ubuntu/gpg` | |
+| `desk_appliance_docker_apt_url` | `https://download.docker.com/linux/ubuntu`; on Kali `.../linux/debian` | `docker_ce` only. Docker publishes no Kali repository. |
+| `desk_appliance_docker_apt_key_url` | the URL above plus `/gpg` | `docker_ce` only. |
+| `desk_appliance_docker_apt_suite` | the host's release codename; on Kali `trixie` | `docker_ce` only. Kali's own codename is not a directory in Docker's repository, so Kali uses Debian's. |
 | `desk_appliance_docker_apt_keyring` | `/etc/apt/keyrings/docker.asc` | |
-| `desk_appliance_uu_origins` | Ubuntu security, ESM infra and apps security | Replaces the distro's origin list. |
+| `desk_appliance_updates_enabled` | `true` on Ubuntu, `false` on Kali | `false` skips the update layer and removes the role's own update files. See [Kali Rolling](#kali-rolling). |
+| `desk_appliance_uu_origins` | Ubuntu security, ESM infra and apps security; on Kali `origin=Kali,codename=${distro_codename}` | Replaces the distro's origin list. On Kali that is every kali-rolling package. |
 | `desk_appliance_reboot_time` | `"04:30"` | 24 hour `HH:MM`, quoted. |
 | `desk_appliance_reboot_with_users` | `true` | Needed because the autologin user is always logged in. |
 | `desk_appliance_upgrade_oncalendar` | `*-*-* 03:30` | `apt-daily-upgrade.timer`; must finish before the reboot time. |
@@ -168,6 +185,52 @@ host, and this role fails early on one that is in `autoupdate` or
   systemd (`systemctl show apt-daily-upgrade.timer`) and fails if the timer
   does not fire only at `desk_appliance_upgrade_oncalendar`.
 
+## Kali Rolling
+
+Run in a `kalilinux/kali-rolling` container, the role fails on two things and
+silently does nothing on a third; all three are handled with distribution
+defaults, so an Ubuntu host sees no change.
+
+- **Compose package.** Kali has no `docker-compose-v2`; the Compose v2 plugin
+  is `docker-compose`. Every other package in the default lists resolves on
+  kali-rolling.
+- **Docker repository** (`docker_ce` only). Docker publishes none for Kali, and
+  `kali-rolling` is not a suite in its Ubuntu or Debian repositories. Kali
+  defaults to Docker's Debian repository at suite `trixie`
+  (`desk_appliance_docker_apt_suite`). `distro` (`docker.io` from Kali's own
+  archive) needs none of this.
+- **Unattended updates.** The Ubuntu origins match nothing on Kali, and
+  `unattended-upgrade --dry-run` still exits 0, so the role's own check passes
+  while the host never patches. There is no security-only pocket on a rolling
+  distribution: the only origin is the whole archive (`origin=Kali`,
+  codename `kali-rolling`). Applying that unattended, with a reboot, moves the
+  kernel, Python, PipeWire and the desktop libraries while nobody is watching,
+  so the update layer is **off by default on Kali**
+  (`desk_appliance_updates_enabled`), and the host is updated by hand
+  (`apt full-upgrade`). Setting it to `true` applies every kali-rolling update
+  at the upgrade time and reboots at the reboot time if a kernel package asked
+  for it. On Debian-family hosts only kernel packages create
+  `/run/reboot-required` (through `/etc/kernel/postinst.d/unattended-upgrades`);
+  a library update does not, so running services keep the old library until
+  they restart. Turning the variable off later removes the role's apt policy
+  file and timer drop-in; it leaves the `unattended-upgrades` package installed.
+
+Things that behave the same but are worth knowing on an existing Kali install:
+
+- **An existing account's XFCE settings are replaced**, for the two channels the
+  role owns, `xfce4-power-manager` and `xfce4-screensaver`. A dated copy of an
+  existing file is kept next to it (`backup: true`). Kali's own system-wide
+  defaults for those channels (a power-button action and an on-screen-keyboard
+  command) stay in effect, because per-user values override them one property
+  at a time.
+- **LightDM** reads every `lightdm.conf.d` drop-in. A hand-written autologin file
+  with the same keys as `50-desk-appliance.conf` is harmless but redundant;
+  `lightdm --show-config` shows which file each value came from.
+- **Kali's desktop uses `xfce4-screensaver`**, not `light-locker`. Both are
+  hidden from autostart and the xfconf properties cover the former.
+- `kali-themes` also installs an `i3` session; the named `xfce` session is what
+  LightDM logs into.
+
 ## Things to know
 
 - Membership of the `docker` group is root-equivalent on the host.
@@ -184,6 +247,10 @@ host, and this role fails early on one that is in `autoupdate` or
   `--check` after a real run runs all of them and is exact.
 - Ubuntu 26.04 also ships an XFCE Wayland session. The named session in the
   LightDM drop-in is what keeps the appliance on X11.
+- The xfconf property names were checked against upstream
+  (`common/xfpm-config.h` in xfce4-power-manager, `src/gs-prefs.h` in
+  xfce4-screensaver) and against the strings in the Kali 4.20 binaries of both
+  programs.
 - LightDM autologin requires the user to have a real shell; the password stays
   locked.
 
@@ -202,7 +269,8 @@ host, and this role fails early on one that is in `autoupdate` or
 
 ## Verification
 
-Checked in an `ubuntu:26.04` container running systemd: package names resolve,
+Checked in an `ubuntu:26.04` container and in a `kalilinux/kali-rolling`
+container, each running systemd: package names resolve,
 `--check` on a fresh host completes, a real run completes, a second run
 reports no changes and a second `--check` is clean, the rendered apt
 configuration reads back as intended (`apt-config dump`), systemd reports the
@@ -211,12 +279,22 @@ upgrade timer firing only at the configured time, leftover fleet
 `udevadm verify`, and a PipeWire daemon started with the echo-cancel drop-in
 creates the four named nodes.
 
-To reproduce: build an `ubuntu:26.04` image with `systemd systemd-sysv dbus
-python3 python3-apt ansible-core sudo ca-certificates udev iproute2 procps`
-installed (`CMD ["/usr/lib/systemd/systemd"]`), start it with `--privileged
---cgroupns=host`, `/sys/fs/cgroup` mounted read-write and tmpfs on `/run`,
+To reproduce: build an `ubuntu:26.04` (or `kalilinux/kali-rolling`) image with
+`systemd systemd-sysv dbus python3 python3-apt ansible-core sudo ca-certificates
+udev iproute2 procps` installed (`CMD ["/usr/lib/systemd/systemd"]`), start it
+with `--privileged --cgroupns=host`, `/sys/fs/cgroup` mounted read-write and tmpfs on `/run`,
 mount `ansible/` read-only, and run `ansible-playbook` against a local
 inventory with one host in `desk_appliances`.
+
+On Kali the same sequence was run with the defaults, and then separately:
+`docker_ce` from Docker's Debian repository (installs, second run reports no
+changes), `desk_appliance_updates_enabled: true` (the unattended-upgrades dry
+run lists the pending kali-rolling packages, which it did not with the Ubuntu
+origins) and back to `false` (the role's files are removed, the timer is back
+at the distro default, a second run reports no changes), an existing account
+whose xfconf file is kept as a dated backup, and the distribution guard
+refusing a host that is not in the list.
+
 Not checked: anything needing hardware or a display (autologin into a running
 desktop, DPMS, USB serial matching, WirePlumber default-device selection,
 suspend behaviour) and the `arm64` Docker repository path.

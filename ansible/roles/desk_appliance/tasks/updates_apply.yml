@@ -1,0 +1,200 @@
+---
+# Applied by updates.yml only when desk_appliance_updates_enabled is true. The
+# fleet-group check and the "off" branch live there.
+
+- name: Check the reboot time
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_reboot_time is match('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+    fail_msg: >-
+      desk_appliance_reboot_time must be 24 hour HH:MM, quoted so YAML does not
+      read it as a number. Got: {{ desk_appliance_reboot_time }}
+    quiet: true
+
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+  register: desk_appliance_uu_pkg
+
+# Leftovers of the fleet unattended_upgrades role, for a host that used to be
+# in autoupdate or no_autoupdate. The group guard in updates.yml only stops
+# that role running here from now on; it does not remove what an earlier run
+# wrote, and the fleet's Automatic-Reboot "false" file would still sit next to
+# ours.
+#   /etc/apt/apt.conf.d/52unattended-upgrades-fleet            (policy)
+#   /etc/apt/apt.conf.d/20auto-upgrades                        (periodic)
+#   /etc/systemd/system/apt-daily-upgrade.timer.d/fleet.conf   (timer)
+# 20auto-upgrades is also the name of Ubuntu's own stock file, so it is only
+# removed when it carries the fleet role's "Managed by" header. The values this
+# role sets in its own file are the same three APT::Periodic lines.
+- name: Remove the fleet unattended_upgrades policy file
+  ansible.builtin.file:
+    path: /etc/apt/apt.conf.d/52unattended-upgrades-fleet
+    state: absent
+
+- name: Look for the fleet APT periodic file
+  ansible.builtin.find:
+    paths: /etc/apt/apt.conf.d
+    patterns: 20auto-upgrades
+    # The find module anchors this regex at the start of each line.
+    contains: '.*Managed by ansible/roles/unattended_upgrades'
+  register: desk_appliance_fleet_periodic
+
+- name: Remove the fleet APT periodic file
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ desk_appliance_fleet_periodic.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Remove the fleet apt-daily-upgrade timer drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/apt-daily-upgrade.timer.d/fleet.conf
+    state: absent
+  register: desk_appliance_fleet_timer
+  notify: Reload systemd
+
+# Numbered above the distro's 50unattended-upgrades so these values win.
+- name: Configure security-only updates with a reboot window
+  ansible.builtin.template:
+    src: 53desk-appliance-unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/53desk-appliance-unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+  register: desk_appliance_uu_conf
+
+- name: Ensure the apt-daily-upgrade timer override directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/apt-daily-upgrade.timer.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Move the apt-daily-upgrade timer ahead of the reboot window
+  ansible.builtin.template:
+    src: apt-daily-upgrade-desk.conf.j2
+    dest: /etc/systemd/system/apt-daily-upgrade.timer.d/desk-appliance.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: desk_appliance_timer_conf
+  notify: Reload systemd
+
+- name: Flush handlers before touching timers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable the apt timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
+
+# --- Validation gates ----------------------------------------------------
+# These read what is on disk, so they are read-only and run under --check too
+# (same idiom as roles/unattended_upgrades). The one case they cannot judge is
+# a dry run that is about to change that state: the files, the package or the
+# timer drop-in have not been written yet, so what is on disk is the old
+# configuration. This fact says so, and the asserts skip in that case only. A
+# second --check after a real run is therefore exact.
+- name: Record whether the on-disk state is stale in this dry run
+  ansible.builtin.set_fact:
+    desk_appliance_updates_stale: >-
+      {{ ansible_check_mode and (
+           desk_appliance_uu_pkg.changed
+           or desk_appliance_uu_conf.changed
+           or desk_appliance_timer_conf.changed
+           or desk_appliance_fleet_timer.changed
+           or desk_appliance_fleet_periodic.files | length > 0
+      ) }}
+
+- name: Read back the effective apt configuration
+  ansible.builtin.command: apt-config dump
+  register: desk_appliance_apt_config
+  changed_when: false
+  check_mode: false
+
+- name: Assert the reboot policy took effect
+  ansible.builtin.assert:
+    that:
+      - >-
+        'Unattended-Upgrade::Automatic-Reboot "true"'
+        in desk_appliance_apt_config.stdout
+      - >-
+        ('Unattended-Upgrade::Automatic-Reboot-Time "'
+        ~ desk_appliance_reboot_time ~ '"')
+        in desk_appliance_apt_config.stdout
+    fail_msg: >-
+      The effective apt configuration on {{ inventory_hostname }} does not carry
+      the reboot policy. Look for a later file in /etc/apt/apt.conf.d/
+      overriding 53desk-appliance-unattended-upgrades.
+    quiet: true
+  when: not desk_appliance_updates_stale | bool
+
+# The timer drop-in can be right on disk and still not be what systemd runs, if
+# a daemon-reload was missed or another drop-in adds a second OnCalendar. Ask
+# systemd what the timer will fire on, in the form it prints it.
+- name: Normalise the configured timer calendar
+  ansible.builtin.command: >-
+    systemd-analyze calendar "{{ desk_appliance_upgrade_oncalendar }}"
+  register: desk_appliance_calendar
+  changed_when: false
+  check_mode: false
+
+# `systemctl show`, not the systemd module's `status`: TimersCalendar prints one
+# line per OnCalendar entry, and the module folds repeated keys into the last
+# one, which would hide exactly the second entry this is looking for.
+- name: Read back the timer calendar  # noqa: command-instead-of-module
+  ansible.builtin.command: >-
+    systemctl show apt-daily-upgrade.timer -p TimersCalendar --value
+  register: desk_appliance_timer_unit
+  changed_when: false
+  check_mode: false
+
+- name: Assert the upgrade timer runs only at the configured time
+  ansible.builtin.assert:
+    that:
+      - >-
+        desk_appliance_timer_unit.stdout
+        | regex_findall('OnCalendar=') | length == 1
+      - >-
+        ('OnCalendar=' ~ (desk_appliance_calendar.stdout
+        | regex_search('Normalized form: (.*)', '\\1') | first | trim))
+        in desk_appliance_timer_unit.stdout
+    fail_msg: >-
+      apt-daily-upgrade.timer on {{ inventory_hostname }} does not fire only at
+      {{ desk_appliance_upgrade_oncalendar }}. systemd reports:
+      {{ desk_appliance_timer_unit.stdout }}. Look for another
+      drop-in in /etc/systemd/system/apt-daily-upgrade.timer.d/.
+    quiet: true
+  when: not desk_appliance_updates_stale | bool
+
+- name: Dry-run unattended-upgrades
+  ansible.builtin.command: unattended-upgrade --dry-run --debug
+  register: desk_appliance_uu_dryrun
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  when: not desk_appliance_updates_stale | bool
+
+- name: Assert the dry run did not blow up
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_uu_dryrun.rc == 0
+      - "'Traceback' not in desk_appliance_uu_dryrun.stdout"
+      - "'Traceback' not in desk_appliance_uu_dryrun.stderr"
+    fail_msg: >-
+      unattended-upgrade --dry-run failed on {{ inventory_hostname }}.
+      rc={{ desk_appliance_uu_dryrun.rc }}. Tail:
+      {{ (desk_appliance_uu_dryrun.stdout | default(''))[-2000:] }}
+    quiet: true
+  when: not desk_appliance_updates_stale | bool

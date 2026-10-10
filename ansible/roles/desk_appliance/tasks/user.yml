@@ -1,4 +1,17 @@
 ---
+- name: Refuse a distribution the role has not been exercised on
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution in desk_appliance_supported_distributions
+    fail_msg: >-
+      {{ inventory_hostname }} runs {{ ansible_facts.distribution }}; this role has
+      been exercised on {{ desk_appliance_supported_distributions | join(', ') }}
+      only. Its package names and update origins would be wrong elsewhere, and
+      the update layer in particular would pass its checks while patching
+      nothing. Try the role on a scratch copy first, then add the name to
+      desk_appliance_supported_distributions.
+    quiet: true
+
 - name: Refuse an unusable appliance user name
   ansible.builtin.assert:
     that:

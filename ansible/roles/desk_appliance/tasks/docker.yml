@@ -47,7 +47,7 @@
           deb [arch={{ desk_appliance_docker_arch }}
           signed-by={{ desk_appliance_docker_apt_keyring }}]
           {{ desk_appliance_docker_apt_url }}
-          {{ ansible_distribution_release }} stable
+          {{ desk_appliance_docker_apt_suite }} stable
         filename: docker
         state: present
         update_cache: true
