@@ -18,6 +18,24 @@
       tailscale_nodes.
     quiet: true
 
+# A node that is already Running is not rejoined, so a change to
+# tailscale_node_tags would otherwise pass silently. Say so instead.
+- name: Check the tags on a node that is already joined
+  ansible.builtin.assert:
+    that:
+      - (tailscale_node_self.Tags | default([]) | sort) == (tailscale_node_tags | sort)
+    fail_msg: >-
+      {{ inventory_hostname }} is on the tailnet with tags
+      {{ tailscale_node_self.Tags | default([]) }} but tailscale_node_tags is
+      {{ tailscale_node_tags }}. The role does not rejoin a running node. Change
+      the tags in the admin console (Machines, Edit ACL tags), or rejoin with a
+      new auth key: tailscale up --reset --auth-key=... --advertise-tags=...
+      --force-reauth, with the same flags the role uses.
+    quiet: true
+  when:
+    - tailscale_node_join | bool
+    - tailscale_node_state == 'Running'
+
 - name: Report the tailnet state
   ansible.builtin.debug:
     msg: >-
@@ -53,7 +71,9 @@
     # The key goes to tailscale through a file (`--auth-key=file:...`) in /run,
     # a tmpfs, mode 0600, removed whether or not the join worked. That keeps it
     # off the command line, where `ps` would show it to every local user. no_log
-    # keeps it out of the play output and the logs.
+    # on the copy keeps the key out of the play output. `tailscale up` has no
+    # no_log: its command line holds only the file path, and hiding its output
+    # would hide the real error when tailscale asks for more flags or --reset.
     - name: Join the tailnet with the auth key
       when: not ansible_check_mode
       block:
@@ -77,7 +97,6 @@
               - "--accept-dns={{ tailscale_node_accept_dns | bool | lower }}"
               - "--ssh=false"
               - "--timeout=60s"
-          no_log: true
           changed_when: true
       always:
         - name: Remove the auth key file

@@ -17,7 +17,8 @@ tailscale_node_apt_keyring: /usr/share/keyrings/tailscale-archive-keyring.gpg
 # SHA-256 of the unarmoured signing key. The same file is served for every
 # Debian and Ubuntu release (checked 2026-10-10). A mismatch fails the run, so a
 # swapped or rotated key is noticed. If Tailscale rotates it, compare the new
-# fingerprint with Tailscale's documentation before changing this.
+# fingerprint with Tailscale's documentation before changing this. The key's
+# fingerprint is 2596 A99E AAB3 3821 893C 0A79 458C A832 957F 5868.
 tailscale_node_apt_key_sha256: 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
 
 # `present` by default, never `latest`: an apt upgrade of the tailscale package

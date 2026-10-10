@@ -6,7 +6,16 @@ image_registry_config_file: "{{ image_registry_project_dir }}/config.yml"
 image_registry_auth_dir: "{{ image_registry_project_dir }}/auth"
 image_registry_htpasswd_file: "{{ image_registry_auth_dir }}/htpasswd"
 image_registry_gc_script: /usr/local/bin/fleet-registry-gc.sh
+# Empty for an architecture Docker's repository does not serve here; docker.yml
+# refuses that rather than guessing amd64.
 image_registry_docker_arch: >-
-  {{ 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64'] else 'amd64' }}
+  {{ 'amd64' if ansible_facts['architecture'] == 'x86_64'
+     else 'arm64' if ansible_facts['architecture'] in ['aarch64', 'arm64']
+     else '' }}
 image_registry_password_set: "{{ image_registry_password | trim not in ['', 'REPLACE_ME'] }}"
 image_registry_container: "{{ image_registry_project_name }}-registry-1"
+# Where the registry image reads its configuration. registry:3 moved it from
+# /etc/docker/registry/config.yml (registry:2) to here; a config mounted at the
+# old path is silently ignored and the image runs with its default, which has no
+# authentication. The service step's 401 check exists to catch exactly that.
+image_registry_container_config: /etc/distribution/config.yml

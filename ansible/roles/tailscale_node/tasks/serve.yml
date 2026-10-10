@@ -10,7 +10,7 @@
       - item.https_port >= 1
       - item.https_port <= 65535
       - item.target is defined
-      - item.target is match('^https?://127\.0\.0\.1:[0-9]+$')
+      - item.target is match('^http://127\.0\.0\.1:[0-9]+$')
     fail_msg: >-
       Each tailscale_node_serve entry needs an integer https_port and a
       loopback target such as http://127.0.0.1:8008. Got
@@ -54,7 +54,9 @@
     fail_msg: >-
       Funnel is on for {{ tailscale_node_funnel_on }} on
       {{ inventory_hostname }}, which publishes it to the public internet.
-      Turn it off with `tailscale funnel reset` and find out who enabled it.
+      Turn it off per port with `tailscale funnel --https=<port> off` (not
+      `tailscale funnel reset` or `tailscale serve reset`, which wipe the whole
+      serve configuration) and find out who enabled it.
     quiet: true
 
 # `tailscale serve --bg` writes the same configuration each time, so the

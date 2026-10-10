@@ -8,7 +8,8 @@ Standard library only; run from anywhere:
 Checks:
   * every variable in defaults/main.yml (set, or commented as optional) has a
     row in the role README, and every variable the README names exists
-  * a scalar default shown in the README matches defaults/main.yml
+  * a scalar default shown in the README equals defaults/main.yml (the whole
+    normalised cell, not a substring)
   * every tag in the README table is used in tasks/main.yml, and the reverse,
     and the playbook header lists the same tags
   * the roles, playbooks and groups named under "Run alongside" exist
@@ -81,7 +82,9 @@ for var, raw in set_vars.items():
     ):
         continue
     cell = norm(rows[var][0]) if rows[var] else ""
-    if norm(value) not in cell:
+    # The whole cell, not a substring: a README default of 50000 must not pass
+    # for a default of 5000.
+    if norm(value) != cell:
         fail(f"README default for {var} is '{cell}', defaults has '{value}'")
 
 for var in optional_vars:
@@ -118,6 +121,19 @@ for task_file in sorted((ROLE / "tasks").glob("*.yml")):
     for name in re.findall(r"import_tasks: ([a-z_.]+)", task_file.read_text()):
         if not (ROLE / "tasks" / name).is_file():
             fail(f"{task_file.name} imports missing file {name}")
+
+# --- preflight: the `always` guard ----------------------------------------------------
+if not re.search(r"import_tasks: preflight\.yml\n\s+tags: \[always\]", main_tasks):
+    fail("tasks/main.yml must import preflight.yml with tags: [always]")
+if main_tasks.index("preflight.yml") > main_tasks.index("install.yml"):
+    fail("tasks/main.yml must import preflight.yml before install.yml")
+preflight = (ROLE / "tasks" / "preflight.yml").read_text()
+for needle in ["tailscale-router", "tailscale debug prefs", "AdvertiseRoutes", "ExitNodeOption", "import_tasks: state.yml"]:
+    if needle not in preflight:
+        fail(f"tasks/preflight.yml no longer mentions {needle}")
+for needle in ["preflight", "always", "tailscale debug prefs", "tailscale-router"]:
+    if needle not in readme:
+        fail(f"README no longer mentions {needle}")
 
 # --- run alongside -----------------------------------------------------------------
 alongside = readme.split("## Run alongside")[1].split("\n## ")[0]
@@ -182,6 +198,7 @@ for needle in [
     "tag:matrix",
     "tag:registry",
     "auth key",
+    "pct set <id> --dev0 /dev/net/tun",
     "lxc.cgroup2.devices.allow: c 10:200 rwm",
     "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file",
     "hosts.local.yml",

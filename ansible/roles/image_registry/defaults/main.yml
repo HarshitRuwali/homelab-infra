@@ -1,5 +1,5 @@
 ---
-# A private container image registry (CNCF Distribution, the `registry:2`
+# A private container image registry (CNCF Distribution, the `registry:3`
 # image) for the Iris project's CI and the desk box. Applied by GROUP
 # MEMBERSHIP (`image_registries`), never by an in-role `when:`. See
 # playbooks/image-registry.yml.
@@ -19,7 +19,8 @@ image_registry_docker_apt_key_url: "{{ image_registry_docker_apt_url }}/gpg"
 image_registry_docker_apt_keyring: /etc/apt/keyrings/docker.asc
 # SHA-256 of the armoured signing key, the same for Debian and Ubuntu (checked
 # 2026-10-10). A mismatch fails the run. If Docker rotates the key, compare the
-# fingerprint with Docker's documentation before changing this.
+# fingerprint with Docker's documentation before changing this. The key's
+# fingerprint is 9DC8 5822 9FC7 DD38 854A E2D8 8D81 803C 0EBF CD88.
 image_registry_docker_apt_key_sha256: 1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
 image_registry_docker_packages:
   - docker-ce
@@ -36,8 +37,11 @@ image_registry_data_dir: /var/lib/image-registry
 
 # Pinned to a patch tag, so a pull can never change the major version. Pin by
 # digest once you have chosen a release, for example
-# registry:2.8.3@sha256:<digest>; the digest is not guessed here.
-image_registry_image: registry:2.8.3
+# registry:3.1.2@sha256:<digest>; the digest is not guessed here. The image
+# reads /etc/distribution/config.yml (see vars/main.yml); registry:2 read
+# /etc/docker/registry/config.yml, so do not move the pin back to 2.x without
+# changing image_registry_container_config.
+image_registry_image: registry:3.1.2
 
 # Host port on 127.0.0.1. The tailscale_node_serve target must point here.
 image_registry_port: 5000

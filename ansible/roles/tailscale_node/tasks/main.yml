@@ -5,6 +5,13 @@
 # One file per concern, each tagged, so `--tags serve` touches only the
 # published services and never the package or the node's tailnet membership.
 
+# preflight.yml carries the `always` tag: its refusals (the tailnet router, a
+# node that advertises routes, a dry run without python3-apt) hold for every tag
+# subset, including --tags serve.
+- name: Refuse hosts this role must not touch
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [always]
+
 - name: Install Tailscale and run tailscaled
   ansible.builtin.import_tasks: install.yml
   tags: [install]

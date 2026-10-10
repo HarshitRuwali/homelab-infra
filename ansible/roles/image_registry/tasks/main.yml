@@ -7,6 +7,10 @@
 # by `config` and the stack is started, or recreated to pick them up, in its
 # handlers and in `service`.
 
+- name: Check the host can be dry-run
+  ansible.builtin.import_tasks: preflight.yml
+  tags: [always]
+
 - name: Install Docker
   ansible.builtin.import_tasks: docker.yml
   tags: [docker]

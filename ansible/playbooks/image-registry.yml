@@ -1,5 +1,5 @@
 ---
-# The on-prem container image registry (CNCF Distribution, `registry:2`) for
+# The on-prem container image registry (CNCF Distribution, `registry:3`) for
 # the Iris project: Docker, a Compose project on 127.0.0.1, an htpasswd
 # credential from the vault, and a weekly garbage collection timer.
 #
