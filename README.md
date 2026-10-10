@@ -77,6 +77,12 @@ ansible-playbook playbooks/site.yml         # everything, idempotent
 pull images. Those apply on a schedule: 03:00 for packages, 04:00 for
 containers. Nothing ever reboots a machine.
 
+Two host-class playbooks sit outside `site.yml` and run on purpose:
+`playbooks/tailscale-node.yml` (a host on the tailnet, with services published
+over `tailscale serve`) and `playbooks/image-registry.yml` (the on-prem container
+image registry). See `ansible/roles/tailscale_node` and
+`ansible/roles/image_registry`.
+
 </details>
 
 <details>

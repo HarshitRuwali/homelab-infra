@@ -1,0 +1,12 @@
+# Managed by ansible/roles/image_registry. Do not edit by hand.
+[Unit]
+Description=Weekly image registry garbage collection
+
+[Timer]
+OnCalendar={{ image_registry_gc_oncalendar }}
+RandomizedDelaySec={{ image_registry_gc_randomized_delay }}
+Persistent=true
+Unit=fleet-registry-gc.service
+
+[Install]
+WantedBy=timers.target

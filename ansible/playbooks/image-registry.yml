@@ -1,0 +1,38 @@
+---
+# The on-prem container image registry (CNCF Distribution, `registry:2`) for
+# the Iris project: Docker, a Compose project on 127.0.0.1, an htpasswd
+# credential from the vault, and a weekly garbage collection timer.
+#
+#   ansible-playbook playbooks/image-registry.yml --check --diff
+#   ansible-playbook playbooks/image-registry.yml --limit <host>
+#   ansible-playbook playbooks/image-registry.yml --tags gc
+#
+# Tags, one per concern: docker, config, gc, service. Run `config` and
+# `service` together.
+#
+# SCOPE is `image_registries`, an overlay group like `wazuh_agents`: membership
+# is the ONLY thing that enables the role. Add the host to that group in the
+# gitignored inventory/hosts.local.yml (see hosts.example.yml); this file names
+# no host. The push credential is the vault variable
+# vault_image_registry_push_password.
+#
+# NOT in site.yml, same as wazuh-agents.yml: this is a host-class change you run
+# on purpose.
+#
+# THE TAILNET SIDE is a different role. The registry listens on 127.0.0.1 only;
+# the same host also goes in `tailscale_nodes` with a tailscale_node_serve entry
+# for its port, and playbooks/tailscale-node.yml publishes it on 443 with a
+# Tailscale certificate. Run that playbook first or after, either order works.
+#
+# RUN ALONGSIDE, from their own playbooks:
+#   tailscale-node.yml   tailscale_node (host also in `tailscale_nodes`)
+#   collectors.yml       alloy_collector (host also in `monitored`)
+#
+# The registry's Compose project is `image-registry`. On a host in
+# `autoupdate` that runs docker_updates, add it to docker_update_skip_projects.
+
+- name: Run the image registry
+  hosts: image_registries
+  become: true
+  roles:
+    - image_registry

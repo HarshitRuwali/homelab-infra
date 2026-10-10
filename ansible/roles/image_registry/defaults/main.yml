@@ -1,0 +1,77 @@
+---
+# A private container image registry (CNCF Distribution, the `registry:2`
+# image) for the Iris project's CI and the desk box. Applied by GROUP
+# MEMBERSHIP (`image_registries`), never by an in-role `when:`. See
+# playbooks/image-registry.yml.
+#
+# The registry listens on 127.0.0.1 only. It is reached on the tailnet through
+# `tailscale serve` on 443, which the tailscale_node role sets up when the same
+# host is also in `tailscale_nodes` (see the role README, Run alongside).
+
+# --- Docker (tag: docker) ---------------------------------------------------------
+# Docker CE from Docker's own apt repository, installed only when the host has no
+# Docker yet. A host that already has `docker` (any package) is left alone, so
+# the role never swaps docker.io for docker-ce underneath running containers.
+# `false` makes the role require an existing engine with the Compose plugin.
+image_registry_docker_install: true
+image_registry_docker_apt_url: "https://download.docker.com/linux/{{ ansible_facts['distribution'] | lower }}"
+image_registry_docker_apt_key_url: "{{ image_registry_docker_apt_url }}/gpg"
+image_registry_docker_apt_keyring: /etc/apt/keyrings/docker.asc
+# SHA-256 of the armoured signing key, the same for Debian and Ubuntu (checked
+# 2026-10-10). A mismatch fails the run. If Docker rotates the key, compare the
+# fingerprint with Docker's documentation before changing this.
+image_registry_docker_apt_key_sha256: 1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570
+image_registry_docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-compose-plugin
+
+# --- Layout and image (tags: config, service) --------------------------------------
+# The Compose project name is what docker_update_skip_projects matches; see the
+# role README, Patching.
+image_registry_project_name: image-registry
+image_registry_project_dir: /opt/image-registry
+image_registry_data_dir: /var/lib/image-registry
+
+# Pinned to a patch tag, so a pull can never change the major version. Pin by
+# digest once you have chosen a release, for example
+# registry:2.8.3@sha256:<digest>; the digest is not guessed here.
+image_registry_image: registry:2.8.3
+
+# Host port on 127.0.0.1. The tailscale_node_serve target must point here.
+image_registry_port: 5000
+
+# Lets clients delete manifests (`DELETE /v2/<name>/manifests/<digest>`), which
+# garbage collection needs to have anything to collect.
+image_registry_delete_enabled: true
+
+# --- Authentication (tag: config) -----------------------------------------------------
+# One htpasswd user. The registry's htpasswd auth has no read-only role and no
+# anonymous mode, so this one credential pushes AND pulls; see the role README,
+# Things to know. The password is in the vault, never in a file in this
+# repository. The placeholder is refused.
+image_registry_user: registry
+image_registry_password: "{{ vault_image_registry_push_password | default('REPLACE_ME') }}"
+
+# --- Garbage collection (tag: gc) ---------------------------------------------------------
+# A weekly systemd timer stops the registry, runs `registry garbage-collect`,
+# and starts it again. The registry is down for the length of the run (seconds
+# to minutes), so the time is a Sunday morning, after the 03:00 patching window
+# and the 04:00 container-update window.
+image_registry_gc_oncalendar: "Sun *-*-* 05:00"
+image_registry_gc_randomized_delay: 900
+# `--delete-untagged` also removes manifests no tag points at. Off by default:
+# a multi-arch image's per-platform manifests are untagged by design, and this
+# flag has been reported to remove them. Turn it on only after a test.
+image_registry_gc_delete_untagged: false
+
+# Where the GC run writes its result for the textfile collector. Falls back to
+# the fleet default when group_vars/all/main.yml does not define it.
+image_registry_metrics_dir: "{{ alloy_textfile_dir | default('/var/lib/node_exporter/textfile_collector') }}"
+image_registry_metrics_file: fleet-registry-gc.prom
+
+# --- Readiness (tag: service) -----------------------------------------------------------------
+# How long the role waits for the registry to answer after starting it.
+image_registry_ready_retries: 30
+image_registry_ready_delay: 2
