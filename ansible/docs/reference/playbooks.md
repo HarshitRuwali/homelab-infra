@@ -90,7 +90,7 @@ Baseline for an always-on desk appliance, applied by membership of
 `desk_appliances` only: LightDM autologin into a named X11 session, no
 blanking or suspend, PipeWire, a serial udev symlink, Docker, and security
 updates with an automatic reboot window. Tagged per concern: `desktop`,
-`power`, `audio`, `serial`, `docker`, `updates`.
+`power`, `keyring` (opt-in), `audio`, `serial`, `docker`, `updates`.
 
 !!! warning "The one host class that reboots itself"
     It sets `Automatic-Reboot "true"`, so it fails early on a host in

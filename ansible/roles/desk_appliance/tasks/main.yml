@@ -18,6 +18,11 @@
   ansible.builtin.import_tasks: power.yml
   tags: [power]
 
+- name: Configure the plaintext default keyring
+  ansible.builtin.import_tasks: keyring.yml
+  tags: [keyring]
+  when: desk_appliance_plaintext_keyring | bool
+
 - name: Configure PipeWire audio
   ansible.builtin.import_tasks: audio.yml
   tags: [audio]

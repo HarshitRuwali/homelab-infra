@@ -79,6 +79,16 @@ desk_appliance_hidden_autostart:
   - xscreensaver
   - gnome-screensaver
 
+# --- Keyring (tag: keyring) --------------------------------------------------
+# true gives the appliance user a second, blank-password gnome-keyring that is
+# the default, so apps keep their logins across an autologin reboot (the
+# `login` keyring cannot unlock without a typed password). Secrets stored there
+# are PLAINTEXT on disk, readable by anyone with the account, which is why it
+# is off by default. See the README, Keyring.
+desk_appliance_plaintext_keyring: false
+desk_appliance_keyring_packages:
+  - gnome-keyring
+
 # --- Audio (tag: audio) -------------------------------------------------
 # PipeWire as the sound server, with the ALSA and PulseAudio compatibility
 # layers and WirePlumber as the session manager. libspa-0.2-modules carries the

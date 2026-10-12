@@ -7,7 +7,7 @@
 #   ansible-playbook playbooks/desk-appliance.yml --limit <host>
 #   ansible-playbook playbooks/desk-appliance.yml --tags power
 #
-# Tags, one per concern: desktop, power, audio, serial, docker, updates.
+# Tags, one per concern: desktop, power, keyring, audio, serial, docker, updates.
 #
 # SCOPE is `desk_appliances`, an overlay group like `wazuh_agents`: membership
 # is the ONLY thing that enables the role. Add the host to that group in the
