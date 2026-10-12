@@ -8,10 +8,40 @@
     - name: Save the current Redis dataset
       ansible.builtin.command: docker exec redis redis-cli SAVE
 
-    - name: Copy the persistent Redis files outside their Docker volume
-      ansible.builtin.command:
-        cmd: cp -a /var/lib/docker/volumes/memory_redis_data/_data /root/redis-pre8-backup
-        creates: /root/redis-pre8-backup
+    # The AOF is a directory (base, incr and manifest files) that Redis rewrites
+    # in the background, so a copy taken while Redis runs can mix generations.
+    # Copy with Redis stopped. "Start Redis 8" below brings it back with
+    # `up -d`, so this adds no outage beyond the copy itself.
+    - name: Check whether the Redis backup already exists
+      ansible.builtin.stat:
+        path: /root/redis-pre8-backup
+      register: memory_redis_backup
+
+    - name: Back up the persistent Redis files with Redis stopped
+      when: not memory_redis_backup.stat.exists
+      block:
+        - name: Stop Redis so the AOF cannot be rewritten during the copy
+          ansible.builtin.command: docker stop redis
+          changed_when: true
+
+        - name: Copy the persistent Redis files outside their Docker volume
+          ansible.builtin.command:
+            cmd: cp -a /var/lib/docker/volumes/memory_redis_data/_data /root/redis-pre8-backup
+            creates: /root/redis-pre8-backup
+      rescue:
+        # A half-written backup would make the next run skip the copy.
+        - name: Remove the partial backup
+          ansible.builtin.file:
+            path: /root/redis-pre8-backup
+            state: absent
+
+        - name: Start Redis again after the failed backup
+          ansible.builtin.command: docker start redis
+          changed_when: true
+
+        - name: Stop before the image change
+          ansible.builtin.fail:
+            msg: The Redis backup failed. Redis was started again on its old image and nothing else was changed.
 
     - name: Follow Redis 8 stable updates
       ansible.builtin.replace:

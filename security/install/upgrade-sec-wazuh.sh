@@ -10,20 +10,25 @@
 # packages at once in whatever order apt picks, with Filebeat still writing
 # into an indexer that is being replaced. A broken indexer is the slowest
 # thing in this stack to recover, so it goes first, alone, with shard
-# allocation held and writers stopped. Stops at the first failure.
+# allocation held and writers stopped. Stops at the first failure, and before
+# touching anything unless apt publishes the target version of all three.
 source "$(dirname "$0")/_common.sh"
 require_root; banner
 
 C=/etc/wazuh-indexer/certs
 TEMPLATE=/etc/filebeat/wazuh-template.json
 # The admin client certificate the installer leaves on an all-in-one node:
-# no password needed, and nothing to paste into a shell.
-api() { curl -sS -m30 --cacert "$C/root-ca.pem" --cert "$C/admin.pem" --key "$C/admin-key.pem" "$@"; }
+# no password needed, and nothing to paste into a shell. -f turns an HTTP 4xx
+# or 5xx into a non-zero exit, so a refused call stops the script instead of
+# passing for success.
+api() { curl -sSf -m30 --cacert "$C/root-ca.pem" --cert "$C/admin.pem" --key "$C/admin-key.pem" "$@"; }
 health() { api "https://127.0.0.1:9200/_cluster/health" | grep -oE '"status":"[a-z]+"' | cut -d'"' -f4; }
 apt_up() {
   run env DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade \
     -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "$1=$V"
 }
+# The versions apt can install for package $1, one per line.
+published() { apt-cache madison "$1" | awk -F'|' '{gsub(/[[:space:]]/, "", $2); print $2}' | sort -uV; }
 allocation() {
   run api -X PUT "https://127.0.0.1:9200/_cluster/settings" -H 'Content-Type: application/json' \
     -d "{\"persistent\":{\"cluster.routing.allocation.enable\":\"$1\"}}"
@@ -42,6 +47,12 @@ V="${WAZUH_VERSION:-$(apt-cache policy wazuh-manager | awk '/Candidate:/{print $
 for p in wazuh-indexer wazuh-manager wazuh-dashboard; do
   cur="$(dpkg-query -W -f='${Version}' "$p" 2>/dev/null)" || die "$p is not installed"
   dpkg --compare-versions "$cur" le "$V" || die "$p is $cur, newer than $V; refusing to downgrade"
+  # The three packages do not always share a revision (4.9.0 shipped the
+  # manager as 4.9.0-1 and the dashboard as 4.9.0-2). Find that out here, not
+  # after the services are stopped and the indexer is already upgraded.
+  avail="$(published "$p")"
+  grep -qxF -- "$V" <<<"$avail" ||
+    die "$p publishes no $V (apt lists: $(paste -sd' ' <<<"$avail")). All three packages move to one version string, so all three must publish it. Nothing was changed."
   ok "$p $cur -> $V"
 done
 # install-sec-wazuh.sh holds these so nothing upgrades Wazuh by accident.
@@ -128,5 +139,7 @@ dpkg-query -W wazuh-indexer wazuh-manager wazuh-dashboard
 systemctl is-active wazuh-indexer wazuh-manager wazuh-dashboard filebeat | paste -sd' '
 filebeat test output 2>&1 | tail -2
 api "https://127.0.0.1:9200/_cluster/health?pretty" | grep -E '"status"|active_shards"|unassigned_shards"'
-curl -sk -m10 -o /dev/null -w 'dashboard https: %{http_code}\n' https://127.0.0.1/
+code="$(curl -sk -m10 -o /dev/null -w '%{http_code}' https://127.0.0.1/ || true)"
+echo "dashboard https: $code"
+[[ "$code" =~ ^[23] ]] || die "the dashboard answered ${code:-nothing} on https://127.0.0.1/, expected a 2xx or 3xx"
 ok "Wazuh $V"
