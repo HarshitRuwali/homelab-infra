@@ -96,15 +96,16 @@ repository-wide version.
   `revert`) bumps the patch, so a `docs(monitoring):` commit does release
   monitoring. A breaking change bumps the major. Below 1.0.0 a breaking change
   bumps the minor instead, so a `0.x` module never jumps to 1.0.0 by accident.
-  Reach 1.0.0 on purpose with `Release-As` (below).
 - **Version strings inside a module** (a `pyproject.toml`, `uv.lock`, a
   `plugin.yaml`, a `__version__`) are updated by the release PR together with
   the changelog. Do not edit them by hand. Where they are is listed under
   `extra-files` in `release-please-config.json`.
 
-The starting version of each module is its `initial-version` in
+Every module starts at 0.1.0, its `initial-version` in
 `release-please-config.json`. A module's first release is exactly that version,
-whatever the commit types, and later releases bump from it.
+whatever the commit types, and later releases bump from it. 1.0.0 is the public
+release: the owner cuts it on purpose with `Release-As` (below), and until then
+every module stays on `0.x`.
 
 Internal artifact tags are not the module version and do not follow releases.
 For example, the `s3-backup-runner` image tag that `s3-backup` builds locally
@@ -132,7 +133,7 @@ from plain merges. That is expected once.
 Add a `Release-As: X.Y.Z` footer to a commit that touches only that module:
 
 ```text
-feat(memory): stable API
+feat(memory): public release
 
 Release-As: 1.0.0
 ```
@@ -148,8 +149,8 @@ counts for every module, so the footer would force that version on all of them.
 1. Create the directory with a `README.md`, and add a row to the Modules table
    in the root `README.md`.
 2. Add a package for it in `release-please-config.json`: `component` set to the
-   directory name, `changelog-path` set to `CHANGELOG.md`, and an
-   `initial-version`.
+   directory name, `changelog-path` set to `CHANGELOG.md`, and
+   `initial-version` set to `0.1.0`.
 3. If a file holds the module's own version, put `# x-release-please-version`
    on that line and list the file under `extra-files`. A bare string works for
    source files such as `.py`. For a `.yaml` or `.yml` file, use

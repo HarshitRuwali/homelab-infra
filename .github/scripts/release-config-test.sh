@@ -11,10 +11,12 @@
 #   b. the configured packages are exactly the top-level directories that hold
 #      a README.md (minus docs-landing) and exactly the modules linked in the
 #      README "Modules" table
-#   c. every package has component == its directory name and an initial-version,
-#      and gets release-type simple, include-component-in-tag and
-#      include-v-in-tag true, and separate-pull-requests false (the tag shape and
-#      the single grouped release PR)
+#   c. every package has component == its directory name and initial-version
+#      0.1.0 (1.0.0 is the public release, cut on purpose with Release-As), and
+#      gets release-type simple, include-component-in-tag and include-v-in-tag
+#      true, separate-pull-requests false (the tag shape and the single grouped
+#      release PR) and bump-minor-pre-major true (a breaking change below 1.0.0
+#      bumps the minor, so nothing reaches 1.0.0 by accident)
 #   d. every extra-file exists (resolved from the package directory)
 #   e. every version-bearing extra-file holds the package's current version:
 #      the manifest version, or initial-version before the first release
@@ -65,6 +67,7 @@ REQUIRED_SETTINGS = {
     "include-component-in-tag": True,
     "include-v-in-tag": True,
     "separate-pull-requests": False,
+    "bump-minor-pre-major": True,
 }
 
 errors = []
@@ -200,8 +203,9 @@ for name, pkg in sorted(packages.items()):
     )
     initial = pkg.get("initial-version")
     check(
-        isinstance(initial, str) and re.fullmatch(r"\d+\.\d+\.\d+", initial) is not None,
-        f"{name}: initial-version must be a X.Y.Z string, got {initial!r}",
+        initial == "0.1.0",
+        f"{name}: initial-version must be \"0.1.0\" (1.0.0 is the public release, "
+        f"cut on purpose with Release-As), got {initial!r}",
     )
     for key, want in REQUIRED_SETTINGS.items():
         got = pkg.get(key, config.get(key))

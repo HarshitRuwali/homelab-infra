@@ -24,7 +24,7 @@
     "aibox-model-queue": {
       "component": "aibox-model-queue",
       "changelog-path": "CHANGELOG.md",
-      "initial-version": "1.0.0",
+      "initial-version": "0.1.0",
       "extra-files": [
         {
           "type": "generic",
