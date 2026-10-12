@@ -4,7 +4,8 @@ name: Release
 # Every push to master, it reads the Conventional Commits that touched each
 # module directory and keeps one release PR open (titled "chore: release
 # master") that lists every module with pending changes: the new version, the
-# CHANGELOG.md entry, and the version strings in the module's own files.
+# release notes, and the version strings in the module's own files. No
+# CHANGELOG.md is written; the notes live on each GitHub release.
 # Merging that PR tags each module `<module>-vX.Y.Z` and publishes one GitHub
 # release per module.
 #

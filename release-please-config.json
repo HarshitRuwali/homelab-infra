@@ -6,6 +6,7 @@
   "separate-pull-requests": false,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": false,
+  "skip-changelog": true,
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
     { "type": "fix", "section": "Bug Fixes" },
@@ -23,7 +24,6 @@
   "packages": {
     "aibox-model-queue": {
       "component": "aibox-model-queue",
-      "changelog-path": "CHANGELOG.md",
       "initial-version": "0.1.0",
       "extra-files": [
         {
@@ -34,12 +34,10 @@
     },
     "ansible": {
       "component": "ansible",
-      "changelog-path": "CHANGELOG.md",
       "initial-version": "0.1.0"
     },
     "memory": {
       "component": "memory",
-      "changelog-path": "CHANGELOG.md",
       "initial-version": "0.1.0",
       "extra-files": [
         {
@@ -69,22 +67,18 @@
     },
     "monitoring": {
       "component": "monitoring",
-      "changelog-path": "CHANGELOG.md",
       "initial-version": "0.1.0"
     },
     "proxmox": {
       "component": "proxmox",
-      "changelog-path": "CHANGELOG.md",
       "initial-version": "0.1.0"
     },
     "s3-backup": {
       "component": "s3-backup",
-      "changelog-path": "CHANGELOG.md",
       "initial-version": "0.1.0"
     },
     "security": {
       "component": "security",
-      "changelog-path": "CHANGELOG.md",
       "initial-version": "0.1.0"
     }
   }

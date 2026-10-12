@@ -22,7 +22,7 @@ alert`, `fix(s3-backup): handle an empty bucket`. Leave it out when a change is
 not about one module. Add `!` before the colon (`feat(ansible)!: drop the old
 inventory format`), or a `BREAKING CHANGE:` footer, for a breaking change.
 
-| Type | Changelog section | Use it for |
+| Type | Release notes section | Use it for |
 |---|---|---|
 | `feat` | Features | a new capability |
 | `fix` | Bug Fixes | a bug fix |
@@ -36,9 +36,9 @@ inventory format`), or a `BREAKING CHANGE:` footer, for a breaking change.
 | `chore` | hidden | everything else |
 | `style` | hidden | formatting only |
 
-Hidden types do not appear in a changelog, and a module whose only new commits
-are hidden gets no release. Marking one breaking (`chore!:`) overrides that. If
-a change should reach users, use a visible type.
+Hidden types do not appear in the release notes, and a module whose only new
+commits are hidden gets no release. Marking one breaking (`chore!:`) overrides
+that. If a change should reach users, use a visible type.
 
 ### PR titles are checked
 
@@ -50,13 +50,13 @@ title locally.
 
 GitHub's revert button titles a PR `Revert "feat: x"`. The check accepts that,
 but release-please does not recognise it, so the revert would be missing from
-the changelog. Retitle it `revert: x` if it should be listed.
+the release notes. Retitle it `revert: x` if it should be listed.
 
 ### Merge method
 
 Use **Squash and merge**, with the PR title as the commit subject. One PR then
-becomes one commit on `master` and one changelog line. Check that the subject in
-the merge dialog is the PR title.
+becomes one commit on `master` and one line in the release notes. Check that the
+subject in the merge dialog is the PR title.
 
 Plain merge commits and rebase merges are not supported. release-please splits a
 commit message at a blank line followed by `type(scope): `, and GitHub writes the
@@ -83,8 +83,8 @@ repository-wide version.
 
 - **Tag:** `<module>-vX.Y.Z`, for example `monitoring-v0.2.0`.
 - **GitHub release:** one per module release, created when its tag is.
-- **Changelog:** `CHANGELOG.md` inside the module directory, written by
-  release-please.
+- **Release notes:** on the module's GitHub release, written by release-please.
+  There is no `CHANGELOG.md` (`skip-changelog` in `release-please-config.json`).
 - **Which module a commit belongs to:** release-please looks at the paths a
   commit touches, not at its scope. A commit that touches two modules counts for
   both. A commit that touches only root files (`README.md`, `.github/`,
@@ -97,9 +97,9 @@ repository-wide version.
   monitoring. A breaking change bumps the major. Below 1.0.0 a breaking change
   bumps the minor instead, so a `0.x` module never jumps to 1.0.0 by accident.
 - **Version strings inside a module** (a `pyproject.toml`, `uv.lock`, a
-  `plugin.yaml`, a `__version__`) are updated by the release PR together with
-  the changelog. Do not edit them by hand. Where they are is listed under
-  `extra-files` in `release-please-config.json`.
+  `plugin.yaml`, a `__version__`) are updated by the release PR. Do not edit
+  them by hand. Where they are is listed under `extra-files` in
+  `release-please-config.json`.
 
 Every module starts at 0.1.0, its `initial-version` in
 `release-please-config.json`. A module's first release is exactly that version,
@@ -118,15 +118,15 @@ Releases are cut by `.github/workflows/release.yml`. Nobody tags by hand.
 1. Conventional commits land on `master`.
 2. release-please opens, and then keeps updating, one pull request titled
    `chore: release master`. It lists every module with pending changes: the
-   new version, the changelog entry and the version-string edits.
+   new version, the release notes and the version-string edits.
 3. When the owner merges it, release-please creates each module's tag and
    publishes its GitHub release.
 
 Leave the release PR open as long as you like. It grows as more PRs land, and a
 module with nothing releasable is not in it.
 
-The first release PR lists each module's whole history, including old duplicates
-from plain merges. That is expected once.
+The first release notes list each module's whole history, including old
+duplicates from plain merges. That is expected once.
 
 ### Forcing a version
 
@@ -149,8 +149,7 @@ counts for every module, so the footer would force that version on all of them.
 1. Create the directory with a `README.md`, and add a row to the Modules table
    in the root `README.md`.
 2. Add a package for it in `release-please-config.json`: `component` set to the
-   directory name, `changelog-path` set to `CHANGELOG.md`, and
-   `initial-version` set to `0.1.0`.
+   directory name and `initial-version` set to `0.1.0`.
 3. If a file holds the module's own version, put `# x-release-please-version`
    on that line and list the file under `extra-files`. A bare string works for
    source files such as `.py`. For a `.yaml` or `.yml` file, use
@@ -199,7 +198,7 @@ failed run, or start the Release workflow by hand from the Actions tab
 
 A pull request or tag created with `GITHUB_TOKEN` does not trigger other
 workflows, so `chore: release master` has no checks and no docs build. It only
-edits `CHANGELOG.md` files and version strings, and the things that could go
+edits version strings and the manifest, and the things that could go
 wrong are guarded on every other PR and on `master`:
 
 - `.github/scripts/release-config-test.sh` asserts that the release config, the

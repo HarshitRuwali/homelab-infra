@@ -15,8 +15,9 @@
 #      0.1.0 (1.0.0 is the public release, cut on purpose with Release-As), and
 #      gets release-type simple, include-component-in-tag and include-v-in-tag
 #      true, separate-pull-requests false (the tag shape and the single grouped
-#      release PR) and bump-minor-pre-major true (a breaking change below 1.0.0
-#      bumps the minor, so nothing reaches 1.0.0 by accident)
+#      release PR), skip-changelog true (no CHANGELOG.md; the notes live on
+#      the GitHub release) and bump-minor-pre-major true (a breaking change
+#      below 1.0.0 bumps the minor, so nothing reaches 1.0.0 by accident)
 #   d. every extra-file exists (resolved from the package directory)
 #   e. every version-bearing extra-file holds the package's current version:
 #      the manifest version, or initial-version before the first release
@@ -68,6 +69,7 @@ REQUIRED_SETTINGS = {
     "include-v-in-tag": True,
     "separate-pull-requests": False,
     "bump-minor-pre-major": True,
+    "skip-changelog": True,
 }
 
 errors = []
@@ -213,10 +215,6 @@ for name, pkg in sorted(packages.items()):
             same(got, want),
             f"{name}: effective {key} must be {want!r}, got {got!r}",
         )
-    check(
-        pkg.get("changelog-path") == "CHANGELOG.md",
-        f"{name}: changelog-path must be CHANGELOG.md, got {pkg.get('changelog-path')!r}",
-    )
     expected = manifest.get(name, initial)
 
     for entry in pkg.get("extra-files", []):

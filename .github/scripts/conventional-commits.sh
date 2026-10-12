@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Checks that a pull request title, and the commits on its branch, follow
 # Conventional Commits. release-please reads these to decide which modules get a
-# release, what the next version is, and what goes in each CHANGELOG.md.
+# release, what the next version is, and what goes in its release notes.
 #
 #   conventional-commits.sh --title "<subject>"
 #       Exit 0 if the subject matches, otherwise explain the format and exit 1.
@@ -65,7 +65,7 @@ check_commits() {
     [[ -n $sha ]] || continue
     subject=$(git log -1 --format=%s "$sha")
     if ! is_conventional "$subject"; then
-      printf '::warning::Commit %s "%s" is not a conventional commit, so it will not appear in the changelog unless the PR is squash-merged with a conventional title.\n' \
+      printf '::warning::Commit %s "%s" is not a conventional commit, so it will not appear in the release notes unless the PR is squash-merged with a conventional title.\n' \
         "${sha:0:7}" "$(sanitize "$subject")"
     fi
   done <<<"$shas"
