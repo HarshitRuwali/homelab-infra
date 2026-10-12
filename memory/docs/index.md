@@ -81,8 +81,8 @@ python3 -m venv .venv
 
 The repository-root `.github/workflows/deploy-docs.yml` publishes this site to
 GitHub Pages on push to `master`, and builds it without publishing on pull
-requests. It is the only workflow in the repository, it builds all three docs
-sites, and it holds no secret. See [Building the docs](reference/tooling.md).
+requests. It is the only workflow that publishes docs, it builds every docs
+site in the repository, and it holds no secret. See [Building the docs](reference/tooling.md).
 
 ## Design commitments
 

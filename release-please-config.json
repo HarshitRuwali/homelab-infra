@@ -1,0 +1,91 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-component-in-tag": true,
+  "include-v-in-tag": true,
+  "separate-pull-requests": false,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "refactor", "section": "Refactoring" },
+    { "type": "docs", "section": "Documentation" },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "build", "section": "Build", "hidden": true },
+    { "type": "ci", "section": "CI", "hidden": true },
+    { "type": "chore", "section": "Chores", "hidden": true },
+    { "type": "style", "section": "Style", "hidden": true }
+  ],
+  "pull-request-header": "Merging this PR tags each module release listed below and publishes its GitHub release; see [CONTRIBUTING.md](https://github.com/HarshitRuwali/homelab-infra/blob/master/CONTRIBUTING.md).",
+  "packages": {
+    "aibox-model-queue": {
+      "component": "aibox-model-queue",
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "1.0.0",
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "plugin.yaml"
+        }
+      ]
+    },
+    "ansible": {
+      "component": "ansible",
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0"
+    },
+    "memory": {
+      "component": "memory",
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "api-service/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "api-service/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='personal-assistant-fastapi')].version"
+        },
+        "api-service/app/main.py",
+        {
+          "type": "toml",
+          "path": "mcp-server/pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "toml",
+          "path": "mcp-server/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='open-memory-mcp')].version"
+        },
+        "mcp-server/open_memory_mcp/__init__.py",
+        "mcp-server/open_memory_mcp/server.py"
+      ]
+    },
+    "monitoring": {
+      "component": "monitoring",
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0"
+    },
+    "proxmox": {
+      "component": "proxmox",
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0"
+    },
+    "s3-backup": {
+      "component": "s3-backup",
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0"
+    },
+    "security": {
+      "component": "security",
+      "changelog-path": "CHANGELOG.md",
+      "initial-version": "0.1.0"
+    }
+  }
+}
