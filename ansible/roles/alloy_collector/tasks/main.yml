@@ -156,6 +156,16 @@
 # into place. A syntax error therefore fails the play instead of leaving a
 # crash-looping unit, which matters most on tailscale-router (exit node) and
 # the central LXC.
+- name: Install the CA for the private HTTPS ingest
+  ansible.builtin.copy:
+    src: "{{ collector_ingest_ca_file | trim }}"
+    dest: "{{ alloy_ingest_ca_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  when: collector_ingest_ca_file | trim | length > 0
+  notify: Restart alloy
+
 - name: Write the Alloy configuration
   ansible.builtin.template:
     src: config.alloy.j2

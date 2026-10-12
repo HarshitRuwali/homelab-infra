@@ -2,9 +2,8 @@
 # Managed by ansible/roles/docker_updates. Do not edit by hand.
 # Rendered for {{ inventory_hostname }}.
 #
-# Pulls new images for every Docker Compose project on this host and recreates
-# only the containers whose image actually changed, then reclaims the layers
-# that fell out of use.
+# Pulls registry images and rebuilds local images against current base images
+# for every Docker Compose project on this host, then applies changed images.
 #
 # WHY COMPOSE AND NOT WATCHTOWER
 # Watchtower recreates a container from the *running* container's config. That
@@ -14,16 +13,16 @@
 # file every time, so the file stays authoritative and this script stays a
 # scheduler rather than a second, competing deployment mechanism.
 #
-# WHY THIS IS SAFE FOR THE DATABASES
-# It is safe because of tag discipline in the compose files, NOT because of
-# anything clever here. `postgres:16-alpine` resolves only to 16.x, so a pull
-# gets patch fixes and can never jump to 17 and refuse to start on a v16 data
-# directory. Fully pinned tags (qdrant/qdrant:v1.9.2) are no-ops.
+# DATABASE MAJORS
+# PostgreSQL and MySQL tags float within their current major release. A new
+# major needs a supervised data migration. Images listed in
+# docker_update_minor_step_images (Qdrant) may advance only one minor release
+# per run; a bigger jump keeps the current image and fails the run.
 #
 # The corollary is the thing to remember: if you ever retag a stateful service
-# to `:latest` or to a bare major like `postgres`, this script will happily
-# perform a destructive major upgrade at 04:00. Pin stateful services, or add
-# them to DOCKER_UPDATE_SKIP_PROJECTS below.
+# to `:latest` or to a bare major like `postgres`, this script can ask a new
+# server to open an incompatible data directory at 04:00. Migrate those
+# databases explicitly before changing their major image tag.
 
 set -uo pipefail
 
@@ -34,6 +33,8 @@ TMP_FILE="$(mktemp "$OUT_DIR/.docker-update.XXXXXX")"
 SKIP_PROJECTS="{{ docker_update_skip_projects | join(' ') }}"
 PRUNE="{{ docker_update_prune | ternary('yes', 'no') }}"
 HEALTH_WAIT={{ docker_update_health_wait_seconds }}
+RETRY_DELAY={{ docker_update_pull_retry_delay_seconds }}
+MINOR_STEP_IMAGES="{{ docker_update_minor_step_images | join(' ') }}"
 
 trap 'rm -f "$TMP_FILE"' EXIT
 
@@ -84,6 +85,68 @@ project_image_ids() {
   done | sort
 }
 
+# One line per service: name, image as written in the compose file (empty for
+# a build with no image:), and 1 if the service declares a build.
+project_services() {
+  docker compose "${compose_args[@]}" config --format json 2>/dev/null |
+    python3 -c 'import json,sys; c=json.load(sys.stdin); [print(n, s.get("image", ""), int("build" in s), sep="\t") for n, s in c.get("services", {}).items()]'
+}
+
+# True for an image that exists here but never came from a registry: built
+# locally and referenced only by `image:`. Pulling it would ask Docker Hub for
+# a name nobody published and fail the whole project.
+is_local_only() {
+  [ "$(docker image inspect --format '{{ '{{' }}len .RepoDigests{{ '}}' }}' "$1" 2>/dev/null)" = "0" ]
+}
+
+is_minor_step() {
+  local i
+  for i in $MINOR_STEP_IMAGES; do
+    [ "$1" = "$i" ] && return 0
+  done
+  return 1
+}
+
+# Version label of the project's running container that uses image $2.
+running_version() {
+  local cid
+  for cid in $(docker ps -q --filter "label=com.docker.compose.project=$1" 2>/dev/null); do
+    if [ "$(docker inspect --format '{{ '{{' }}.Config.Image{{ '}}' }}' "$cid" 2>/dev/null)" = "$2" ]; then
+      docker inspect --format '{{ '{{' }}index .Config.Labels "org.opencontainers.image.version"{{ '}}' }}' "$cid" 2>/dev/null
+      return
+    fi
+  done
+}
+
+# True when version $2 is the same minor as $1 or the next one. Anything else,
+# including an unreadable version, needs a human.
+minor_step_ok() {
+  local re='^v?([0-9]+)\.([0-9]+)\.[0-9]+$' cmaj cmin
+  [[ $1 =~ $re ]] || return 1
+  cmaj=${BASH_REMATCH[1]} cmin=${BASH_REMATCH[2]}
+  [[ $2 =~ $re ]] || return 1
+  [ "${BASH_REMATCH[1]}" = "$cmaj" ] &&
+    [ "${BASH_REMATCH[2]}" -ge "$cmin" ] &&
+    [ "${BASH_REMATCH[2]}" -le $((cmin + 1)) ]
+}
+
+# Run a compose subcommand for the current project, retrying once. Registry
+# hiccups (a Docker Hub 429, a short ghcr.io outage) usually clear within
+# minutes; one retry keeps them from paging while a persistent failure still
+# does.
+compose_retry() {
+  local what="$1" attempt
+  shift
+  for attempt in 1 2; do
+    docker compose "${compose_args[@]}" "$@" 2>&1 | sed "s/^/  [$proj] /" && return 0
+    if [ "$attempt" -eq 1 ]; then
+      log "$proj: $what failed, retrying in ${RETRY_DELAY}s"
+      sleep "$RETRY_DELAY"
+    fi
+  done
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 while IFS='|' read -r proj workdir configs; do
   [ -n "$proj" ] || continue
@@ -112,13 +175,68 @@ while IFS='|' read -r proj workdir configs; do
 
   before="$(project_image_ids "$proj")"
 
-  # --ignore-pull-failures is required, not defensive. Locally built images
-  # (ubuntu-dev's `fastapi`, built from a Dockerfile with no registry) have
-  # nothing to pull, and without this flag one unpullable service aborts the
-  # pull for every other service in the same project.
-  log "pulling $proj"
-  if ! docker compose "${compose_args[@]}" pull --ignore-pull-failures 2>&1 | sed "s/^/  [$proj] /"; then
-    log "ERROR $proj: pull failed"
+  if ! services="$(project_services)"; then
+    log "ERROR $proj: docker compose config failed; run it in $workdir to see why"
+    failed=1
+    continue
+  fi
+
+  # Pull only what a registry can provide. Services with a build are rebuilt
+  # against fresh base images below, and image-only local builds have nothing
+  # to pull. Everything else must pull: a registry failure that survives the
+  # retry is a real update failure, not something to hide.
+  #
+  # For minor-step images, remember what the tag points at now and which
+  # version is running, so a jump that is too big can be undone before
+  # anything is recreated.
+  pull_services=()
+  declare -A step_old_id=() step_current=()
+  while IFS=$'\t' read -r svc img has_build; do
+    [ -n "$svc" ] || continue
+    if [ "$has_build" = "1" ]; then
+      continue
+    fi
+    if is_local_only "$img"; then
+      log "$proj: not pulling $svc, $img was built on this host"
+      continue
+    fi
+    pull_services+=("$svc")
+    if is_minor_step "$img"; then
+      step_old_id[$img]="$(docker image inspect --format '{{ '{{' }}.Id{{ '}}' }}' "$img" 2>/dev/null || true)"
+      step_current[$img]="$(running_version "$proj" "$img")"
+    fi
+  done <<< "$services"
+
+  if [ -n "${pull_services[*]}" ]; then
+    log "pulling $proj"
+    if ! compose_retry pull pull "${pull_services[@]}"; then
+      log "ERROR $proj: pull failed"
+      failed=1
+      continue
+    fi
+  fi
+
+  # Qdrant migrates its storage on startup and supports only adjacent minor
+  # releases. When the pull moved the tag further than that, point the tag
+  # back at the old image: `up -d` then leaves that container alone, and so
+  # does a later manual `docker compose up -d`. The rest of the project still
+  # updates, and the run fails so the stepwise migration gets done.
+  for img in "${!step_old_id[@]}"; do
+    old_id="${step_old_id[$img]}"
+    [ -n "$old_id" ] || continue    # first install: no data to migrate yet
+    [ "$(docker image inspect --format '{{ '{{' }}.Id{{ '}}' }}' "$img" 2>/dev/null)" != "$old_id" ] || continue
+    current="${step_current[$img]}"
+    next="$(docker image inspect --format '{{ '{{' }}index .Config.Labels "org.opencontainers.image.version"{{ '}}' }}' "$img" 2>/dev/null)"
+    if ! minor_step_ok "$current" "$next"; then
+      docker tag "$old_id" "$img"
+      log "ERROR $proj: $img ${current:-unknown} to ${next:-unknown} skips a minor release; kept ${current:-the current image}. Step through each minor with upgrade-qdrant-stepwise.sh"
+      failed=1
+    fi
+  done
+
+  log "building $proj with fresh base images"
+  if ! compose_retry build build --pull; then
+    log "ERROR $proj: build failed"
     failed=1
     continue
   fi

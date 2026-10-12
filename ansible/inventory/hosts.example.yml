@@ -72,6 +72,13 @@ all:
     # Public hostname of the central stack. Used to build the remote_write and
     # Loki push URLs in group_vars/all/main.yml.
     monitoring_domain: monitor.example.com
+    # Optional: if every collector can reach the central nginx privately,
+    # avoid sending internal telemetry through the public tunnel. Use HTTPS
+    # with a certificate from your own CA (see "Private ingest" in the
+    # monitoring architecture docs) so the Basic Auth credential never
+    # crosses the network in cleartext; the CA path is on this machine.
+    # monitoring_ingest_base_url: https://10.0.0.10
+    # monitoring_ingest_ca_file: /path/to/homelab-ca/ca.crt
 
     # Host used as a ProxyJump to reach `lan_guests`. Must be set here, not in
     # group_vars/lan_guests: group_vars beats inventory vars, so a default

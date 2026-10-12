@@ -1,8 +1,8 @@
 # Container updates
 
-Pulls new images for every Docker Compose project on a host, recreates only
-the containers whose image actually changed, then reclaims the layers that
-fell out of use.
+Pulls new registry images and rebuilds local images with fresh base images for
+every Docker Compose project on a host. It applies changed images, checks for
+restart loops, then reclaims layers that fell out of use.
 
 ```bash
 ansible-playbook playbooks/docker-updates.yml                        # configure, no pull
@@ -25,33 +25,36 @@ deployment mechanism.
 
 ## What makes this safe
 
-!!! success "Your tag discipline, not the script"
-    The script has no cleverness that prevents a destructive database
-    upgrade. **Tag pinning in the compose files does.**
-
-    `postgres:16-alpine` resolves only to 16.x, so a pull gets patch fixes and
-    can never jump to 17 and refuse to start on a v16 data directory.
+!!! success "Database majors are migrated separately"
+    PostgreSQL and MySQL keep floating tags within their current major
+    version. A pull gets current security and patch releases without asking a
+    new database binary to start against an incompatible data directory.
+    Moving to a newer database major requires a supervised data migration.
 
 Current fleet, and what each tag actually permits:
 
 | Container | Image | On a pull |
 |---|---|---|
-| `qdrant` | `qdrant/qdrant:v1.9.2` | no-op, fully pinned |
-| `immich_postgres` | `ghcr.io/immich-app/postgres:14-vectorchord…` | no-op, fully pinned |
+| `qdrant` | `qdrant/qdrant:latest` | latest stable; blocked if more than one minor ahead |
+| `immich_postgres` | `ghcr.io/immich-app/postgres:14-vectorchord…` | rebuilt compatible tag, no fixed digest |
 | `postgres`, `matrix-postgres` | `postgres:16-alpine` | patch within 16.x |
-| `redis` | `redis:7.2-alpine` | patch within 7.2.x |
+| `redis` | `redis:8-alpine` | latest stable 8.x |
 | `mysql` | `mysql:8.0` | patch within 8.0.x |
-| `immich_redis` | `valkey/valkey:9` | minor+patch within 9.x |
-| `immich_server`, `immich_machine_learning` | `…:v3` | minor+patch within v3 |
+| `immich_redis` | `valkey/valkey:9` | latest 9.x, no fixed digest |
+| `immich_server`, `immich_machine_learning` | `…:release` | latest stable Immich release |
+| `nextcloud-app-1`, `nextcloud-cron-1` | local build from `nextcloud:stable-apache` | rebuild against current stable base |
 | `matrix-synapse` | `matrixdotorg/synapse:latest` | **anything** |
 | `matrix-cloudflared` | `cloudflare/cloudflared:latest` | **anything** |
-| `fastapi` | locally built, no registry | skipped, nothing to pull |
+| `fastapi` | locally built, no registry | rebuilt if its compose file has `build:`, otherwise not pulled |
 
 !!! danger "The corollary"
-    If you ever retag a **stateful** service to `:latest` or to a bare major
-    like `postgres`, this will happily perform a destructive major upgrade at
-    04:00. Pin stateful services, or add the project to
-    `docker_update_skip_projects`.
+    Do not change PostgreSQL or MySQL to `:latest`: the updater cannot migrate
+    their data directories. Qdrant is the exception because it is listed in
+    `docker_update_minor_step_images`: the updater accepts a new image only if
+    it is at most one minor ahead of the running one. Otherwise it points the
+    tag back at the running image, updates the rest of the project and fails
+    the run. Then step through the missed minors with
+    `playbooks/upgrade-qdrant.yml -e qdrant_steps="v1.20.3 v1.21.1"`.
 
 ## Skipping a project
 
@@ -76,9 +79,11 @@ flowchart TD
     B --> C{"in skip list?"}
     C -->|yes| Z["next project"]
     C -->|no| D["record image IDs BEFORE"]
-    D --> E["docker compose pull<br/>--ignore-pull-failures"]
-    E --> F["docker compose up -d"]
-    F --> G["record image IDs AFTER"]
+    D --> E["docker compose pull<br/>registry services only, one retry"]
+    E --> M["minor-step images:<br/>undo a jump of more than one minor"]
+    M --> F["docker compose build --pull"]
+    F --> N["docker compose up -d"]
+    N --> G["record image IDs AFTER"]
     G --> H{"changed?"}
     H -->|yes| I["count recreated containers"]
     H -->|no| Z
@@ -97,10 +102,18 @@ and backups. The labels describe only what is **actually deployed right now**.
 the wrong file silently creates a **second** stack rather than updating the
 existing one.
 
-### `--ignore-pull-failures` is required, not defensive
+### Local images are rebuilt
 
-Locally built images have nothing to pull. Without the flag, one unpullable
-service aborts the pull for **every other service in the same project**.
+The pull covers only services a registry can provide. Services with a `build`
+section are rebuilt by `docker compose build --pull` against fresh base
+images, and an image that exists locally but never came from a registry (built
+by hand and referenced only by `image:`) is left alone rather than requested
+from Docker Hub.
+
+A failed pull or build is retried once after
+`docker_update_pull_retry_delay_seconds` (120 s), which absorbs Docker Hub rate
+limits and short registry outages. A failure that survives the retry fails the
+run and appears in the update alert.
 
 ### No `--remove-orphans`
 

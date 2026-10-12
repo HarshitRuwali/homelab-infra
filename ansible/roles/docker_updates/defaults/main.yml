@@ -42,3 +42,18 @@ docker_update_prune: true
 # stayed up. Long enough for a database to finish its startup checks and for a
 # crash loop to become visible; short enough not to stall the timer.
 docker_update_health_wait_seconds: 60
+
+# Seconds to wait before retrying a failed pull or build, once. Docker Hub rate
+# limits and short registry outages clear within minutes; a failure that
+# survives the retry still fails the run and pages.
+docker_update_pull_retry_delay_seconds: 120
+
+# Images that may advance only one minor release per run, written exactly as
+# in the compose file. Qdrant migrates its storage on startup and supports
+# only adjacent minor versions, so a host that missed two releases must not
+# jump straight to the newest one. When the pull would skip a minor, the
+# script points the tag back at the running image, updates the rest of the
+# project and fails the run; then step through the missed minors with
+# memory/upgrade-qdrant-stepwise.sh.
+docker_update_minor_step_images:
+  - qdrant/qdrant:latest

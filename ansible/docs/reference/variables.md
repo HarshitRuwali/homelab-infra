@@ -140,6 +140,8 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | `docker_update_skip_projects` | `[]` | by Compose project name |
 | `docker_update_prune` | `true` | dangling images only |
 | `docker_update_health_wait_seconds` | `60` | before checking for restart loops |
+| `docker_update_pull_retry_delay_seconds` | `120` | one retry of a failed pull or build |
+| `docker_update_minor_step_images` | `[qdrant/qdrant:latest]` | may advance one minor release per run |
 | `docker_update_run_now` | unset | `-e docker_update_run_now=true` for a supervised run |
 
 ## Update metrics
@@ -185,6 +187,8 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | Variable | Notes |
 |---|---|
 | `monitoring_domain` | builds both ingest URLs |
+| `monitoring_ingest_base_url` | builds both ingest URLs instead, e.g. `https://10.0.0.10`; for a LAN path to the central nginx |
+| `monitoring_ingest_ca_file` | controller path to the CA that signed the private ingest certificate; collectors trust only it on ingest |
 | `lan_jump_host` | ProxyJump target for `lan_guests` |
 | `lan_use_jump_host` | set `false` when running from the LAN |
 | `alloy_textfile_dir` | `/var/lib/node_exporter/textfile_collector` |

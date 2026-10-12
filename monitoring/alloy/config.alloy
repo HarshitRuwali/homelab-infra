@@ -71,7 +71,24 @@ prometheus.scrape "containers" {
 prometheus.scrape "alloy" {
   job_name = "alloy"
   targets = [{"__address__" = "127.0.0.1:12345"}]
+  forward_to = [prometheus.relabel.alloy_host.receiver]
+}
+
+prometheus.relabel "alloy_host" {
   forward_to = [prometheus.remote_write.central.receiver]
+
+  // Keep the write destination before overwriting `host`, so the loki_write_*
+  // metrics still show which ingest URL each collector is using.
+  rule {
+    source_labels = ["host"]
+    regex         = "(.+)"
+    target_label  = "destination_host"
+  }
+
+  rule {
+    target_label = "host"
+    replacement  = sys.env("MONITOR_HOSTNAME")
+  }
 }
 
 loki.write "central" {
