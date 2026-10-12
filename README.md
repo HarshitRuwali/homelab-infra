@@ -145,7 +145,11 @@ aibox-model-queue/
                 Serializing proxy for a shared LM Studio host
 proxmox/        pve-guest.sh: VM template, new VMs and containers
 docs-landing/   The static index page of the published docs site
-.github/        One workflow: it builds and publishes the docs, nothing else
+.github/        Workflows (docs, releases, PR checks) and the scripts they run
+CONTRIBUTING.md Commit messages, pull requests, versioning and the release flow
+release-please-config.json
+                Per-module release settings (.release-please-manifest.json
+                holds the last released versions)
 ```
 
 ## Documentation
@@ -178,10 +182,19 @@ missing from the nav into a failure rather than a warning nobody reads.
 Details, including the manual GitHub Pages step that cannot be automated, are
 in [Building the docs](https://harshitruwali.github.io/homelab-infra/ansible/reference/tooling/).
 
+## Versioning
+
+Each module has its own [SemVer](https://semver.org) version, because each
+stands alone. A release is tagged `<module>-vX.Y.Z` (for example
+`monitoring-v0.2.0`) and published as its own GitHub release. Versions and
+changelogs come from [Conventional Commits](https://www.conventionalcommits.org).
+The commit rules, the release flow and pinned deploys are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Secrets
 
-Nothing in this repository holds a plaintext credential, and the docs pipeline
-holds no repository secret either.
+Nothing in this repository holds a plaintext credential, and no workflow holds a
+repository secret either (the release workflow uses only the built-in
+`GITHUB_TOKEN`).
 
 | What | Where it lives |
 |---|---|
