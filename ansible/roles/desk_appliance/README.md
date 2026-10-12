@@ -18,6 +18,7 @@ itself.
 |---|---|
 | `desktop` | Installs Xorg, XFCE (variable) and LightDM; autologin as `desk_appliance_user` into a named X11 session; boots to `graphical.target`. |
 | `power` | Ignores lid, suspend and hibernate in logind and masks the sleep targets; turns off the X server screen saver and DPMS; an autostart `xset s off -dpms`; XFCE power manager, screensaver and lock settings; hides the screen locker autostart entries. |
+| `keyring` | Opt-in (`desk_appliance_plaintext_keyring`, default off). A second, blank-password gnome-keyring as the default, so logins survive an autologin boot. Secrets stored there are plaintext; see [Keyring](#keyring). |
 | `audio` | PipeWire with ALSA and Pulse layers and WirePlumber; the user in `audio`; optional default sink and source; optional WebRTC echo cancellation. |
 | `serial` | The user in `dialout`; a udev rule giving each listed USB serial device a stable `/dev/<name>` symlink. |
 | `docker` | Docker engine and the Compose plugin from Ubuntu or from Docker's repository; the user in `docker`. |
@@ -59,6 +60,8 @@ Everything host-specific (names, ids) is a variable; nothing is baked in.
 | `desk_appliance_desktop_packages` | Xorg (with all video drivers and Mesa DRI), LightDM and XFCE package list | Installed without recommends, so drivers that Ubuntu only recommends are listed explicitly. |
 | `desk_appliance_extra_packages` | `[]` | Anything else the desktop needs. |
 | `desk_appliance_hidden_autostart` | `xfce4-screensaver`, `light-locker`, `xscreensaver`, `gnome-screensaver` | Per-user `Hidden=true` overrides. |
+| `desk_appliance_plaintext_keyring` | `false` | `true` creates a blank-password default keyring for the appliance user. Plaintext secrets; see [Keyring](#keyring). |
+| `desk_appliance_keyring_packages` | `gnome-keyring` | Installed when the keyring is enabled. |
 | `desk_appliance_audio_packages` | PipeWire, WirePlumber and tools list | |
 | `desk_appliance_audio_default_sink` | unset | PipeWire node name. ALSA nodes only. |
 | `desk_appliance_audio_default_source` | unset | PipeWire node name. ALSA nodes only. |
@@ -231,6 +234,32 @@ Things that behave the same but are worth knowing on an existing Kali install:
 - `kali-themes` also installs an `i3` session; the named `xfce` session is what
   LightDM logs into.
 
+## Keyring
+
+`desk_appliance_plaintext_keyring: true` (tag `keyring`, off by default) fixes
+an autologin problem. gnome-keyring unlocks its `login` keyring with the
+password typed at login; autologin types none, so that keyring stays locked and
+apps that keep a login through the Secret Service (a music client's token, for
+one) are logged out again after every boot. The role installs `gnome-keyring`
+and writes, for the appliance user:
+
+- `~/.local/share/keyrings/Default_keyring.keyring`, a plaintext keyring with a
+  blank password, mode `0600`, `lock-on-idle=false` and `lock-after=false`. It
+  is only written when absent, so a keyring that already holds secrets is
+  never replaced.
+- `~/.local/share/keyrings/default`, naming it as the default keyring (the old
+  pointer is kept as a dated copy).
+
+A blank-password keyring unlocks on first use without a prompt. The existing
+`login.keyring` and `user.keystore` are not touched.
+
+The cost is the reason it is off by default. Secrets that apps store from then
+on are **plaintext on disk**, readable by anyone who can read the account's
+home, and anything already in `login.keyring` stays locked until someone
+unlocks it by hand (`seahorse`, or `gnome-keyring-daemon --unlock`). Enable it
+only for an appliance whose account holds nothing you would not leave on disk.
+The Iris desk box has an equivalent keyring, set up by hand.
+
 ## Things to know
 
 - Membership of the `docker` group is root-equivalent on the host.
@@ -259,6 +288,7 @@ Things that behave the same but are worth knowing on an existing Kali install:
 - Join Tailscale. The tag is applied by hand.
 - Install the Alloy collector or the Wazuh agent (see Run alongside).
 - Give the appliance user `sudo`.
+- Unlock or migrate an existing `login` keyring.
 - Restart LightDM, PipeWire or WirePlumber on a running session.
 - Configure a firewall, remote desktop, SSH, backups or Bluetooth.
 - Install GPU drivers.
@@ -294,6 +324,13 @@ origins) and back to `false` (the role's files are removed, the timer is back
 at the distro default, a second run reports no changes), an existing account
 whose xfconf file is kept as a dated backup, and the distribution guard
 refusing a host that is not in the list.
+
+The `keyring` tag was run separately on `kalilinux/kali-rolling` (no systemd,
+`--tags keyring,always`, `desk_appliance_user: sp00f`): the first run installs
+`gnome-keyring` and writes both files, a second run reports no changes, and a
+`gnome-keyring-daemon` started on a throwaway session bus reports the new
+keyring as the default alias, unlocks it without a prompt and stores and reads
+back a secret.
 
 Not checked: anything needing hardware or a display (autologin into a running
 desktop, DPMS, USB serial matching, WirePlumber default-device selection,
