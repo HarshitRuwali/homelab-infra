@@ -20,7 +20,9 @@ name: Release
 #   Settings -> Actions -> General -> Workflow permissions ->
 #   "Allow GitHub Actions to create and approve pull requests"
 # Until it is on, this workflow fails with "GitHub Actions is not permitted to
-# create or approve pull requests".
+# create or approve pull requests". `workflow_dispatch` lets you start it by
+# hand (Actions tab -> Release -> Run workflow) once the setting is on, instead
+# of waiting for the next push to master.
 #
 # A pull request or tag created with GITHUB_TOKEN does not trigger other
 # workflows, so the release PR shows no checks. .github/scripts/release-config-test.sh
@@ -34,6 +36,7 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
 
 permissions:
   contents: write

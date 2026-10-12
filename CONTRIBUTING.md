@@ -54,13 +54,26 @@ the changelog. Retitle it `revert: x` if it should be listed.
 
 ### Merge method
 
-Squash merge is recommended: one PR becomes one commit and one changelog line,
-whatever the branch commits looked like. Check that the subject GitHub proposes
-in the merge dialog is the PR title.
+Use **Squash and merge**, with the PR title as the commit subject. One PR then
+becomes one commit on `master` and one changelog line. Check that the subject in
+the merge dialog is the PR title.
 
-A plain merge also works, but then every commit on the branch is what
-release-please sees, so each one must be conventional. The check posts a
-warning for each branch commit that is not; the warning does not fail the PR.
+Plain merge commits and rebase merges are not supported. release-please splits a
+commit message at a blank line followed by `type(scope): `, and GitHub writes the
+PR title into the body of a merge commit. A plain merge therefore lists the PR
+twice (once for the branch commit, once for the merge commit), and the title's
+type can raise the version bump. A rebase merge never uses the PR title at all.
+A branch commit dated before the last release but merged after it can also be
+missed.
+
+Recommended repository settings (Settings > General > Pull Requests): allow
+squash merging only, with the default commit message set to **Pull request
+title**. Otherwise GitHub proposes the commit subject, not the checked PR title,
+for a single-commit PR.
+
+The check posts a warning for each branch commit that is not conventional. Those
+warnings matter only for a non-squash merge; with a squash merge the branch
+commits never reach `master`.
 
 ## Versioning
 
@@ -93,6 +106,10 @@ The starting version of each module is its `initial-version` in
 `release-please-config.json`. A module's first release is exactly that version,
 whatever the commit types, and later releases bump from it.
 
+Internal artifact tags are not the module version and do not follow releases.
+For example, the `s3-backup-runner` image tag that `s3-backup` builds locally
+stays as it is when `s3-backup` is released.
+
 ## Releasing
 
 Releases are cut by `.github/workflows/release.yml`. Nobody tags by hand.
@@ -107,9 +124,12 @@ Releases are cut by `.github/workflows/release.yml`. Nobody tags by hand.
 Leave the release PR open as long as you like. It grows as more PRs land, and a
 module with nothing releasable is not in it.
 
+The first release PR lists each module's whole history, including old duplicates
+from plain merges. That is expected once.
+
 ### Forcing a version
 
-Add a `Release-As: X.Y.Z` footer to a commit that touches that module:
+Add a `Release-As: X.Y.Z` footer to a commit that touches only that module:
 
 ```text
 feat(memory): stable API
@@ -117,8 +137,10 @@ feat(memory): stable API
 Release-As: 1.0.0
 ```
 
-For a squash merge, the footer has to be in the body of the squash commit, so
-check the merge dialog. Do not put it on an empty commit: a commit with no files
+The footer applies to every module the commit touches. With a squash merge that
+is every module the whole PR touches, so keep that PR to the one module. The
+footer has to be in the body of the squash commit, so type it into the body box
+of the merge dialog. Do not put it on an empty commit: a commit with no files
 counts for every module, so the footer would force that version on all of them.
 
 ### Adding a module
@@ -130,12 +152,15 @@ counts for every module, so the footer would force that version on all of them.
    `initial-version`.
 3. If a file holds the module's own version, put `# x-release-please-version`
    on that line and list the file under `extra-files`. A bare string works for
-   source files such as `.py`. For `.yaml`, `.yml`, `.json`, `.toml` and `.xml`
-   files, use `{"type": "generic", "path": "..."}`: a bare string with one of
-   those extensions is parsed and re-written whole, which drops the comment. To
-   edit a value in a TOML file by key, use `{"type": "toml", "path": "...",
-   "jsonpath": "..."}`. For `uv.lock`, match the project's own entry by name,
-   and filter on `@.name.value`, not `@.name`.
+   source files such as `.py`. For a `.yaml` or `.yml` file, use
+   `{"type": "generic", "path": "..."}`: release-please re-dumps a bare YAML
+   string whole, which drops the comment (and so the marker) and reformats the
+   file. A bare `.json` string is re-dumped too, and JSON cannot hold the
+   marker. A bare `.toml` or `.xml` string is edited in place, but it also
+   rewrites a top-level `version` key; the config test rejects it anyway, so
+   that the entry says what it edits. To edit a value in a TOML file by key, use
+   `{"type": "toml", "path": "...", "jsonpath": "..."}`. For `uv.lock`, match
+   the project's own entry by name, and filter on `@.name.value`, not `@.name`.
 
 `.github/scripts/release-config-test.sh` fails until the directory, the README
 table and the config agree.
@@ -165,7 +190,9 @@ GitHub forbids unless this is on (an admin setting, so it cannot be automated):
 GitHub Actions to create and approve pull requests**
 
 Until it is on, the Release workflow fails with "GitHub Actions is not
-permitted to create or approve pull requests".
+permitted to create or approve pull requests". After turning it on, re-run the
+failed run, or start the Release workflow by hand from the Actions tab
+(`workflow_dispatch`).
 
 ## Why the release PR shows no checks
 
@@ -182,3 +209,6 @@ wrong are guarded on every other PR and on `master`:
 
 Both run in `checks.yml` and can be run locally from the repository root. The
 config test needs Python 3.11 or newer and nothing else.
+
+Do not make these checks required in branch protection. The release PR is opened
+with `GITHUB_TOKEN`, runs no workflows, and so could never pass them.

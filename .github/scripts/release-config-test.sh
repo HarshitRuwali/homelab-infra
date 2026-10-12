@@ -11,13 +11,17 @@
 #   b. the configured packages are exactly the top-level directories that hold
 #      a README.md (minus docs-landing) and exactly the modules linked in the
 #      README "Modules" table
-#   c. every package has component == its directory name and an initial-version
+#   c. every package has component == its directory name and an initial-version,
+#      and gets release-type simple, include-component-in-tag and
+#      include-v-in-tag true, and separate-pull-requests false (the tag shape and
+#      the single grouped release PR)
 #   d. every extra-file exists (resolved from the package directory)
 #   e. every version-bearing extra-file holds the package's current version:
 #      the manifest version, or initial-version before the first release
 #   f. every generic extra-file carries the x-release-please-version marker
 #   g. the docs and workflows name only things that exist: release.yml points at
-#      the config and manifest tested here, checks.yml runs both self-tests, and
+#      the config and manifest tested here and can be started by hand,
+#      checks.yml runs both self-tests, and
 #      README.md and CONTRIBUTING.md name only existing .github/ paths, resolving
 #      links and anchors, and flags that conventional-commits.sh accepts
 #
@@ -47,9 +51,21 @@ MARKER = "x-release-please-version"
 SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[\w.]+)?(?:\+[-\w.]+)?")
 # Directories that have a README.md but are not modules.
 NOT_MODULES = {"docs-landing"}
-# A bare string with one of these suffixes gets a structured updater that
-# rewrites the whole file (and drops comments, including the marker).
-STRUCTURED_SUFFIXES = (".json", ".yaml", ".yml", ".toml", ".xml")
+# A bare string with one of these suffixes goes through a structured updater
+# before the marker-based one. Rejected so that every entry says what it edits.
+BARE_STRING_REASONS = {
+    (".yaml", ".yml"): "a bare YAML string is re-dumped whole, which drops the marker comment and reformats the file",
+    (".json",): "a bare JSON string is re-dumped whole, and JSON cannot carry the marker",
+    (".toml", ".xml"): "a bare TOML or XML string is edited in place but also rewrites a top-level 'version' key",
+}
+# Settings every module must get, once the package value overrides the top
+# level one: they fix the shape of the tags and the grouping of the release PR.
+REQUIRED_SETTINGS = {
+    "release-type": "simple",
+    "include-component-in-tag": True,
+    "include-v-in-tag": True,
+    "separate-pull-requests": False,
+}
 
 errors = []
 
@@ -57,6 +73,11 @@ errors = []
 def check(ok, message):
     if not ok:
         errors.append(message)
+
+
+def same(got, want):
+    # True == 1 in Python; keep a JSON 1 from passing for true.
+    return type(got) is type(want) and got == want
 
 
 def load_json(name):
@@ -90,6 +111,14 @@ for key, value in manifest.items():
     check(
         isinstance(value, str) and re.fullmatch(SEMVER.pattern, value) is not None,
         f"{MANIFEST}: version of '{key}' is not a SemVer string: {value!r}",
+    )
+
+for key, want in REQUIRED_SETTINGS.items():
+    # separate-pull-requests is read from the top level by release-please; the
+    # others can be overridden per package, which is checked below.
+    check(
+        same(config.get(key), want),
+        f"{CONFIG}: top-level {key} must be {want!r}, got {config.get(key)!r}",
     )
 
 # b. ---------------------------------------------------------------------
@@ -174,6 +203,12 @@ for name, pkg in sorted(packages.items()):
         isinstance(initial, str) and re.fullmatch(r"\d+\.\d+\.\d+", initial) is not None,
         f"{name}: initial-version must be a X.Y.Z string, got {initial!r}",
     )
+    for key, want in REQUIRED_SETTINGS.items():
+        got = pkg.get(key, config.get(key))
+        check(
+            same(got, want),
+            f"{name}: effective {key} must be {want!r}, got {got!r}",
+        )
     check(
         pkg.get("changelog-path") == "CHANGELOG.md",
         f"{name}: changelog-path must be CHANGELOG.md, got {pkg.get('changelog-path')!r}",
@@ -184,11 +219,12 @@ for name, pkg in sorted(packages.items()):
         # Normalise to (kind, path, jsonpath).
         if isinstance(entry, str):
             kind, rel, jsonpath = "generic", entry, None
-            if entry.endswith(STRUCTURED_SUFFIXES):
+            reason = next((why for sfx, why in BARE_STRING_REASONS.items() if entry.endswith(sfx)), None)
+            if reason:
                 errors.append(
-                    f"{name}: extra-file '{entry}' is a bare string, which release-please "
-                    f"treats as a structured file and rewrites whole (dropping the marker "
-                    f"comment); use {{\"type\": \"generic\", \"path\": \"{entry}\"}}"
+                    f"{name}: extra-file '{entry}' is a bare string; {reason}. Use "
+                    f"{{\"type\": \"generic\", \"path\": \"{entry}\"}} for a marker line, "
+                    f"or a toml entry with a jsonpath to edit a key"
                 )
                 continue
         elif isinstance(entry, dict) and entry.get("type") in ("generic", "toml"):
@@ -264,6 +300,11 @@ for key, expected_file in (("config-file", CONFIG), ("manifest-file", MANIFEST))
         found == [expected_file],
         f".github/workflows/release.yml: {key} must be {expected_file}, found {found}",
     )
+
+check(
+    re.search(r"^\s+workflow_dispatch:", release_yml, re.M) is not None,
+    ".github/workflows/release.yml has no workflow_dispatch trigger, which CONTRIBUTING.md tells you to use",
+)
 
 checks_yml = read(".github/workflows/checks.yml")
 cc_script = read(".github/scripts/conventional-commits.sh")
