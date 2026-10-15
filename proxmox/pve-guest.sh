@@ -426,9 +426,11 @@ IMAGE_PATH=""
 resolve_cloud_image() {
   local f
   if [[ -n "$IMAGE" ]]; then
-    for f in $(cloud_images); do
+    # Read line by line: `for f in $(cloud_images)` splits a file name with a
+    # space in it into two words, and --image could never match it.
+    while IFS= read -r f; do
       if [[ "${f##*/}" == "$IMAGE" ]]; then IMAGE_PATH="$f"; fi
-    done
+    done < <(cloud_images)
   else
     IMAGE_PATH="$(cloud_images | grep -E '/debian-[0-9]+-genericcloud-amd64\.qcow2$' | sort -V | tail -1 || true)"
   fi
@@ -749,8 +751,9 @@ fw_host_rules() {
 }
 
 # The session running this must survive the switch. A Tailscale session always
-# does: Tailscale's own chain runs first and accepts tailscale0. A LAN session
-# survives if it comes from MGMT_LAN, and never through OPNsense.
+# does (100.64.0.0/10, or fd7a:115c:a1e0::/48 over IPv6): Tailscale's own chain
+# runs first and accepts tailscale0. A LAN session survives if it comes from
+# MGMT_LAN, and never through OPNsense.
 check_mgmt_access() {
   [[ "$MGMT_LAN" =~ ^([0-9]+\.[0-9]+\.[0-9]+)\.0/24$ ]] || die "MGMT_LAN must be a /24 such as 10.10.0.0/24"
   local lan="${BASH_REMATCH[1]}" src="${SSH_CLIENT%% *}"
@@ -765,6 +768,8 @@ check_mgmt_access() {
     die "this session comes through OPNsense ($src), which the host firewall drops. Connect over Tailscale."
   elif [[ "$src" =~ ^100\.([0-9]+)\. ]] && (( BASH_REMATCH[1] >= 64 && BASH_REMATCH[1] <= 127 )); then
     ok "this session ($src) is over Tailscale"
+  elif [[ "${src,,}" == fd7a:115c:a1e0:* ]]; then
+    ok "this session ($src) is over Tailscale (IPv6)"
   elif [[ "$src" == "$lan".* ]]; then
     ok "this session ($src) is from the management LAN"
   else

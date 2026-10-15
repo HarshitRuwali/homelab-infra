@@ -101,7 +101,9 @@ docker compose -f "$compose" pull qdrant
 latest=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' qdrant/qdrant:latest)
 if ! minor_step_ok "$previous" "$latest"; then
   echo "Now on $previous, but :latest is $latest; rerun with the minors in between" >&2
-  set_image "$previous"
+  # Docker Hub only publishes v-prefixed tags. $previous is the bare version
+  # the server reported when no tags were given, and as typed when they were.
+  set_image "v${previous#v}"
   exit 1
 fi
 apply "$latest"
