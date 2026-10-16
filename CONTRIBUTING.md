@@ -56,16 +56,18 @@ The same job reports what the PR does to module versions: a table in the job
 summary with the bump each touched module gets from the title, and a warning when
 a module changes under a hidden type (so nothing is released) or the title scope
 names a module the PR does not touch. It only reports: what a title or a file
-says never fails the PR. Footers such as `BREAKING CHANGE:` or `Release-As:` in
-the squash commit body are not visible to it and can change the result. Run
+says never fails the PR. It reads only the title, so the squash commit body and the
+PR description (footers, extra `type: ` paragraphs, a `BEGIN_COMMIT_OVERRIDE` block)
+are not visible to it and can change the result. Run
 `.github/scripts/versioning-impact.sh --title "feat(monitoring): x" origin/master HEAD`
 to see the report for your branch.
 
 ### Merge method
 
-Use **Squash and merge**, with the PR title as the commit subject. One PR then
-becomes one commit on `master` and one line in the release notes. Check that the
-subject in the merge dialog is the PR title.
+Use **Squash and merge**, with the PR title as the commit subject and the PR
+description as the commit body. One PR then becomes one commit on `master` and one
+line in the release notes, and `git log` and `git blame` carry the reasoning from
+the description. Check that the subject in the merge dialog is the PR title.
 
 Plain merge commits and rebase merges are not supported. release-please splits a
 commit message at a blank line followed by `type(scope): `, and GitHub writes the
@@ -76,9 +78,22 @@ A branch commit dated before the last release but merged after it can also be
 missed.
 
 Recommended repository settings (Settings > General > Pull Requests): allow
-squash merging only, with the default commit message set to **Pull request
-title**. Otherwise GitHub proposes the commit subject, not the checked PR title,
-for a single-commit PR.
+squash merging only, with the default commit message set to **Pull request title
+and description**. Otherwise GitHub proposes the commit subject, not the checked PR
+title, for a single-commit PR.
+
+release-please reads the whole squash commit message, not only its subject. A
+`BREAKING CHANGE:` or `Release-As:` footer takes effect, and so does any paragraph,
+after a blank line and wherever it sits in the body, that starts with one of the
+types in the table above and `(scope): `: it becomes an extra release-note entry
+(release-please README, "What if my PR contains multiple fixes or features?"). A
+`BEGIN_COMMIT_OVERRIDE` ... `END_COMMIT_OVERRIDE` block in the PR description
+replaces the whole message, and release-please reads the description when the
+release PR is built, so editing the description after the merge also changes the
+notes (README, "How can I fix release notes?"). Keep all of these out of a PR
+description unless they are meant to take effect. The body box in the merge
+dialog starts as the description: remove anything that is not part of it, such as
+a bot summary or a template comment, before merging.
 
 The check posts a warning for each branch commit that is not conventional. Those
 warnings matter only for a non-squash merge; with a squash merge the branch
@@ -149,8 +164,9 @@ Release-As: 1.0.0
 
 The footer applies to every module the commit touches. With a squash merge that
 is every module the whole PR touches, so keep that PR to the one module. The
-footer has to be in the body of the squash commit, so type it into the body box
-of the merge dialog. Do not put it on an empty commit: a commit with no files
+footer has to be in the body of the squash commit, so add it as the last
+paragraph of the body box in the merge dialog, which starts as the PR description.
+Do not put it on an empty commit: a commit with no files
 counts for every module, so the footer would force that version on all of them.
 
 ### Adding a module
