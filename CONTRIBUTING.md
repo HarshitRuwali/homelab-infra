@@ -52,6 +52,15 @@ GitHub's revert button titles a PR `Revert "feat: x"`. The check accepts that,
 but release-please does not recognise it, so the revert would be missing from
 the release notes. Retitle it `revert: x` if it should be listed.
 
+The same job reports what the PR does to module versions: a table in the job
+summary with the bump each touched module gets from the title, and a warning when
+a module changes under a hidden type (so nothing is released) or the title scope
+names a module the PR does not touch. It only reports: what a title or a file
+says never fails the PR. Footers such as `BREAKING CHANGE:` or `Release-As:` in
+the squash commit body are not visible to it and can change the result. Run
+`.github/scripts/versioning-impact.sh --title "feat(monitoring): x" origin/master HEAD`
+to see the report for your branch.
+
 ### Merge method
 
 Use **Squash and merge**, with the PR title as the commit subject. One PR then
@@ -163,7 +172,17 @@ counts for every module, so the footer would force that version on all of them.
    the project's own entry by name, and filter on `@.name.value`, not `@.name`.
 
 `.github/scripts/release-config-test.sh` fails until the directory, the README
-table and the config agree.
+table and the config agree. It runs on the pull request, so register the module
+in the PR that adds it: a PR with the directory and no package fails the
+`Release configuration` check. A module that is not registered never gets a
+version, a tag or a release. `.github/scripts/release-config-gate-test.sh` proves
+the gate by adding a module to a copy of the repository one piece at a time.
+
+A branch cut before the release setup landed on `master` does not contain
+`release-please-config.json`, so the registration cannot be added to it until
+`master` is merged in. An open PR is also only checked when it gets an event (a
+push or a title edit). Merge `master` into the branch, add the registration, and
+push.
 
 ## Deploying a pinned version
 
@@ -206,8 +225,11 @@ wrong are guarded on every other PR and on `master`:
   tracked file all agree. A hand edit to a version string fails it.
 - `.github/scripts/conventional-commits-test.sh` tests the commit-message check
   itself.
+- `.github/scripts/versioning-impact-test.sh` tests the versioning report, and
+  `.github/scripts/release-config-gate-test.sh` tests that the config test
+  rejects a module that is not fully registered.
 
-Both run in `checks.yml` and can be run locally from the repository root. The
+They run in `checks.yml` and can be run locally from the repository root. The
 config test needs Python 3.11 or newer and nothing else.
 
 Do not make these checks required in branch protection. The release PR is opened

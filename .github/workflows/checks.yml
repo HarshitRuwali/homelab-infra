@@ -7,12 +7,18 @@ name: Checks
 #                   master and release-please reads that subject to pick the
 #                   modules to release and the version bump. Branch commits that
 #                   are not conventional only produce a warning: they never reach
-#                   master when the PR is squash-merged.
-#   release-config  Runs the two self-tests under .github/scripts/: one for the
-#                   commit-message check itself, and one that asserts
-#                   release-please-config.json, .release-please-manifest.json,
-#                   the module directories, the README Modules table and the
-#                   version strings in each module's files all agree. The release
+#                   master when the PR is squash-merged. The job also reports what
+#                   the PR does to module versions (a table in the job summary,
+#                   warnings for a change that releases nothing); it never fails
+#                   on that.
+#   release-config  Runs the scripts under .github/scripts/ that test the
+#                   release setup: the commit-message check, the versioning
+#                   report, the registration gate, and release-config-test.sh,
+#                   which asserts release-please-config.json,
+#                   .release-please-manifest.json, the module directories, the
+#                   README Modules table and the version strings in each module's
+#                   files all agree. That last one is the gate that rejects a new
+#                   module directory with no package in the config. The release
 #                   PR that release-please opens is created with GITHUB_TOKEN, so
 #                   no workflow runs on it; this job is what catches drift before
 #                   that PR is built from it.
@@ -60,6 +66,16 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: .github/scripts/conventional-commits.sh --commits "$BASE_SHA" "$HEAD_SHA"
 
+      # Runs even when the checks above rejected the title, which is when its
+      # warnings are most useful.
+      - name: Report the versioning impact
+        if: ${{ !cancelled() }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/versioning-impact.sh --title "$PR_TITLE" "$BASE_SHA" "$HEAD_SHA"
+
   release-config:
     name: Release configuration
     runs-on: ubuntu-latest
@@ -69,6 +85,12 @@ jobs:
 
       - name: Test the commit-message check
         run: .github/scripts/conventional-commits-test.sh
+
+      - name: Test the versioning report
+        run: .github/scripts/versioning-impact-test.sh
+
+      - name: Test the registration gate
+        run: .github/scripts/release-config-gate-test.sh
 
       - name: Test the release configuration
         run: .github/scripts/release-config-test.sh

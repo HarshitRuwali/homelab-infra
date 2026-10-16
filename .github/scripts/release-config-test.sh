@@ -24,9 +24,10 @@
 #   f. every generic extra-file carries the x-release-please-version marker
 #   g. the docs and workflows name only things that exist: release.yml points at
 #      the config and manifest tested here and can be started by hand,
-#      checks.yml runs both self-tests, and
+#      checks.yml runs every script in .github/scripts/, and
 #      README.md and CONTRIBUTING.md name only existing .github/ paths, resolving
-#      links and anchors, and flags that conventional-commits.sh accepts
+#      links and anchors, and flags that conventional-commits.sh and
+#      versioning-impact.sh accept
 #
 # Needs python3 >= 3.11 (tomllib) and nothing else.
 # Run from anywhere: .github/scripts/release-config-test.sh
@@ -310,8 +311,14 @@ check(
 
 checks_yml = read(".github/workflows/checks.yml")
 cc_script = read(".github/scripts/conventional-commits.sh")
-for script in (".github/scripts/conventional-commits-test.sh", ".github/scripts/release-config-test.sh"):
-    check(script in checks_yml, f".github/workflows/checks.yml does not run {script}")
+vi_script = read(".github/scripts/versioning-impact.sh")
+# The command of each single-line `run:` step, so a comment that only names a
+# script does not count as running it.
+run_commands = set(re.findall(r"^\s*run:\s*(\S+)", checks_yml, re.M))
+# Globbed, so a script added later has to be wired into checks.yml too.
+for script in sorted((root / ".github/scripts").glob("*.sh")):
+    rel = script.relative_to(root).as_posix()
+    check(rel in run_commands, f".github/workflows/checks.yml has no step that runs {rel}")
 
 for doc in ("README.md", "CONTRIBUTING.md"):
     text = read(doc)
@@ -320,6 +327,8 @@ for doc in ("README.md", "CONTRIBUTING.md"):
         check((root / ref).exists(), f"{doc}: names {ref}, which does not exist")
     for flag in sorted(set(re.findall(r"conventional-commits\.sh (--[a-z-]+)", text))):
         check(f"{flag})" in cc_script, f"{doc}: shows conventional-commits.sh {flag}, which the script does not accept")
+    for flag in sorted(set(re.findall(r"versioning-impact\.sh (--[a-z-]+)", text))):
+        check(f'"{flag}"' in vi_script, f"{doc}: shows versioning-impact.sh {flag}, which the script does not accept")
     for target in sorted(set(re.findall(r"\]\(([^)\s]+)\)", text))):
         if re.match(r"[a-z]+:", target):
             continue
