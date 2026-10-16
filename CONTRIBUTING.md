@@ -56,8 +56,9 @@ The same job reports what the PR does to module versions: a table in the job
 summary with the bump each touched module gets from the title, and a warning when
 a module changes under a hidden type (so nothing is released) or the title scope
 names a module the PR does not touch. It only reports: what a title or a file
-says never fails the PR. Footers such as `BREAKING CHANGE:` or `Release-As:` in
-the squash commit body are not visible to it and can change the result. Run
+says never fails the PR. It reads only the title, so the squash commit body and the
+PR description (footers, extra `type: ` paragraphs, a `BEGIN_COMMIT_OVERRIDE` block)
+are not visible to it and can change the result. Run
 `.github/scripts/versioning-impact.sh --title "feat(monitoring): x" origin/master HEAD`
 to see the report for your branch.
 
@@ -81,14 +82,18 @@ squash merging only, with the default commit message set to **Pull request title
 and description**. Otherwise GitHub proposes the commit subject, not the checked PR
 title, for a single-commit PR.
 
-release-please reads the body of a squash commit as well as its subject. A
-`BREAKING CHANGE:` or `Release-As:` footer takes effect, and so does a paragraph at
-the bottom that starts with `type(scope): `, which becomes an extra release-note
-entry (release-please README, "What if my PR contains multiple fixes or
-features?"). Keep these out of a PR description unless they are meant to take
-effect. The body box in the merge dialog starts as the description: remove
-anything that is not part of it, such as a bot summary or a template comment,
-before merging.
+release-please reads the whole squash commit message, not only its subject. A
+`BREAKING CHANGE:` or `Release-As:` footer takes effect, and so does any paragraph,
+after a blank line and wherever it sits in the body, that starts with one of the
+types in the table above and `(scope): `: it becomes an extra release-note entry
+(release-please README, "What if my PR contains multiple fixes or features?"). A
+`BEGIN_COMMIT_OVERRIDE` ... `END_COMMIT_OVERRIDE` block in the PR description
+replaces the whole message, and release-please reads the description when the
+release PR is built, so editing the description after the merge also changes the
+notes (README, "How can I fix release notes?"). Keep all of these out of a PR
+description unless they are meant to take effect. The body box in the merge
+dialog starts as the description: remove anything that is not part of it, such as
+a bot summary or a template comment, before merging.
 
 The check posts a warning for each branch commit that is not conventional. Those
 warnings matter only for a non-squash merge; with a squash merge the branch
