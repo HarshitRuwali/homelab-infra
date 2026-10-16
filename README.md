@@ -187,7 +187,7 @@ in [Building the docs](https://harshitruwali.github.io/homelab-infra/ansible/ref
 Each module has its own [SemVer](https://semver.org) version, because each
 stands alone. A release is tagged `<module>-vX.Y.Z` (for example
 `monitoring-v0.2.0`) and published as its own GitHub release, which carries the
-release notes (there is no `CHANGELOG.md`). Versions and notes come from
+release notes (the same notes go into the module's `CHANGELOG.md`). Versions and notes come from
 [Conventional Commits](https://www.conventionalcommits.org). The commit rules,
 the release flow and pinned deploys are in [CONTRIBUTING.md](CONTRIBUTING.md).
 

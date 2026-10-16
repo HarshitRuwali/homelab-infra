@@ -15,8 +15,8 @@
 #      0.1.0 (1.0.0 is the public release, cut on purpose with Release-As), and
 #      gets release-type simple, include-component-in-tag and include-v-in-tag
 #      true, separate-pull-requests false (the tag shape and the single grouped
-#      release PR), skip-changelog true (no CHANGELOG.md; the notes live on
-#      the GitHub release) and bump-minor-pre-major true (a breaking change
+#      release PR), skip-changelog false (the release PR edits each module's
+#      CHANGELOG.md) and bump-minor-pre-major true (a breaking change
 #      below 1.0.0 bumps the minor, so nothing reaches 1.0.0 by accident)
 #   d. every extra-file exists (resolved from the package directory)
 #   e. every version-bearing extra-file holds the package's current version:
@@ -70,7 +70,7 @@ REQUIRED_SETTINGS = {
     "include-v-in-tag": True,
     "separate-pull-requests": False,
     "bump-minor-pre-major": True,
-    "skip-changelog": True,
+    "skip-changelog": False,
 }
 
 errors = []
