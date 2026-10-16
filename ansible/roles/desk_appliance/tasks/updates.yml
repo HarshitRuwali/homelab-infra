@@ -1,0 +1,46 @@
+---
+# unattended_upgrades (the fleet role) asserts Automatic-Reboot is false and
+# writes the same timer drop-in point. Running both on one host would fail that
+# assert, or flip-flop the timer. This role is the deliberate exception to the
+# fleet's never-reboot policy, so the two are kept apart by inventory.
+- name: Refuse a host that is also in a fleet patching group
+  ansible.builtin.assert:
+    that:
+      - "'autoupdate' not in group_names"
+      - "'no_autoupdate' not in group_names"
+    fail_msg: >-
+      {{ inventory_hostname }} is in autoupdate or no_autoupdate. The fleet
+      unattended_upgrades role forbids automatic reboots and would conflict with
+      this one. Take the host out of those groups; desk_appliance owns its
+      patching.
+    quiet: true
+
+- name: Configure unattended updates and the reboot window
+  ansible.builtin.import_tasks: updates_apply.yml
+  when: desk_appliance_updates_enabled | bool
+
+# Off (the default on Kali). Nothing is installed or scheduled. What an earlier
+# run of this role wrote is removed, so switching the variable off really stops
+# the unattended upgrades and the automatic reboot rather than leaving them
+# configured. The unattended-upgrades package and the fleet-role leftovers
+# handled in updates_apply.yml are not touched.
+- name: Say that unattended updates are off
+  ansible.builtin.debug:
+    msg: >-
+      desk_appliance_updates_enabled is false on {{ inventory_hostname }}
+      ({{ ansible_facts.distribution }}): no unattended updates and no automatic
+      reboot are configured. Update the host by hand.
+  when: not desk_appliance_updates_enabled | bool
+
+- name: Remove this role's unattended-upgrades policy when updates are off
+  ansible.builtin.file:
+    path: /etc/apt/apt.conf.d/53desk-appliance-unattended-upgrades
+    state: absent
+  when: not desk_appliance_updates_enabled | bool
+
+- name: Remove this role's apt-daily-upgrade timer drop-in when updates are off
+  ansible.builtin.file:
+    path: /etc/systemd/system/apt-daily-upgrade.timer.d/desk-appliance.conf
+    state: absent
+  when: not desk_appliance_updates_enabled | bool
+  notify: Reload systemd

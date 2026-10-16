@@ -1,0 +1,40 @@
+---
+# Applied by GROUP MEMBERSHIP (`desk_appliances`), never by an in-role `when:`.
+# See playbooks/desk-appliance.yml.
+#
+# One file per concern, each tagged, so `--tags power` touches only the power
+# layer. user.yml carries the `always` tag because every other file needs the
+# account to exist first.
+
+- name: Resolve the appliance user
+  ansible.builtin.import_tasks: user.yml
+  tags: [always]
+
+- name: Install the X11 session and LightDM autologin
+  ansible.builtin.import_tasks: desktop.yml
+  tags: [desktop]
+
+- name: Disable blanking, locking and suspend
+  ansible.builtin.import_tasks: power.yml
+  tags: [power]
+
+- name: Configure the plaintext default keyring
+  ansible.builtin.import_tasks: keyring.yml
+  tags: [keyring]
+  when: desk_appliance_plaintext_keyring | bool
+
+- name: Configure PipeWire audio
+  ansible.builtin.import_tasks: audio.yml
+  tags: [audio]
+
+- name: Configure the USB serial device rules
+  ansible.builtin.import_tasks: serial.yml
+  tags: [serial]
+
+- name: Install Docker
+  ansible.builtin.import_tasks: docker.yml
+  tags: [docker]
+
+- name: Configure unattended security updates
+  ansible.builtin.import_tasks: updates.yml
+  tags: [updates]

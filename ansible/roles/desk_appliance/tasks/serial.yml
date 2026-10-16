@@ -1,0 +1,46 @@
+---
+- name: Put the appliance user in the dialout group
+  ansible.builtin.user:
+    name: "{{ desk_appliance_user }}"
+    groups: dialout
+    append: true
+  when: desk_appliance_user_present | bool
+
+# A malformed id would write a rule that silently matches nothing, and the
+# symlink would just never appear.
+- name: Validate the serial device entries
+  ansible.builtin.assert:
+    that:
+      - item.name is defined
+      - item.name is match('^[A-Za-z0-9_.-]+$')
+      - item.vendor_id is defined
+      - (item.vendor_id | string) is match('^[0-9a-fA-F]{4}$')
+      - item.product_id is defined
+      - (item.product_id | string) is match('^[0-9a-fA-F]{4}$')
+    fail_msg: >-
+      Each desk_appliance_serial_devices entry needs name (letters, digits,
+      _ . -), vendor_id and product_id (4 hex digits each, quoted so YAML does
+      not read them as numbers). Got: {{ item }}
+    quiet: true
+  loop: "{{ desk_appliance_serial_devices }}"
+  loop_control:
+    label: "{{ item.name | default('?') }}"
+
+- name: Install the serial device udev rules
+  ansible.builtin.template:
+    src: serial.rules.j2
+    dest: /etc/udev/rules.d/99-desk-appliance-serial.rules
+    owner: root
+    group: root
+    mode: "0644"
+  when: desk_appliance_serial_devices | length > 0
+  notify:
+    - Reload udev rules
+    - Replay udev events for serial devices
+
+- name: Remove the serial device udev rules when none are configured
+  ansible.builtin.file:
+    path: /etc/udev/rules.d/99-desk-appliance-serial.rules
+    state: absent
+  when: desk_appliance_serial_devices | length == 0
+  notify: Reload udev rules

@@ -238,4 +238,5 @@ Every term used in these docs, including the ones that are not Ansible.
 
 **unattended-upgrades**
 : The Debian package that applies updates automatically. Configured here to
-  apply everything and **never reboot**.
+  apply everything and **never reboot**, except hosts in the opt-in
+  `desk_appliances` group (see the `desk_appliance` role).

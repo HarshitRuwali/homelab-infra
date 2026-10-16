@@ -1,0 +1,33 @@
+# Managed by ansible/roles/desk_appliance. Do not edit by hand.
+#
+# Makes the named ALSA nodes win WirePlumber's default-device selection by
+# raising their session priority above the built-in nodes'. Only the nodes
+# named below are touched.
+monitor.alsa.rules = [
+{% if desk_appliance_audio_default_sink is defined %}
+  {
+    matches = [
+      { node.name = "{{ desk_appliance_audio_default_sink }}" }
+    ]
+    actions = {
+      update-props = {
+        priority.session = 3000
+        priority.driver = 3000
+      }
+    }
+  }
+{% endif %}
+{% if desk_appliance_audio_default_source is defined %}
+  {
+    matches = [
+      { node.name = "{{ desk_appliance_audio_default_source }}" }
+    ]
+    actions = {
+      update-props = {
+        priority.session = 3000
+        priority.driver = 3000
+      }
+    }
+  }
+{% endif %}
+]

@@ -6,9 +6,17 @@
 #   ansible-playbook playbooks/force-updates.yml --check          # see what would move
 #
 # REBOOTING IS YOURS. Nothing here restarts a machine, by design: this fleet
-# has no automatic reboot anywhere and that guarantee is worth more than the
+# has no automatic reboot and that guarantee is worth more than the
 # convenience. The final play prints exactly which hosts are waiting, so run
 # it, read the summary, then reboot them yourself one at a time.
+#
+# The one exception to "no automatic reboot" is `desk_appliances` (the
+# desk_appliance role), which reboots itself in its window whenever
+# /run/reboot-required exists, including a flag left by this playbook. They are
+# excluded below (`monitored:!desk_appliances`) so a daytime run here cannot
+# queue an unexpected reboot on one; they patch themselves. An inventory with no
+# desk_appliances group only logs "Could not match supplied host pattern" for
+# the exclusion; the run is unaffected.
 #
 # WHY NOT `unattended-upgrade -v`, which is the obvious thing:
 #   - it applies the ORIGIN POLICY, so it installs the subset
@@ -19,15 +27,15 @@
 # This uses apt directly, which is what actually clears the pending count the
 # dashboards show.
 #
-# SCOPE IS `monitored`, NOT `autoupdate`. Hosts excluded from automatic
-# patching are excluded precisely because a human should choose the moment,
-# and this playbook IS that human choosing. t7920 is the hypervisor: patching
+# SCOPE IS `monitored` (minus `desk_appliances`), NOT `autoupdate`. Hosts
+# excluded from automatic patching are excluded precisely because a human
+# should choose the moment, and this playbook IS that human choosing. t7920 is the hypervisor: patching
 # it restarts pveproxy/pvedaemon under running guests, so give it its own
 # --limit run when the guests can take it, rather than sweeping it up in a
 # fleet-wide pass.
 
 - name: Install pending package updates
-  hosts: monitored
+  hosts: monitored:!desk_appliances
   become: true
 
   # One host at a time. A bad upgrade then costs you one machine instead of
@@ -168,7 +176,7 @@
 # being buried per-host in the output above.
 # ---------------------------------------------------------------------------
 - name: Summarise what needs rebooting
-  hosts: monitored
+  hosts: monitored:!desk_appliances
   gather_facts: false
   become: true
   tasks:

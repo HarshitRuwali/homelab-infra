@@ -17,7 +17,8 @@ A reference list. For what a playbook or a role *is*, see
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
 | `docker-updates.yml` | `autoupdate` | containers, only with `run_now` | container update schedule |
 | `rotate-collector-password.yml` | `central` | `nginx`, central `alloy` | rotating collector auth |
-| `force-updates.yml` | `monitored` | **services, via apt** | installing pending updates NOW; never reboots |
+| `desk-appliance.yml` | `desk_appliances` | `docker` (started on first install, reloaded for `live-restore`); udev rules reloaded; `systemd-logind` told to re-read its config; never a running session | an always-on X11 desk appliance; not part of `site.yml` |
+| `force-updates.yml` | `monitored`, except `desk_appliances` | **services, via apt** | installing pending updates NOW; never reboots |
 
 ### Common invocations
 
@@ -82,6 +83,26 @@ result.
 
 The Grafana-to-Matrix relay: a system user, a venv, a systemd unit and a smoke
 test. Refuses to deploy with placeholder credentials.
+
+### `desk_appliance`
+
+Baseline for an always-on desk appliance, applied by membership of
+`desk_appliances` only: LightDM autologin into a named X11 session, no
+blanking or suspend, PipeWire, a serial udev symlink, Docker, and security
+updates with an automatic reboot window. Tagged per concern: `desktop`,
+`power`, `keyring` (opt-in), `audio`, `serial`, `docker`, `updates`.
+
+!!! warning "The one host class that reboots itself"
+    It sets `Automatic-Reboot "true"`, so it fails early on a host in
+    `autoupdate` or `no_autoupdate`, whose role asserts the opposite. On Kali
+    Rolling the update layer is off unless `desk_appliance_updates_enabled` is
+    set.
+
+Runs on Ubuntu 26.04 and Kali Rolling; any other distribution fails the play
+at the start.
+
+Variables and behaviour are documented in the role itself:
+`roles/desk_appliance/README.md`.
 
 ### `grafana_alerting`
 
