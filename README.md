@@ -10,7 +10,7 @@
 [![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)](https://harshitruwali.github.io/homelab-infra/monitoring/)
 [![Proxmox](https://img.shields.io/badge/Proxmox-E57000?logo=proxmox&logoColor=white)](https://www.proxmox.com/)
 
-Seven independent modules covering a Proxmox and Tailscale estate: Debian VMs,
+Eight independent modules covering a Proxmox and Tailscale estate: Debian VMs,
 LXC containers, Raspberry Pis and one bare-metal hypervisor. Every machine is
 configured, patched and observed the same way, and every automated action
 writes a metric, so **"it updates itself" can never quietly become "it broke
@@ -27,6 +27,7 @@ itself three weeks ago"**.
 | 🤖 | [**`aibox-model-queue/`**](aibox-model-queue/README.md) | Serializing proxy so one GPU's LM Studio host is shared without model-swap races. | [README](aibox-model-queue/README.md) |
 | 🖥️ | [**`proxmox/`**](proxmox/README.md) | Builds a VM template and creates VMs and containers from the images already on the hypervisor, plus firewalled VMs leased to other people. Dry run by default. | [README](proxmox/README.md) |
 | 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, Suricata, AdGuard Home, Authelia, OpenBao, ntopng and Greenbone across six small guests. All free and open source. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
+| 📓 | [**`vault-viewer/`**](vault-viewer/README.md) | Read-only web viewer for an Obsidian vault on a Tailscale address, with search, live reload and PDF export. Treats vault content as untrusted. | [site](https://harshitruwali.github.io/homelab-infra/vault-viewer/) |
 
 Each module stands alone. Nothing here requires you to run the others, and
 every directory's README is a complete quick start by itself.
@@ -126,6 +127,20 @@ the commands that finish the job.
 
 </details>
 
+<details>
+<summary><b>📓 Serve a vault in the browser</b></summary>
+
+```bash
+cd vault-viewer
+./install.sh --bind 100.64.0.10 --tailnet-user you@github ~/obsidian
+```
+
+Installs one Python file and a systemd user unit, then checks that the server
+answers. Open `http://100.64.0.10:7777` from your own tailnet devices. Add
+`--build-pdf-image` for PDF export, which needs docker.
+
+</details>
+
 > [!IMPORTANT]
 > **Run Ansible from `ansible/`, never from here.** `ansible/ansible.cfg`
 > resolves `inventory` and `roles_path` relative to the working directory, and
@@ -143,6 +158,7 @@ memory/         api-service/, memory-service/, mcp-server/, ingestion scripts
 s3-backup/      restic and rclone automation, installer, restore drills
 aibox-model-queue/
                 Serializing proxy for a shared LM Studio host
+vault-viewer/   artifacts.py: read-only Obsidian vault viewer, installer, tests
 proxmox/        pve-guest.sh: VM template, new VMs and containers
 docs-landing/   The static index page of the published docs site
 .github/        Workflows (docs, releases, PR checks) and the scripts they run
@@ -154,7 +170,7 @@ release-please-config.json
 
 ## Documentation
 
-Five MkDocs Material sites plus a landing page, on one GitHub Pages site:
+One MkDocs Material site per documented module plus a landing page, on one GitHub Pages site:
 
 | Path | Source |
 |---|---|
@@ -165,17 +181,18 @@ Five MkDocs Material sites plus a landing page, on one GitHub Pages site:
 | [`/s3-backup/`](https://harshitruwali.github.io/homelab-infra/s3-backup/) | `s3-backup/mkdocs.yml` |
 | [`/aibox-model-queue/`](https://harshitruwali.github.io/homelab-infra/aibox-model-queue/) | `aibox-model-queue/mkdocs.yml` |
 | [`/security/`](https://harshitruwali.github.io/homelab-infra/security/) | `security/mkdocs.yml` |
+| [`/vault-viewer/`](https://harshitruwali.github.io/homelab-infra/vault-viewer/) | `vault-viewer/mkdocs.yml` |
 
 ```bash
-cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security
+cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security, vault-viewer
 python3 -m venv .venv
 .venv/bin/pip install -r docs/requirements.txt
 .venv/bin/mkdocs serve                      # live preview on :8000
 ```
 
-The five configs share the same Material theme and pinned dependencies, with
+The configs share the same Material theme and pinned dependencies, with
 each site's name, URL and navigation tailored to its module. **Keep shared
-theme and dependency changes aligned across all five.** Pull
+theme and dependency changes aligned across all of them.** Pull
 requests build every site with `--strict`, which turns a broken link or a page
 missing from the nav into a failure rather than a warning nobody reads.
 
