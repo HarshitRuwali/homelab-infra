@@ -65,7 +65,8 @@ echo "help and argument errors"
 fresh_home
 run "$HOME_DIR" "$WITH_STUBS" --help
 check "--help exits 0" test "$RC" -eq 0
-for flag in --bind --port --allow-host --tailnet-user --title --build-pdf-image --dry-run -h --help; do
+check "--help describes --pdf-base" has "$OUT" "--pdf-base IMAGE  "
+for flag in --bind --port --allow-host --tailnet-user --title --build-pdf-image --pdf-base --dry-run -h --help; do
   check "--help lists $flag" has "$OUT" "$flag"
 done
 run "$HOME_DIR" "$WITH_STUBS" "$ROOT"
@@ -87,6 +88,14 @@ check "rejected --bind writes nothing" test ! -e "$UNITP"
 run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --title $'a\nb' "$ROOT"
 check "newline in --title exits 2" test "$RC" -eq 2
 check "newline in --title names control characters" has "$OUT" "control character"
+run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --build-pdf-image --pdf-base $'a\nb' "$ROOT"
+check "newline in --pdf-base exits 2" test "$RC" -eq 2
+run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --build-pdf-image --pdf-base "" "$ROOT"
+check "empty --pdf-base exits 2" test "$RC" -eq 2
+run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --pdf-base mcr.example/playwright:v1.56.0-noble "$ROOT"
+check "--pdf-base without --build-pdf-image exits 2" test "$RC" -eq 2
+check "--pdf-base without --build-pdf-image names the rule" has "$OUT" "--pdf-base only applies together with --build-pdf-image"
+check "--pdf-base without --build-pdf-image writes nothing" test ! -e "$UNITP"
 run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --allow-host $'a\rb' "$ROOT"
 check "CR in --allow-host exits 2" test "$RC" -eq 2
 run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --tailnet-user $'a\tb' "$ROOT"
@@ -118,6 +127,9 @@ check "--dry-run calls no docker" not_logged "docker"
 check "--dry-run prints the unit" has "$OUT" "ExecStart=/usr/bin/python3 $BINP --bind 10.1.2.3 --port 7777 --tailnet-user me@github"
 run "$HOME_DIR" "$WITH_STUBS" --dry-run --build-pdf-image --bind 10.1.2.3 "$ROOT"
 check "--dry-run with --build-pdf-image builds nothing" not_logged "docker"
+run "$HOME_DIR" "$WITH_STUBS" --dry-run --build-pdf-image --pdf-base mcr.example/playwright:v1.56.0-noble --bind 10.1.2.3 "$ROOT"
+check "--dry-run with --pdf-base exits 0" test "$RC" -eq 0
+check "--dry-run with --pdf-base builds nothing" not_logged "docker"
 
 echo "real run"
 fresh_home
@@ -173,8 +185,23 @@ echo "options and failure paths"
 fresh_home
 run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --build-pdf-image "$ROOT"
 check "--build-pdf-image exits 0" test "$RC" -eq 0
-check "--build-pdf-image runs docker build for the image" logged "docker build --pull -t artifacts-pdf:local -"
+check "--build-pdf-image runs docker build for the image" logged "docker build --pull -t artifacts-pdf:local --build-arg BASE=mcr.microsoft.com/playwright/python:v1.63.0-noble --build-arg PLAYWRIGHT=1.63.0 -"
 check "--build-pdf-image says the image is built" has "$OUT" "built: artifacts-pdf:local"
+fresh_home
+NODE_BASE="mcr.microsoft.com/playwright:v1.56.0-noble"
+run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --build-pdf-image --pdf-base "$NODE_BASE" "$ROOT"
+check "--pdf-base build exits 0" test "$RC" -eq 0
+check "--pdf-base build passes the base and its version" logged "docker build -t artifacts-pdf:local --build-arg BASE=$NODE_BASE --build-arg PLAYWRIGHT=1.56.0 -"
+check "--pdf-base build does not pull" not_logged "--pull"
+fresh_home
+run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --build-pdf-image --pdf-base mcr.example/playwright:latest "$ROOT"
+check "--pdf-base without a version tag exits 1" test "$RC" -eq 1
+check "--pdf-base without a version tag says why" has "$OUT" "tag must carry the Playwright version"
+check "--pdf-base without a version tag runs no docker build" not_logged "docker build"
+check "--pdf-base without a version tag installs nothing" test ! -e "$UNITP"
+fresh_home
+STUB_DOCKER_BUILD_RC=1 run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --build-pdf-image --pdf-base "$NODE_BASE" "$ROOT"
+check "failed --pdf-base build repeats --pdf-base in the retry hint" has "$OUT" "artifacts.py --build-pdf-image --pdf-base $NODE_BASE"
 fresh_home
 STUB_CURL_CODE=200 run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 "$ROOT"
 check "HTTP 200 counts as up" test "$RC" -eq 0

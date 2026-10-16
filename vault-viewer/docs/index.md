@@ -68,7 +68,7 @@ changes nothing. It does not print the next-steps text.
 
 ```text
 install.sh --bind ADDR [--port N] [--allow-host NAME]... [--tailnet-user LOGIN]
-           [--title NAME] [--build-pdf-image] [--dry-run] ROOT...
+           [--title NAME] [--build-pdf-image [--pdf-base IMAGE]] [--dry-run] ROOT...
 install.sh -h | --help
 ```
 
@@ -80,6 +80,7 @@ install.sh -h | --help
 | `--tailnet-user LOGIN` | Admit only this login's untagged tailnet devices. Without it, the server does no login check. See [Security](security.md#the-tailnet-gate). |
 | `--title NAME` | Name shown in the sidebar. Defaults to the vault folder names. |
 | `--build-pdf-image` | Also build the PDF container image. Needs docker, takes a few minutes and downloads about 1 GB. See [PDF export](pdf-export.md). |
+| `--pdf-base IMAGE` | With `--build-pdf-image` only: build on this Playwright image (Python or Node flavour, tag `vX.Y.Z...`) instead of downloading the default base. See [PDF export](pdf-export.md#building-on-an-existing-playwright-image). |
 | `--dry-run` | Print the unit and the actions, change nothing. |
 | `ROOT...` | One or more vault folders to serve. Each must be an existing directory. |
 

@@ -32,7 +32,7 @@ while printing.
 Needs python3-markdown (Debian/Ubuntu package) for notes; the tailscale CLI
 for --tailnet-user; docker for PDFs.
 Usage: artifacts.py [--bind ADDR] [--port 7777] [--allow-host NAME] [--tailnet-user LOGIN]
-                    [--pdf-image IMAGE] [--build-pdf-image] [ROOT ...]
+                    [--pdf-image IMAGE] [--build-pdf-image [--pdf-base IMAGE]] [ROOT ...]
 """
 import argparse
 import base64
@@ -627,16 +627,41 @@ def search(lib, q, limit=40):
 
 # Headless Chromium (Playwright's image) plus the page's libraries and fonts,
 # so printing needs no network. Built with `artifacts --build-pdf-image`.
-PDF_DOCKERFILE = """
+# BASE is a Playwright image (Python or Node flavour); the pip package is pinned
+# to the version in its tag, because Playwright launches the browser build that
+# matches its own version.
+PDF_BASE = "mcr.microsoft.com/playwright/python:v1.63.0-noble"
+PDF_DOCKERFILE = f"""
+ARG BASE={PDF_BASE}
 FROM node:22-slim AS lib
 RUN npm install --prefix /build --no-audit --no-fund \\
       mermaid@11 @mermaid-js/layout-elk@0 @highlightjs/cdn-assets@11.9.0
-FROM mcr.microsoft.com/playwright/python:v1.63.0-noble
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-inter fonts-jetbrains-mono \\
+FROM ${{BASE}}
+ARG PLAYWRIGHT
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-inter fonts-jetbrains-mono python3-pip \\
     && rm -rf /var/lib/apt/lists/* \\
-    && python3 -m pip install --no-cache-dir --break-system-packages playwright==1.63.0
+    && python3 -m pip install --no-cache-dir --break-system-packages playwright==${{PLAYWRIGHT}}
 COPY --from=lib /build/node_modules /opt/vault-pdf/lib
 """
+
+
+def playwright_version(image):
+    """The X.Y.Z of a Playwright image tag such as `...:v1.56.0-noble`, or None."""
+    tag = image.rsplit("/", 1)[-1].partition("@")[0].partition(":")[2]
+    m = re.match(r"v(\d+\.\d+\.\d+)(?:-|$)", tag)
+    return m.group(1) if m else None
+
+
+def pdf_build_command(image, base):
+    """The `docker build` argv for the PDF image, or None if BASE's tag has no Playwright version."""
+    version = playwright_version(base)
+    if version is None:
+        return None
+    # --pull only for the default base. A custom base is meant to be a local
+    # image that is reused; re-pulling it could download GBs onto a full disk.
+    return ["docker", "build", *(["--pull"] if base == PDF_BASE else []), "-t", image,
+            "--build-arg", f"BASE={base}", "--build-arg", f"PLAYWRIGHT={version}", "-"]
+
 
 # Runs inside the container: the page arrives on stdin, the PDF leaves on
 # stdout. The page is served at a made-up origin, with only PDF_LIB files
@@ -1296,11 +1321,18 @@ def main():
                     help=f"docker image that renders PDFs (default {PDF_IMAGE})")
     ap.add_argument("--build-pdf-image", action="store_true",
                     help="build --pdf-image with docker, then exit (needs network once)")
+    ap.add_argument("--pdf-base", default=os.environ.get("ARTIFACTS_PDF_BASE", PDF_BASE), metavar="IMAGE",
+                    help="Playwright image (Python or Node flavour, tag vX.Y.Z[-...]) that --build-pdf-image "
+                         f"builds the PDF image on (default {PDF_BASE})")
     ap.add_argument("roots", nargs="*", type=Path, help="vault folders to serve (default: ~/obsidian)")
     args = ap.parse_args()
     if args.build_pdf_image:
-        sys.exit(subprocess.run(["docker", "build", "--pull", "-t", args.pdf_image, "-"],
-                                input=PDF_DOCKERFILE.encode()).returncode)
+        cmd = pdf_build_command(args.pdf_image, args.pdf_base)
+        if cmd is None:
+            print(f"artifacts: --pdf-base {args.pdf_base}: the tag must carry the Playwright version (vX.Y.Z), "
+                  "because the playwright pip package has to match the browsers in the image", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(subprocess.run(cmd, input=PDF_DOCKERFILE.encode()).returncode)
     names = {args.bind, *args.allow_host}
     if ipaddress.ip_address(args.bind).is_loopback:
         names |= {"127.0.0.1", "localhost"}

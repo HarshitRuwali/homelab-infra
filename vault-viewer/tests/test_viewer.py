@@ -6,9 +6,11 @@ points the tests at another copy of the program (used to mutation-test the check
 The end-to-end PDF check runs only when the docker image artifacts-pdf:local exists.
 """
 import base64
+import contextlib
 import http.client
 import importlib.machinery
 import importlib.util
+import io
 import os
 import pathlib
 import re
@@ -246,6 +248,67 @@ def t_http(lib):
         srv.server_close()
 
 
+def t_pdf_build():
+    print("PDF image build")
+    tags = {
+        "mcr.microsoft.com/playwright:v1.56.0-noble": "1.56.0",
+        "mcr.microsoft.com/playwright/python:v1.63.0-noble": "1.63.0",
+        "mcr.microsoft.com/playwright:v1.63.0": "1.63.0",
+        "registry.example:5000/pw/playwright:v1.56.0-noble": "1.56.0",
+        "mcr.microsoft.com/playwright:v1.56.0-noble@sha256:" + "a" * 64: "1.56.0",
+        "mcr.microsoft.com/playwright": None,
+        "mcr.microsoft.com/playwright:latest": None,
+        "mcr.microsoft.com/playwright:v1.56-noble": None,
+        "mcr.microsoft.com/playwright:v1.56.0x": None,
+        "mcr.microsoft.com/playwright:1.56.0": None,
+        "registry.example:5000/playwright": None,
+        "mcr.microsoft.com/playwright@sha256:" + "a" * 64: None,
+    }
+    for image, want in tags.items():
+        got = A.playwright_version(image)
+        check(got == want, f"playwright_version({image.split('/', 1)[-1][:40]}) == {want} (got {got})")
+
+    default = A.pdf_build_command("img:t", A.PDF_BASE)
+    check("--pull" in default and f"BASE={A.PDF_BASE}" in default and "PLAYWRIGHT=1.63.0" in default
+          and default[-1] == "-" and default[default.index("-t") + 1] == "img:t",
+          "default base: docker build --pull with BASE and PLAYWRIGHT=1.63.0, Dockerfile on stdin")
+    node_base = "mcr.microsoft.com/playwright:v1.56.0-noble"
+    node = A.pdf_build_command("img:t", node_base)
+    check("--pull" not in node and f"BASE={node_base}" in node and "PLAYWRIGHT=1.56.0" in node,
+          "Node-flavour base: no --pull, BASE and PLAYWRIGHT=1.56.0")
+    check(A.pdf_build_command("img:t", "mcr.microsoft.com/playwright:latest") is None,
+          "base without a version tag: no command")
+    check(f"ARG BASE={A.PDF_BASE}\nFROM node" in A.PDF_DOCKERFILE and "FROM ${BASE}" in A.PDF_DOCKERFILE
+          and "playwright==${PLAYWRIGHT}" in A.PDF_DOCKERFILE and "python3-pip" in A.PDF_DOCKERFILE
+          and A.PDF_DOCKERFILE.count("1.63.0") == 1,
+          "Dockerfile takes BASE (defaulting to PDF_BASE) and PLAYWRIGHT as build args")
+
+    calls = []
+    real_run, real_argv = A.subprocess.run, sys.argv
+    A.subprocess.run = lambda cmd, **kw: calls.append((cmd, kw)) or subprocess.CompletedProcess(cmd, 0)
+    try:
+        def run_main(*argv):
+            sys.argv = ["artifacts.py", *argv]
+            del calls[:]
+            try:
+                A.main()
+            except SystemExit as e:
+                return e.code
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = run_main("--build-pdf-image", "--pdf-base", "mcr.microsoft.com/playwright:latest")
+        check(rc == 2 and not calls, f"main: base without a version tag exits 2 and runs no docker (rc={rc})")
+        check("vX.Y.Z" in err.getvalue(), "main: the bad-tag message asks for a vX.Y.Z tag")
+        rc = run_main("--build-pdf-image", "--pdf-base", node_base)
+        check(rc == 0 and len(calls) == 1 and calls[0][0] == A.pdf_build_command(A.PDF_IMAGE, node_base)
+              and calls[0][1].get("input") == A.PDF_DOCKERFILE.encode(),
+              "main: --pdf-base runs the build command with the Dockerfile on stdin")
+        rc = run_main("--build-pdf-image")
+        check(rc == 0 and len(calls) == 1 and "--pull" in calls[0][0], "main: default build runs docker build --pull")
+    finally:
+        A.subprocess.run, sys.argv = real_run, real_argv
+
+
 def main():
     print(f"program under test: {PROGRAM}")
     if A.markdown is None:
@@ -258,6 +321,7 @@ def main():
         t_render(lib)
         t_mermaid(lib)
         t_http(lib)
+        t_pdf_build()
     print()
     if FAILS:
         print(f"{len(FAILS)} check(s) failed:")

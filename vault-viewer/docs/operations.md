@@ -103,3 +103,4 @@ Its own options, from its argument parser (`python3 artifacts.py --help`):
 | `--title NAME` | Name shown in the sidebar. |
 | `--pdf-image IMAGE` | PDF image name (or `ARTIFACTS_PDF_IMAGE`). |
 | `--build-pdf-image` | Build the PDF image with docker, then exit. |
+| `--pdf-base IMAGE` | Playwright image (Python or Node flavour) that `--build-pdf-image` builds on (or `ARTIFACTS_PDF_BASE`). The tag must carry the Playwright version. See [PDF export](pdf-export.md#building-on-an-existing-playwright-image). |

@@ -89,10 +89,42 @@ docker image rm artifacts-pdf:local
 `--build-pdf-image` runs `docker build --pull`, needs network once, and exits
 without starting the server.
 
-**Keep the versions in step.** The `playwright` pip version in
-`PDF_DOCKERFILE` must equal the tag of the Playwright base image. Change both
-together: Playwright launches the browser build that matches its own version,
-so a mismatch breaks rendering.
+**Keep the versions in step.** The `playwright` pip package must match the
+Playwright base image, because Playwright launches the browser build that
+matches its own version. You only change the tag of the `PDF_BASE` default in
+`artifacts.py`: the pip version is derived from the base image tag at build
+time (the `BASE` and `PLAYWRIGHT` build arguments of `PDF_DOCKERFILE`), so the
+two cannot drift.
+
+### Building on an existing Playwright image
+
+The default base is large. A host that already has some Playwright image
+locally, such as the Node flavour (`mcr.microsoft.com/playwright:v1.56.0-noble`),
+can build on it instead and add only the fonts, the libraries and the pip
+package. That saves the download of a second base image.
+
+```bash
+python3 ~/.local/bin/artifacts --build-pdf-image \
+    --pdf-base mcr.microsoft.com/playwright:v1.56.0-noble
+```
+
+The installer takes the same option (`install.sh ... --build-pdf-image
+--pdf-base IMAGE`), and `ARTIFACTS_PDF_BASE` sets it for the program.
+
+- Either flavour works. The Node image has no pip, so the build installs
+  `python3-pip` (already present, so a no-op, on the Python image).
+- The Playwright version comes from the image tag, which must contain
+  `vX.Y.Z` followed by `-` or the end of the tag (`v1.56.0-noble`, `v1.56.0`).
+  A tag such as `latest` or `v1.56-noble`, or a digest alone, is refused by
+  the program with exit status 2 and nothing is built (the installer then
+  reports that the image build failed and installs nothing).
+- With a custom base, docker is not asked to `--pull`: the point is to reuse
+  the local image, and a re-pull could download several GB. If the image is
+  not local, docker still fetches it once, as any build does.
+- It does not always save disk during the build. With docker's containerd
+  image store, BuildKit can unpack the base image again for the build, which
+  needs free space about the size of the base image. If the build stops with
+  `no space left on device`, free that much space first.
 
 If the image is missing, the button shows:
 
