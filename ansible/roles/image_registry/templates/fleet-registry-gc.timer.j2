@@ -1,0 +1,13 @@
+# Managed by ansible/roles/image_registry. Do not edit by hand.
+[Unit]
+Description=Weekly image registry garbage collection
+
+[Timer]
+# No Persistent=: a collection missed while the host was off must not fire at
+# boot, where it would stop the registry just after it came up.
+OnCalendar={{ image_registry_gc_oncalendar }}
+RandomizedDelaySec={{ image_registry_gc_randomized_delay }}
+Unit=fleet-registry-gc.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,116 @@
+---
+- name: Look for an existing Docker engine
+  ansible.builtin.command:
+    argv: [sh, -c, "command -v docker"]
+  register: image_registry_docker_found
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Check Docker is there or may be installed
+  ansible.builtin.assert:
+    that:
+      - image_registry_docker_found.rc == 0 or image_registry_docker_install | bool
+      - ansible_facts['distribution'] in ['Debian', 'Ubuntu']
+    fail_msg: >-
+      {{ inventory_hostname }} has no Docker and image_registry_docker_install
+      is false, or the distribution ({{ ansible_facts['distribution'] }}) is not
+      Debian or Ubuntu, which is all the Docker repository step supports.
+    quiet: true
+
+- name: Check the architecture Docker's repository serves
+  ansible.builtin.assert:
+    that:
+      - image_registry_docker_arch != ''
+    fail_msg: >-
+      image_registry installs Docker CE for x86_64 and arm64 only, and
+      {{ inventory_hostname }} reports {{ ansible_facts['architecture'] }}.
+      Install Docker yourself and the role will use it.
+    quiet: true
+  when:
+    - image_registry_docker_found.rc != 0
+    - image_registry_docker_install | bool
+
+# Only when there is no Docker at all. A host that has docker.io keeps it:
+# installing docker-ce over it would replace the engine under running
+# containers. Mirrors roles/wazuh_agent/tasks/repo.yml: apt_repository and a
+# key fetched with get_url. Migrate every role to deb822_repository in one
+# change rather than this one alone.
+- name: Install Docker from Docker's repository
+  when:
+    - image_registry_docker_found.rc != 0
+    - image_registry_docker_install | bool
+  block:
+    - name: Install APT prerequisites for the Docker repository
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure the APT keyring directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the Docker APT signing key
+      ansible.builtin.get_url:
+        url: "{{ image_registry_docker_apt_key_url }}"
+        dest: "{{ image_registry_docker_apt_keyring }}"
+        checksum: "sha256:{{ image_registry_docker_apt_key_sha256 }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Add the Docker APT repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ image_registry_docker_arch }}
+          signed-by={{ image_registry_docker_apt_keyring }}]
+          {{ image_registry_docker_apt_url }}
+          {{ ansible_facts['distribution_release'] }} stable
+        filename: docker
+        state: present
+        update_cache: true
+      register: image_registry_docker_repo
+
+    # Under --check, when the repository above would only just be added, apt
+    # cannot see the packages yet. That failure alone is tolerated in check
+    # mode (a real run still fails).
+    - name: Install the Docker engine and the Compose plugin
+      ansible.builtin.apt:
+        name: "{{ image_registry_docker_packages }}"
+        state: present
+        install_recommends: false
+        update_cache: true
+        cache_valid_time: 3600
+      register: image_registry_docker_pkg
+      failed_when: >-
+        image_registry_docker_pkg is failed
+        and not (ansible_check_mode and image_registry_docker_repo is changed)
+
+# Under --check on a fresh host the unit does not exist yet, so a failure is
+# tolerated in check mode only (failed_when, not ignore_errors: a real run
+# still fails).
+- name: Enable and start Docker
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+  register: image_registry_docker_unit
+  failed_when: image_registry_docker_unit is failed and not ansible_check_mode
+
+# The compose file needs Compose v2, a CLI plugin. A host that brought its own
+# Docker may not have it, and failing here beats failing at the first `up`.
+- name: Verify Docker Compose v2 is available
+  ansible.builtin.command: docker compose version --short
+  register: image_registry_compose_version
+  changed_when: false
+  failed_when: image_registry_compose_version.rc != 0 and not ansible_check_mode
+  check_mode: false

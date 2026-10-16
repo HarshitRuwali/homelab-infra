@@ -58,6 +58,14 @@
 #   wazuh_agents   -> ALSO gets the Wazuh agent, reporting to the sec-wazuh
 #                     guest from security/. Membership is the only thing that
 #                     enables it, same contract as `autoupdate`.
+#   tailscale_nodes -> ALSO joined to the tailnet under a tag, with local
+#                     services published by `tailscale serve`
+#                     (roles/tailscale_node). NEVER the tailnet router
+#                     (exit node and subnet router): restarting tailscaled
+#                     there drops the estate's routed traffic.
+#   image_registries -> ALSO runs the private container image registry
+#                     (roles/image_registry). It listens on loopback only;
+#                     put the same host in `tailscale_nodes` to publish it.
 #
 # Membership in `autoupdate` is the ONLY thing that enables patching. The
 # unattended_upgrades role has no internal host conditional on purpose: a
@@ -210,3 +218,31 @@ all:
     # see but never touch automatically.
     no_autoupdate:
       hosts: {}
+
+    # ---------------------------------------------------------------------
+    # Tailnet and registry roles (opt-in, run from their own playbooks)
+    # ---------------------------------------------------------------------
+    # Joined to the tailnet under a tag. The tags, auth key (vault) and the
+    # services to publish are per host, in host_vars/<host>.yml; see
+    # roles/tailscale_node/README.md. Example for a VM that serves a local
+    # app (the real port must be checked on the VM):
+    #
+    #   # host_vars/server-01.yml
+    #   tailscale_node_tags: ["tag:app"]
+    #   tailscale_node_serve:
+    #     - https_port: 443
+    #       target: http://127.0.0.1:8008
+    #
+    # Membership is the ONLY thing that enables the role, same contract as
+    # `wazuh_agents`, so no host is listed until you add it.
+    tailscale_nodes:
+      hosts: {}
+        # server-01:
+        # registry-01:
+
+    # The private container image registry. Also put the host in
+    # `tailscale_nodes` with a serve entry for image_registry_port, and in
+    # docker_update_skip_projects: [image-registry] if it is in `autoupdate`.
+    image_registries:
+      hosts: {}
+        # registry-01:

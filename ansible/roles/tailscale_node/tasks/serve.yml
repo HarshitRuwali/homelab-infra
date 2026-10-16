@@ -1,0 +1,101 @@
+---
+- name: Read the tailnet state
+  ansible.builtin.import_tasks: state.yml
+
+- name: Check the serve entries
+  ansible.builtin.assert:
+    that:
+      - item.https_port is defined
+      - item.https_port is integer
+      - item.https_port >= 1
+      - item.https_port <= 65535
+      - item.target is defined
+      - item.target is match('^http://127\.0\.0\.1:[0-9]+$')
+    fail_msg: >-
+      Each tailscale_node_serve entry needs an integer https_port and a
+      loopback target such as http://127.0.0.1:8008. Got
+      {{ item }}.
+    quiet: true
+  loop: "{{ tailscale_node_serve }}"
+  loop_control:
+    label: "{{ item.https_port | default('?') }}"
+
+- name: Check the serve ports are unique
+  ansible.builtin.assert:
+    that:
+      - (tailscale_node_serve | map(attribute='https_port') | list | unique | length) == (tailscale_node_serve | length)
+    fail_msg: tailscale_node_serve lists the same https_port twice.
+    quiet: true
+
+# Publishing needs the node on the tailnet. Under --check, a host whose join is
+# still pending is not there yet, so this is skipped rather than failed.
+- name: Check the node is on the tailnet
+  ansible.builtin.assert:
+    that:
+      - tailscale_node_state == 'Running'
+    fail_msg: >-
+      {{ inventory_hostname }} is not on the tailnet (state
+      {{ tailscale_node_state }}), so tailscale_node_serve cannot be applied.
+      Join it first (tag join).
+    quiet: true
+  when:
+    - tailscale_node_serve | length > 0
+    - not ansible_check_mode
+
+- name: Read the serve configuration
+  ansible.builtin.import_tasks: serve_state.yml
+
+# Funnel publishes a service to the whole internet. This role never turns it
+# on, and a node that already has it on is not one this role will touch.
+- name: Check Funnel is off
+  ansible.builtin.assert:
+    that:
+      - tailscale_node_funnel_on | length == 0
+    fail_msg: >-
+      Funnel is on for {{ tailscale_node_funnel_on }} on
+      {{ inventory_hostname }}, which publishes it to the public internet.
+      Turn it off per port with `tailscale funnel --https=<port> off` (not
+      `tailscale funnel reset` or `tailscale serve reset`, which wipe the whole
+      serve configuration) and find out who enabled it.
+    quiet: true
+
+# `tailscale serve --bg` writes the same configuration each time, so the
+# comparison above is a courtesy that keeps the run at changed=0, not a safety
+# net. `timeout` stops the command waiting on a prompt: if HTTPS certificates
+# are not enabled for the tailnet it prints a URL and waits.
+- name: Publish the service on the tailnet
+  ansible.builtin.command:
+    argv:
+      - timeout
+      - "60"
+      - tailscale
+      - serve
+      - --bg
+      - "--https={{ item.https_port }}"
+      - "{{ item.target }}"
+  loop: "{{ tailscale_node_serve }}"
+  loop_control:
+    label: "{{ item.https_port }} -> {{ item.target }}"
+  changed_when: true
+  when:
+    - tailscale_node_state == 'Running'
+    - (item.https_port | string ~ '=' ~ item.target) not in tailscale_node_serve_applied
+
+- name: Read the serve configuration after publishing
+  ansible.builtin.import_tasks: serve_state.yml
+  when: not ansible_check_mode
+
+- name: Check the services are published and Funnel is still off
+  ansible.builtin.assert:
+    that:
+      - (item.https_port | string ~ '=' ~ item.target) in tailscale_node_serve_applied
+      - tailscale_node_funnel_on | length == 0
+    fail_msg: >-
+      tailscale serve status does not show {{ item.https_port }} ->
+      {{ item.target }} on {{ inventory_hostname }}. It reports
+      {{ tailscale_node_serve_applied }}.
+    quiet: true
+  loop: "{{ tailscale_node_serve }}"
+  loop_control:
+    label: "{{ item.https_port }}"
+  when: not ansible_check_mode

@@ -1,0 +1,26 @@
+---
+# Runs first, on every tag (tag: always).
+#
+# apt_repository and apt need python3-apt. A real run installs it on its own;
+# --check cannot, so on a bare host a dry run would fail at the first apt task
+# with a message that does not say why.
+- name: Look for python3-apt
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_facts['python']['executable'] }}"
+      - -c
+      - import apt_pkg
+  register: image_registry_python_apt
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Check python3-apt is available to a dry run
+  ansible.builtin.assert:
+    that:
+      - image_registry_python_apt.rc == 0 or not ansible_check_mode
+    fail_msg: >-
+      python3-apt is not installed on {{ inventory_hostname }}, and --check
+      cannot install it. Run once without --check (the apt module installs it),
+      or install python3-apt, then dry-run again.
+    quiet: true

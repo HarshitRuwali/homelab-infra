@@ -1,0 +1,111 @@
+---
+- name: Check the registry settings
+  ansible.builtin.assert:
+    that:
+      - image_registry_password_set | bool
+      - image_registry_password | length >= 12
+      - image_registry_user is match('^[A-Za-z0-9_.-]+$')
+      - image_registry_port is integer
+      - image_registry_port >= 1024
+      - image_registry_port <= 65535
+      - image_registry_project_name is match('^[a-z0-9][a-z0-9_-]*$')
+    fail_msg: >-
+      image_registry needs a real password of at least 12 characters (set
+      vault_image_registry_push_password in the vault, or
+      image_registry_password; the value is not shown here), a user name of
+      letters, digits and . _ -, a port between 1024 and 65535, and a Compose
+      project name in lower case.
+    quiet: true
+
+# The password never reaches the command line: htpasswd reads it from stdin
+# (-i). bcrypt (-B) is the only hash the registry accepts besides plain MD5
+# variants it warns about.
+- name: Install the htpasswd tool
+  ansible.builtin.apt:
+    name: apache2-utils
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create the registry directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ image_registry_project_dir }}"
+      mode: "0755"
+    - path: "{{ image_registry_auth_dir }}"
+      mode: "0750"
+    - path: "{{ image_registry_data_dir }}"
+      mode: "0750"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Write the registry configuration
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ image_registry_config_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Recreate the registry
+
+# Validated by Compose itself before it lands. The name of the temporary file
+# has no .yml suffix, which `docker compose --file` accepts.
+- name: Write the Compose file
+  ansible.builtin.template:
+    src: compose.yml.j2
+    dest: "{{ image_registry_compose_file }}"
+    owner: root
+    group: root
+    mode: "0644"
+    validate: docker compose --file %s config --quiet
+  notify: Recreate the registry
+
+# Created empty and private first, so the password hash never exists in a file
+# anyone can read. `force: false` leaves an existing file's contents alone.
+- name: Ensure the htpasswd file exists and is private
+  ansible.builtin.copy:
+    content: ""
+    dest: "{{ image_registry_htpasswd_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+    force: false
+
+# Only rewritten when the file does not already check out for this user and
+# password, so a run that changes nothing leaves the bcrypt salt alone. The
+# registry re-reads the file when it changes; no restart is needed.
+- name: Check the htpasswd entry
+  ansible.builtin.command:
+    argv:
+      - htpasswd
+      - -vi
+      - "{{ image_registry_htpasswd_file }}"
+      - "{{ image_registry_user }}"
+    stdin: "{{ image_registry_password }}"
+  register: image_registry_htpasswd_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  no_log: true
+
+# -c replaces the file, so a user removed from the variable disappears too.
+- name: Write the htpasswd entry
+  ansible.builtin.command:
+    argv:
+      - htpasswd
+      - -ciB
+      - "{{ image_registry_htpasswd_file }}"
+      - "{{ image_registry_user }}"
+    stdin: "{{ image_registry_password }}"
+  no_log: true
+  changed_when: true
+  when: image_registry_htpasswd_check.rc != 0
+
+- name: Apply the changed configuration before anything starts or checks it
+  ansible.builtin.meta: flush_handlers
