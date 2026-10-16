@@ -6,7 +6,7 @@
   "separate-pull-requests": false,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": false,
-  "skip-changelog": true,
+  "skip-changelog": false,
   "changelog-sections": [
     { "type": "feat", "section": "Features" },
     { "type": "fix", "section": "Bug Fixes" },
@@ -20,7 +20,7 @@
     { "type": "chore", "section": "Chores", "hidden": true },
     { "type": "style", "section": "Style", "hidden": true }
   ],
-  "pull-request-header": "Merging this PR tags each module release listed below and publishes its GitHub release; see [CONTRIBUTING.md](https://github.com/HarshitRuwali/homelab-infra/blob/master/CONTRIBUTING.md).",
+  "pull-request-header": "Merging this PR updates each module's CHANGELOG.md, tags each module release listed below and publishes its GitHub release; see [CONTRIBUTING.md](https://github.com/HarshitRuwali/homelab-infra/blob/master/CONTRIBUTING.md).",
   "packages": {
     "aibox-model-queue": {
       "component": "aibox-model-queue",
