@@ -22,6 +22,11 @@ alert`, `fix(s3-backup): handle an empty bucket`. Leave it out when a change is
 not about one module. Add `!` before the colon (`feat(ansible)!: drop the old
 inventory format`), or a `BREAKING CHANGE:` footer, for a breaking change.
 
+The PR title becomes the changelog entry, so write it for someone reading the
+changelog: what changed, in plain words, not how or why. The text of a `BREAKING
+CHANGE:` footer is what the changelog shows under its breaking changes heading, so
+say there what to do about it.
+
 | Type | Release notes section | Use it for |
 |---|---|---|
 | `feat` | Features | a new capability |
@@ -107,8 +112,11 @@ repository-wide version.
 
 - **Tag:** `<module>-vX.Y.Z`, for example `monitoring-v0.2.0`.
 - **GitHub release:** one per module release, created when its tag is.
-- **Release notes:** on the module's GitHub release, written by release-please.
-  There is no `CHANGELOG.md` (`skip-changelog` in `release-please-config.json`).
+- **Release notes:** written by release-please from the squash commit titles and
+  published twice: on the module's GitHub release, and in `<module>/CHANGELOG.md`,
+  which the release PR edits. Each entry is a PR title with its PR link, grouped by
+  type, with breaking changes first and hidden types left out. Do not edit the
+  changelog by hand: fix a wrong entry by fixing the PR title before it merges.
 - **Which module a commit belongs to:** release-please looks at the paths a
   commit touches, not at its scope. A commit that touches two modules counts for
   both. A commit that touches only root files (`README.md`, `.github/`,
@@ -142,15 +150,18 @@ Releases are cut by `.github/workflows/release.yml`. Nobody tags by hand.
 1. Conventional commits land on `master`.
 2. release-please opens, and then keeps updating, one pull request titled
    `chore: release master`. It lists every module with pending changes: the
-   new version, the release notes and the version-string edits.
+   new version, the release notes, the module's `CHANGELOG.md` and the
+   version-string edits.
 3. When the owner merges it, release-please creates each module's tag and
    publishes its GitHub release.
 
 Leave the release PR open as long as you like. It grows as more PRs land, and a
 module with nothing releasable is not in it.
 
-The first release notes list each module's whole history, including old
-duplicates from plain merges. That is expected once.
+The 0.1.0 release notes list each module's whole history, including old
+duplicates from plain merges. They are on the GitHub releases only: a module's
+`CHANGELOG.md` begins with the release after 0.1.0, so that history stays out of
+it.
 
 ### Forcing a version
 
