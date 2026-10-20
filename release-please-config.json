@@ -80,6 +80,10 @@
     "security": {
       "component": "security",
       "initial-version": "0.1.0"
+    },
+    "vault-viewer": {
+      "component": "vault-viewer",
+      "initial-version": "0.1.0"
     }
   }
 }
