@@ -37,7 +37,6 @@ ansible-inventory --graph
   |  |--@lxc:
   |  |  |--@lxc_debian:
   |  |  |  |--tailscale-router
-  |  |  |  |--plex
   |  |  |  |--memory
   |  |  |  |--monitor-lxc
   |  |--@vm:
@@ -51,7 +50,6 @@ ansible-inventory --graph
   |  |  |  |--rpi5
   |  |  |  |--rpi4b
   |  |--@lan_guests:
-  |  |  |--plex
   |  |  |--memory
   |  |  |--matrix
   |  |--@central:
@@ -67,7 +65,7 @@ what makes it self-patch.
 
 The nesting is **platform, then distro family**, and every monitored host is
 in exactly one leaf. `lan_guests` and `central` are **overlays** that cut
-across that tree, which is why `plex` and `monitor-lxc` each appear twice: a
+across that tree, which is why `memory` and `monitor-lxc` each appear twice: a
 host can be in as many groups as apply to it, and "is a container" and "needs
 a jump host to reach" are independent facts. See
 [Fleet management](../fleet/index.md#what-this-manages).
