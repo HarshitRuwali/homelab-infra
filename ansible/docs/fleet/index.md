@@ -26,7 +26,7 @@ monitored host sits in exactly one leaf.
 
 | Group | Hosts | Collector | Auto-patched | Container updates |
 |---|---|---|---|---|
-| `lxc` → `lxc_debian` | tailscale-router, plex, memory, monitor-lxc | yes | yes, `central` see below | memory only |
+| `lxc` → `lxc_debian` | tailscale-router, ingress, plex, memory, monitor-lxc | yes | yes, `central` see below | memory only |
 | `vm` → `vm_debian` | ubuntu-dev, ubuntu-ai, cloud-services, matrix | yes | yes | yes |
 | `pi` → `pi_debian` | rpi5, rpi4b | yes | yes | rpi5 only |
 | `metal` → `metal_debian` | t7920 (the Proxmox host) | yes | **no**, deliberately | no |
