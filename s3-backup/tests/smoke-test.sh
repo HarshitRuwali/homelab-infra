@@ -538,6 +538,13 @@ check 'grep -q "reusing the restic password" "$T/setup2.log"' "reuses the stored
 check '[[ $(grep -c "^create-secret$" "$FAKE_DOCKER_STATE/secret-writes") -eq 1 ]]' \
       "secret was never re-created"
 
+echo
+echo "== scratch containers are removed with their volumes =="
+# A database image declares a VOLUME, so `docker rm -f` without -v leaks one
+# anonymous volume per scratch container. Every removal under bin/ must use -v.
+check '! grep -rnE "docker rm( -[a-z]*)? " "$REPO/bin" | grep -vE "docker rm -[a-z]*v[a-z]* "' \
+      "every docker rm under bin/ also removes anonymous volumes (-v)"
+
 rm -rf "$T" "$RTDIR"
 echo
 printf '%d passed, %d failed\n' "$PASS" "$FAIL"
