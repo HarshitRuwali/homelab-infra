@@ -135,7 +135,7 @@ Documented so the omission is a decision, not a gap.
 ??? note "Others"
     - **arr-stack (LXC 104)**: stopped in Proxmox.
     - **win11 (VM 108)**: would need `windows_exporter`, a separate path.
-    - **skullsiants, expl01t**: pentest tooling is deliberately version-pinned.
+    - **skullsaints, expl01t**: pentest tooling is deliberately version-pinned.
     - **Macs, iPhone**: excluded by request.
 
 ## Inventory layout
