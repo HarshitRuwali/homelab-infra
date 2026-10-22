@@ -78,6 +78,18 @@ For how variable precedence works at all, see
     `Encountered unknown tag 's'`. The script builds that line by
     concatenation instead. This applies to comments too.
 
+## Dell chassis fans
+
+`roles/dell_fan_metrics/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `dell_fan_metrics_enabled` | `false` | **the only switch**; set `true` in `host_vars/t7920.yml` |
+| `dell_fan_metrics_interval` | `30s` | each read is an SMI that briefly stalls every core; slower than the scrape on purpose |
+
+Per host rather than per group: it is true of one Dell workstation, not of
+bare metal in general. The role fails loudly if the host has no `/proc/i8k`.
+
 ## Proxmox guest NIC names
 
 `roles/pve_guest_metrics/defaults/main.yml`
@@ -156,6 +168,8 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | `docker_update_skip_projects` | `[]` | by Compose project name |
 | `docker_update_prune` | `true` | dangling images only |
 | `docker_update_health_wait_seconds` | `60` | settle time before the host-wide unhealthy/restarting check; skipped when no image changed |
+| `docker_update_pull_retry_delay_seconds` | `120` | one retry of a failed pull or build |
+| `docker_update_minor_step_images` | `[qdrant/qdrant:latest]` | may advance one minor release per run |
 | `docker_update_run_now` | unset | `-e docker_update_run_now=true` for a supervised run |
 
 ## Update metrics
@@ -201,6 +215,8 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | Variable | Notes |
 |---|---|
 | `monitoring_domain` | builds both ingest URLs |
+| `monitoring_ingest_base_url` | builds both ingest URLs instead, e.g. `https://10.0.0.10`; for a LAN path to the central nginx |
+| `monitoring_ingest_ca_file` | controller path to the CA that signed the private ingest certificate; collectors trust only it on ingest |
 | `lan_jump_host` | ProxyJump target for `lan_guests` |
 | `lan_use_jump_host` | set `false` when running from the LAN |
 | `alloy_textfile_dir` | `/var/lib/node_exporter/textfile_collector` |

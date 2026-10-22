@@ -1,0 +1,10 @@
+---
+# t7920, the Proxmox hypervisor: a Dell Precision 7920 Tower.
+#
+# Platform-wide bare-metal settings (SMART, PVE cardinality, patching) live in
+# group_vars/metal. This file holds what is true of this one Dell machine and
+# would not be of another bare-metal host.
+
+# Every chassis fan by name. dell_smm_hwmon only exposes four of the twelve
+# this firmware reports; see roles/dell_fan_metrics.
+dell_fan_metrics_enabled: true

@@ -10,7 +10,7 @@ dependencies = [
     "httpx==0.28.1",
     "psycopg2-binary==2.9.10",
     "pydantic-settings==2.6.1",
-    "qdrant-client==1.12.1",
+    "qdrant-client>=1.19,<2",
     "sqlalchemy[asyncio]==2.0.36",
     "uvicorn[standard]==0.32.1",
 ]

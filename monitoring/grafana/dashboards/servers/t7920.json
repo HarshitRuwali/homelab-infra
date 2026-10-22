@@ -12,7 +12,7 @@
       }
     ]
   },
-  "description": "Proxmox hypervisor. The only host in the estate with physical disks, so the only source of SMART health data.",
+  "description": "Proxmox hypervisor, a Dell Precision 7920 Tower. The only bare-metal host in the estate, so the only source of SMART disk health, CPU package temperatures and chassis fan speeds.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -85,9 +85,149 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "coretemp Package id 0, the Xeon Gold 6138's own sensor. 83 C is the part's rated max (fleet-hw-cpu-temperature-high after 15 min); 90 C pages (fleet-hw-cpu-temperature-critical after 5 min); TjMax, where it throttles itself, is 93 C.",
+      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 83}, {"color": "red", "value": 90}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 13},
+      "id": 21,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_hwmon_temp_celsius{host=\"t7920\",chip=\"platform_coretemp_0\",sensor=\"temp1\"}", "refId": "A"}],
+      "title": "CPU 0 Package",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "coretemp Package id 1, the Xeon Gold 6138's own sensor. 83 C is the part's rated max (fleet-hw-cpu-temperature-high after 15 min); 90 C pages (fleet-hw-cpu-temperature-critical after 5 min); TjMax, where it throttles itself, is 93 C. Socket 1 normally runs 10-15 C hotter than socket 0: it sits behind CPU 0 and breathes its exhaust (see the fan map).",
+      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 83}, {"color": "red", "value": 90}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 13},
+      "id": 22,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_hwmon_temp_celsius{host=\"t7920\",chip=\"platform_coretemp_1\",sensor=\"temp1\"}", "refId": "A"}],
+      "title": "CPU 1 Package",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Highest of the Dell SMM board sensors temp3, temp8, temp9 and temp10. The BIOS reports no type for any of them, so ambient, memory and VR cannot be told apart. temp1 and temp2 are left out because they track the CPU packages. fleet-hw-board-temperature-high fires above 65 C for 30 min.",
+      "fieldConfig": {"defaults": {"unit": "celsius", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 55}, {"color": "red", "value": 65}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 13},
+      "id": 23,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(node_hwmon_temp_celsius{host=\"t7920\",chip=\"platform_dell_smm_hwmon\",sensor!~\"temp1|temp2\"})", "refId": "A"}],
+      "title": "Hottest Board Sensor",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Slowest fitted chassis fan (CPU0, PSU and FB4 have no working fan and are excluded, as in fleet-hw-fan-stalled). The BIOS never parks these: under 500 RPM is a stalled fan and pages after 5 min.",
+      "fieldConfig": {"defaults": {"unit": "rotrpm", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 500}, {"color": "orange", "value": 3000}]}}, "overrides": []},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 13},
+      "id": 24,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "min(fleet_dell_fan_rpm{host=\"t7920\",fan!~\"CPU0|PSU|FB4\"})", "refId": "A"}],
+      "title": "Slowest Fan",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Every Dell chassis fan at its physical position, laid out as the two fan figures in Dell's Precision 7920 Tower Owner's Manual (Removing and installing components, figures 1 and 2). Speeds are read from the firmware every 30 s by roles/dell_fan_metrics and named from SMBIOS. Grey outlined positions are ones this machine's BIOS does not list. CPU0 is a header Dell leaves empty on this model; the PSU fan has no tachometer on SMM; FB4 is listed by the BIOS but this machine has no rear drive bays, so no fan is fitted there. Red under 500 RPM (stalled), orange over 3000.",
+      "fieldConfig": {"defaults": {"unit": "rotrpm", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 500}, {"color": "orange", "value": 3000}]}}, "overrides": [{"matcher": {"id": "byName", "options": "CPU0"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "no fan fitted", "color": "#5a5a5a", "index": 0}}}]}]}, {"matcher": {"id": "byName", "options": "PSU"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "not reported", "color": "#5a5a5a", "index": 0}}}]}]}]},
+      "gridPos": {"h": 16, "w": 24, "x": 0, "y": 18},
+      "id": 31,
+      "options": {"inlineEditing": false, "showAdvancedTypes": true, "panZoom": false, "infinitePan": false, "root": {"type": "frame", "name": "Element root", "elements": [{"type": "rectangle", "name": "fig1 title", "config": {"text": {"mode": "fixed", "fixed": "MAIN SIDE (Dell fig. 1, left cover off)     rear \u25c0    \u25b6 front"}, "color": {"fixed": "text"}, "size": 13, "align": "left", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 0.5, "right": 49.5, "top": 0, "bottom": 92}}, {"type": "rectangle", "name": "fig1 chassis", "config": {"text": {"mode": "fixed", "fixed": ""}, "color": {"fixed": "text"}, "size": 13, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "#6e6e6e"}, "width": 2, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 0.5, "right": 49.5, "top": 9, "bottom": 1}}, {"type": "rectangle", "name": "REAR1 tile", "config": {"text": {"mode": "fixed", "fixed": "REAR1 \u00b7 rear"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "REAR1", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 1.5, "right": 90.5, "top": 20, "bottom": 61}}, {"type": "metric-value", "name": "REAR1 rpm", "config": {"text": {"mode": "field", "field": "REAR1", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 1.5, "right": 90.5, "top": 27.22, "bottom": 61.76}}, {"type": "rectangle", "name": "REAR0 tile", "config": {"text": {"mode": "fixed", "fixed": "REAR0 \u00b7 rear"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "REAR0", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 1.5, "right": 90.5, "top": 42, "bottom": 39}}, {"type": "metric-value", "name": "REAR0 rpm", "config": {"text": {"mode": "field", "field": "REAR0", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 1.5, "right": 90.5, "top": 49.22, "bottom": 39.76}}, {"type": "rectangle", "name": "cpu1 socket", "config": {"text": {"mode": "fixed", "fixed": "CPU 1 socket"}, "color": {"fixed": "text"}, "size": 12, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "#6e6e6e"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 11, "right": 80, "top": 18, "bottom": 38}}, {"type": "rectangle", "name": "CPU1 tile", "config": {"text": {"mode": "fixed", "fixed": "CPU1 \u00b7 mid fan"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "CPU1", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 21, "right": 70.5, "top": 25, "bottom": 45}}, {"type": "metric-value", "name": "CPU1 rpm", "config": {"text": {"mode": "field", "field": "CPU1", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 21, "right": 70.5, "top": 36.4, "bottom": 46.2}}, {"type": "rectangle", "name": "cpu0 socket", "config": {"text": {"mode": "fixed", "fixed": "CPU 0 socket"}, "color": {"fixed": "text"}, "size": 12, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "#6e6e6e"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 30.5, "right": 60.5, "top": 18, "bottom": 38}}, {"type": "rectangle", "name": "CPU0 tile", "config": {"text": {"mode": "fixed", "fixed": "CPU0 header"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "CPU0", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 30.5, "right": 60.5, "top": 66, "bottom": 14}}, {"type": "metric-value", "name": "CPU0 rpm", "config": {"text": {"mode": "field", "field": "CPU0", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 30.5, "right": 60.5, "top": 73.6, "bottom": 14.8}}, {"type": "rectangle", "name": "pcie", "config": {"text": {"mode": "fixed", "fixed": "PCIe slots (RTX A5000)"}, "color": {"fixed": "text"}, "size": 12, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "#6e6e6e"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 11, "right": 70.5, "top": 66, "bottom": 8}}, {"type": "rectangle", "name": "SYS3 tile", "config": {"text": {"mode": "fixed", "fixed": "SYS3 \u00b7 front"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "SYS3", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 41, "right": 50.5, "top": 11, "bottom": 69.5}}, {"type": "metric-value", "name": "SYS3 rpm", "config": {"text": {"mode": "field", "field": "SYS3", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 41, "right": 50.5, "top": 18.41, "bottom": 70.28}}, {"type": "rectangle", "name": "SYS2 tile", "config": {"text": {"mode": "fixed", "fixed": "SYS2 \u00b7 front"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "SYS2", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 41, "right": 50.5, "top": 32, "bottom": 48.5}}, {"type": "metric-value", "name": "SYS2 rpm", "config": {"text": {"mode": "field", "field": "SYS2", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 41, "right": 50.5, "top": 39.41, "bottom": 49.28}}, {"type": "rectangle", "name": "SYS1 tile", "config": {"text": {"mode": "fixed", "fixed": "SYS1 \u00b7 front"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "SYS1", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 41, "right": 50.5, "top": 53, "bottom": 27.5}}, {"type": "metric-value", "name": "SYS1 rpm", "config": {"text": {"mode": "field", "field": "SYS1", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 41, "right": 50.5, "top": 60.41, "bottom": 28.28}}, {"type": "rectangle", "name": "SYS0 tile", "config": {"text": {"mode": "fixed", "fixed": "SYS0 \u00b7 front"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "SYS0", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 41, "right": 50.5, "top": 74, "bottom": 6.5}}, {"type": "metric-value", "name": "SYS0 rpm", "config": {"text": {"mode": "field", "field": "SYS0", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 41, "right": 50.5, "top": 81.41, "bottom": 7.28}}, {"type": "rectangle", "name": "fig2 title", "config": {"text": {"mode": "fixed", "fixed": "DRIVE SIDE (Dell fig. 2, right cover off)     front \u25c0    \u25b6 rear"}, "color": {"fixed": "text"}, "size": 13, "align": "left", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 51.5, "right": 0.5, "top": 0, "bottom": 92}}, {"type": "rectangle", "name": "fig2 chassis", "config": {"text": {"mode": "fixed", "fixed": ""}, "color": {"fixed": "text"}, "size": 13, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "#6e6e6e"}, "width": 2, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 51.5, "right": 0.5, "top": 9, "bottom": 1}}, {"type": "rectangle", "name": "FB2 absent", "config": {"text": {"mode": "fixed", "fixed": "FB2 \u00b7 not fitted"}, "color": {"fixed": "#8e8e8e"}, "size": 11, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "#6e6e6e"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 53, "right": 37, "top": 12, "bottom": 67}}, {"type": "rectangle", "name": "FB1 tile", "config": {"text": {"mode": "fixed", "fixed": "FB1 \u00b7 front bay"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "FB1", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 53, "right": 37, "top": 40, "bottom": 39}}, {"type": "metric-value", "name": "FB1 rpm", "config": {"text": {"mode": "field", "field": "FB1", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 53, "right": 37, "top": 47.98, "bottom": 39.84}}, {"type": "rectangle", "name": "FB0 tile", "config": {"text": {"mode": "fixed", "fixed": "FB0 \u00b7 front bay"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "FB0", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 53, "right": 37, "top": 68, "bottom": 11}}, {"type": "metric-value", "name": "FB0 rpm", "config": {"text": {"mode": "field", "field": "FB0", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 53, "right": 37, "top": 75.98, "bottom": 11.84}}, {"type": "rectangle", "name": "pdb", "config": {"text": {"mode": "fixed", "fixed": "power + fan board"}, "color": {"fixed": "text"}, "size": 11, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "#6e6e6e"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 65, "right": 28.5, "top": 12, "bottom": 32}}, {"type": "rectangle", "name": "FB4 absent", "config": {"text": {"mode": "fixed", "fixed": "FB4 \u00b7 not fitted"}, "color": {"fixed": "#8e8e8e"}, "size": 11, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "#6e6e6e"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 73, "right": 17, "top": 40, "bottom": 39}}, {"type": "rectangle", "name": "FB3 absent", "config": {"text": {"mode": "fixed", "fixed": "FB3 \u00b7 not fitted"}, "color": {"fixed": "#8e8e8e"}, "size": 11, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "#6e6e6e"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 73, "right": 17, "top": 68, "bottom": 11}}, {"type": "rectangle", "name": "PSU tile", "config": {"text": {"mode": "fixed", "fixed": "PSU"}, "color": {"fixed": "#111217"}, "size": 12, "align": "center", "valign": "top"}, "background": {"color": {"field": "PSU", "fixed": "#5a5a5a"}}, "border": {"color": {"fixed": "#111217"}, "width": 1, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 86, "right": 2, "top": 12, "bottom": 64}}, {"type": "metric-value", "name": "PSU rpm", "config": {"text": {"mode": "field", "field": "PSU", "fixed": ""}, "color": {"fixed": "#111217"}, "size": 17, "align": "center", "valign": "middle"}, "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "transparent"}, "width": 0, "radius": 4}, "constraint": {"horizontal": "scale", "vertical": "scale"}, "placement": {"left": 86, "right": 2, "top": 21.12, "bottom": 64.96}}], "background": {"color": {"fixed": "transparent"}}, "border": {"color": {"fixed": "dark-green"}}, "constraint": {"horizontal": "left", "vertical": "top"}}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=\"t7920\"}", "legendFormat": "{{fan}}", "instant": true, "range": false, "refId": "A"}
+      ],
+      "title": "Chassis Fan Map",
+      "type": "canvas"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Both CPU package temperatures with the alert thresholds drawn in: 83 C warning, 90 C critical. TjMax is 93 C.",
+      "fieldConfig": {"defaults": {"unit": "celsius", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 83}, {"color": "red", "value": 90}]}, "custom": {"thresholdsStyle": {"mode": "dashed"}}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 34},
+      "id": 25,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "label_replace(node_hwmon_temp_celsius{host=\"t7920\",chip=~\"platform_coretemp_.*\",sensor=\"temp1\"}, \"socket\", \"$1\", \"chip\", \"platform_coretemp_([0-9]+)\")", "legendFormat": "CPU {{socket}} package", "refId": "A"}
+      ],
+      "title": "CPU Package Temperature",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Every fan the BIOS lists, by name, except CPU0 (no fan fitted) and PSU (not reported). Fan control is BIOS-automatic, so these speeds are the BIOS responding to temperature. Dashed lines: 500 RPM stall, 3000 RPM running high (120 mm fans; the drive-bay fans idle near 2500). Rated max 4000 RPM.",
+      "fieldConfig": {"defaults": {"unit": "rotrpm", "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 500}, {"color": "orange", "value": 3000}]}, "custom": {"thresholdsStyle": {"mode": "dashed"}}}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 34},
+      "id": 26,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=\"t7920\",fan!~\"CPU0|PSU|FB4\"}", "legendFormat": "{{fan}} ({{zone}})", "refId": "A"}
+      ],
+      "title": "Fan Speeds",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Hottest, average and coolest core on each socket. A hottest core pulling away from the average points at one busy guest pinned to a few cores, not a cooling problem.",
+      "fieldConfig": {"defaults": {"unit": "celsius"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 42},
+      "id": 27,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "label_replace(max by (chip) (node_hwmon_temp_celsius{host=\"t7920\",chip=~\"platform_coretemp_.*\",sensor!=\"temp1\"}), \"socket\", \"$1\", \"chip\", \"platform_coretemp_([0-9]+)\")", "legendFormat": "CPU {{socket}} hottest core", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "label_replace(avg by (chip) (node_hwmon_temp_celsius{host=\"t7920\",chip=~\"platform_coretemp_.*\",sensor!=\"temp1\"}), \"socket\", \"$1\", \"chip\", \"platform_coretemp_([0-9]+)\")", "legendFormat": "CPU {{socket}} core avg", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "label_replace(min by (chip) (node_hwmon_temp_celsius{host=\"t7920\",chip=~\"platform_coretemp_.*\",sensor!=\"temp1\"}), \"socket\", \"$1\", \"chip\", \"platform_coretemp_([0-9]+)\")", "legendFormat": "CPU {{socket}} coolest core", "refId": "C"}
+      ],
+      "title": "Core Temperature Spread",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "The six Dell SMM board sensors (unlabelled by the BIOS; temp1 and temp2 track the CPU packages), the Lewisburg PCH and the NVMe composite. The same NVMe drive is also in Disk Temperature below, from SMART every 15 min rather than every 15 s.",
+      "fieldConfig": {"defaults": {"unit": "celsius"}, "overrides": [{"matcher": {"id": "byName", "options": "SMM temp1"}, "properties": [{"id": "displayName", "value": "SMM temp1 (tracks CPU 0)"}]}, {"matcher": {"id": "byName", "options": "SMM temp2"}, "properties": [{"id": "displayName", "value": "SMM temp2 (tracks CPU 1)"}]}]},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 42},
+      "id": 28,
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_hwmon_temp_celsius{host=\"t7920\",chip=\"platform_dell_smm_hwmon\"}", "legendFormat": "SMM {{sensor}}", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_hwmon_temp_celsius{host=\"t7920\",chip=\"thermal_thermal_zone0\",sensor=\"temp1\"}", "legendFormat": "PCH (Lewisburg)", "refId": "B"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_hwmon_temp_celsius{host=\"t7920\",chip=\"nvme_nvme0\",sensor=\"temp1\"}", "legendFormat": "NVMe composite", "refId": "C"}
+      ],
+      "title": "Board, Chipset and NVMe Temperatures",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Every physical core on both sockets right now, hottest first. Core numbers are sparse (0-4, 8-12, 16-20, 24-28) because that is how the Skylake-SP mesh numbers them, not missing cores.",
+      "fieldConfig": {"defaults": {}, "overrides": [{"matcher": {"id": "byName", "options": "Temperature"}, "properties": [{"id": "unit", "value": "celsius"}, {"id": "min", "value": 30}, {"id": "max", "value": 93}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 83}, {"color": "red", "value": 90}]}}, {"id": "custom.cellOptions", "value": {"type": "gauge", "mode": "basic"}}]}]},
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 50},
+      "id": 29,
+      "options": {"cellHeight": "sm", "showHeader": true, "sortBy": [{"displayName": "Temperature", "desc": true}]},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "label_replace(node_hwmon_temp_celsius{host=\"t7920\",chip=~\"platform_coretemp_.*\",sensor!=\"temp1\"} * on (chip, sensor) group_left (label) node_hwmon_sensor_label{host=\"t7920\",chip=~\"platform_coretemp_.*\"}, \"socket\", \"$1\", \"chip\", \"platform_coretemp_([0-9]+)\")", "format": "table", "instant": true, "refId": "A"}
+      ],
+      "title": "Per-Core Temperature",
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true, "chip": true, "host": true, "instance": true, "job": true, "role": true, "sensor": true}, "indexByName": {"socket": 0, "label": 1, "Value": 2}, "renameByName": {"socket": "CPU", "label": "Core", "Value": "Temperature"}}}],
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "description": "Each fitted fan against the 4000 RPM rated max of the 120 mm fans. The drive-bay fans (FB) are smaller and idle near 2500.",
+      "fieldConfig": {"defaults": {"unit": "rotrpm", "min": 0, "max": 4000, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 500}, {"color": "orange", "value": 3000}]}}, "overrides": []},
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 50},
+      "id": 30,
+      "options": {"displayMode": "gradient", "orientation": "horizontal", "showUnfilled": true, "valueMode": "color", "namePlacement": "left", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=\"t7920\",fan!~\"CPU0|PSU|FB4\"}", "legendFormat": "{{fan}}", "refId": "A"}
+      ],
+      "title": "Fan Speeds Now",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "SMART disk health from roles/smart_metrics, refreshed every 15 minutes by a systemd timer (not scraped every 15s, which would keep waking the spinning disk and stop it parking its heads). This is the only host in the estate that can report SMART at all.",
       "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}, "mappings": [{"type": "value", "options": {"0": {"text": "FAILED", "color": "red"}, "1": {"text": "OK", "color": "green"}}}]}, "overrides": []},
-      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 13},
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 60},
       "id": 7,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "min(fleet_smart_device_health_ok{host=\"t7920\"})", "refId": "A"}],
@@ -97,7 +237,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}}, "overrides": []},
-      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 13},
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 60},
       "id": 8,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_smart_devices_total{host=\"t7920\"}", "refId": "A"}],
@@ -108,7 +248,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "Reallocated + pending + offline-uncorrectable, summed across disks. Any non-zero value is worth investigating; pending sectors are the most urgent because that data is already unreadable.",
       "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
-      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 13},
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 60},
       "id": 9,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(fleet_smart_reallocated_sectors{host=\"t7920\"}) + sum(fleet_smart_pending_sectors{host=\"t7920\"}) + sum(fleet_smart_offline_uncorrectable{host=\"t7920\"})", "refId": "A"}],
@@ -119,7 +259,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "Rated write endurance consumed. This is wear, not failure: an SSD at 100% still works, it just has no warranty margin left. Spare-block exhaustion is the metric that actually predicts read-only mode.",
       "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 85}, {"color": "red", "value": 95}]}}, "overrides": []},
-      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 13},
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 60},
       "id": 10,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(fleet_smart_nvme_percentage_used_ratio{host=\"t7920\"}) * 100", "refId": "A"}],
@@ -130,7 +270,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "Alert fires above 60 C sustained for 30 minutes.",
       "fieldConfig": {"defaults": {"unit": "celsius"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 18},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 65},
       "id": 11,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
@@ -143,7 +283,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "The classic leading indicators of a dying spinning disk. A stable non-zero count is tolerable; a rising one means order a replacement.",
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 18},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 65},
       "id": 12,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
@@ -158,7 +298,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "A cumulative lifetime counter that never resets, so read the SLOPE, not the value. Flat means a past event. Rising means the SATA cable or backplane is degrading now, which is what the alert keys on (increase over 24h), not the absolute count.",
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 26},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 73},
       "id": 13,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
@@ -171,7 +311,7 @@
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "description": "Spare remaining is the one to watch: at zero the drive goes read-only with no further warning.",
       "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 26},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 73},
       "id": 14,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
@@ -184,7 +324,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "h"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 34},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 81},
       "id": 15,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
@@ -196,7 +336,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "Bps"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 34},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 81},
       "id": 16,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
@@ -209,7 +349,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 42},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 89},
       "id": 17,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
@@ -221,7 +361,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "Bps"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 42},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 89},
       "id": 18,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single", "sort": "none"}},
       "targets": [
@@ -233,7 +373,7 @@
     },
     {
       "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 50},
+      "gridPos": {"h": 10, "w": 12, "x": 0, "y": 97},
       "id": 19,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
       "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "{host=\"t7920\"} |~ \"(?i)(error|failed|fatal|panic|warn)\"", "refId": "A"}],
@@ -242,7 +382,7 @@
     },
     {
       "datasource": {"type": "loki", "uid": "loki"},
-      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 50},
+      "gridPos": {"h": 10, "w": 12, "x": 12, "y": 97},
       "id": 20,
       "options": {"dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": true},
       "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": "{host=\"t7920\"}", "refId": "A"}],
@@ -252,7 +392,7 @@
   ],
   "refresh": "30s",
   "schemaVersion": 39,
-  "tags": ["host", "hypervisor", "server", "smart"],
+  "tags": ["hardware", "host", "hypervisor", "server", "smart"],
   "templating": {"list": []},
   "time": {"from": "now-24h", "to": "now"},
   "timepicker": {},

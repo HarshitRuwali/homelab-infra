@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+# Managed by ansible/roles/dell_fan_metrics. Do not edit by hand.
+#
+# Writes every Dell chassis fan's speed, by its firmware name, to
+# {{ dell_fan_metrics_dir }}/{{ dell_fan_metrics_file }} for the node_exporter
+# textfile collector that Alloy already reads.
+#
+# WHY THIS EXISTS: dell_smm_hwmon hardcodes four fans, so node_hwmon_fan_rpm
+# only ever shows fan1-fan4, unnamed. The firmware on a Precision 7920 Tower
+# knows twelve. The same driver's legacy /proc/i8k ioctl takes an arbitrary fan
+# index, so every fan can be read, and SMBIOS names them.
+#
+# HOW A NAME IS MATCHED TO A READING: each SMBIOS type 27 (Cooling Device)
+# entry carries a Dell OEM word of the form 0x0000DDnn, where nn is the SMM fan
+# index. Verified on t7920 on 2026-09-23: indices 0-3 read here matched
+# dell_smm_hwmon's fan1-fan4 exactly in the same instant, index 0 (CPU0) reads
+# zero as Dell's manual says it has no fan fitted, the seven mandatory fans
+# (CPU1, SYS0-3, REAR0-1) sit together at 780-950 RPM, and the two smaller
+# drive-bay fans (FB0, FB1) run at ~2500. An entry without the 0xDD marker is
+# skipped rather than guessed at.
+#
+# Read-only. Nothing here changes fan speed or fan control mode.
+
+import fcntl
+import glob
+import os
+import struct
+import sys
+import tempfile
+import time
+
+OUT_DIR = "{{ dell_fan_metrics_dir }}"
+OUT_FILE = "{{ dell_fan_metrics_file }}"
+
+I8K_PROC = "/proc/i8k"
+# _IOWR('i', 0x85, size_t) from include/uapi/linux/i8k.h, on 64-bit.
+I8K_GET_SPEED = 0xC0086985
+DMI_COOLING = "/sys/firmware/dmi/entries/27-*/raw"
+DELL_OEM_MARKER = 0xDD
+
+# Physical zone, from Dell's Owner's Manual fan map, keyed on the name prefix.
+ZONES = [
+    ("CPU", "cpu"),
+    ("SYS", "front"),
+    ("REAR", "rear"),
+    ("FB", "drive bay"),
+    ("PSU", "psu"),
+]
+
+
+def esc(s):
+    return str(s).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ")
+
+
+def smbios_fans():
+    """Return [(index, name)] from SMBIOS type 27 entries carrying Dell's OEM index."""
+    fans = []
+    for path in sorted(glob.glob(DMI_COOLING)):
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        length = raw[1]
+        # 0x08 is the OEM-defined DWORD, 0x0E the description string number.
+        # Both need the SMBIOS 2.7 layout, which is 15 bytes long.
+        if length < 0x0F:
+            continue
+        oem = struct.unpack_from("<I", raw, 0x08)[0]
+        if (oem >> 8) & 0xFF != DELL_OEM_MARKER:
+            continue
+        strings = raw[length:].split(b"\x00")
+        num = raw[0x0E]
+        if num < 1 or num > len(strings):
+            continue
+        name = strings[num - 1].decode("ascii", "replace").strip()
+        if name.upper().endswith(" FAN"):
+            name = name[:-4].strip()
+        fans.append((oem & 0xFF, name))
+    return fans
+
+
+def zone(name):
+    for prefix, z in ZONES:
+        if name.upper().startswith(prefix):
+            return z
+    return "other"
+
+
+def main():
+    fans = smbios_fans()
+    samples = []
+    errors = 0
+    fd = os.open(I8K_PROC, os.O_RDONLY)
+    try:
+        for index, name in fans:
+            buf = bytearray(struct.pack("q", index))
+            try:
+                fcntl.ioctl(fd, I8K_GET_SPEED, buf, True)
+            except OSError:
+                errors += 1
+                continue
+            rpm = struct.unpack("i", bytes(buf[:4]))[0]
+            if rpm < 0:
+                errors += 1
+                continue
+            samples.append((index, name, rpm))
+    finally:
+        os.close(fd)
+
+    lines = [
+        "# HELP fleet_dell_fan_rpm Dell chassis fan speed, named from SMBIOS, via roles/dell_fan_metrics.",
+        "# TYPE fleet_dell_fan_rpm gauge",
+    ]
+    for index, name, rpm in samples:
+        # Concatenated rather than formatted for the same reason as
+        # fleet-smart-metrics: Ansible renders this file as a Jinja template,
+        # so an opening brace must never sit next to a percent sign or another
+        # brace anywhere in it.
+        labels = 'fan="' + esc(name) + '",index="' + str(index) + '",zone="' + zone(name) + '"'
+        lines.append("fleet_dell_fan_rpm" + "{" + labels + "} " + str(rpm))
+
+    # Emitted unconditionally, so "no fans" and "collector dead" stay
+    # distinguishable, as with fleet_smart_devices_total.
+    lines += [
+        "# HELP fleet_dell_fans_total Fans SMBIOS lists with a Dell SMM index.",
+        "# TYPE fleet_dell_fans_total gauge",
+        "fleet_dell_fans_total " + str(len(fans)),
+        "# HELP fleet_dell_fan_read_errors Fans whose SMM read failed this run.",
+        "# TYPE fleet_dell_fan_read_errors gauge",
+        "fleet_dell_fan_read_errors " + str(errors),
+        "# HELP fleet_dell_fan_collection_timestamp_seconds When this ran.",
+        "# TYPE fleet_dell_fan_collection_timestamp_seconds gauge",
+        "fleet_dell_fan_collection_timestamp_seconds " + str(int(time.time())),
+    ]
+
+    # Write-then-rename in the same directory, so the collector never reads a
+    # half-written file.
+    os.makedirs(OUT_DIR, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=OUT_DIR, prefix=".fleet-dell-fans.")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, os.path.join(OUT_DIR, OUT_FILE))
+    except Exception:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

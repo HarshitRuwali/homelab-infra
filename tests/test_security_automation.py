@@ -134,9 +134,14 @@ elif args[0] == 'inspect':
         print('project|' + os.environ['REVIEW_DIR'] + '|' + files)
     else: print('sha256:old')
 elif args[0] == 'compose':
-    if 'pull' in args and mode == 'pull_failure': sys.exit(1)
+    if 'config' in args:
+        # One registry service and one locally built service, as project_services reads them.
+        print(json.dumps({'services': {'web': {'image': 'nginx:1'},
+                                       'app': {'image': 'app:local', 'build': {'context': '.'}}}}))
+    if 'pull' in args and 'up' not in args and mode == 'pull_failure': sys.exit(1)
     if 'up' in args and mode == 'health_failure': sys.exit(1)
-elif args[0] == 'image': print('Total reclaimed space: 0B')
+elif args[0] == 'image' and args[1] == 'inspect': print('1')
+elif args[0] == 'image' and args[1] == 'prune': print('Total reclaimed space: 0B')
 ''')
             fake_docker.chmod(0o755)
             env = jinja2.Environment(undefined=jinja2.StrictUndefined)
@@ -144,7 +149,8 @@ elif args[0] == 'image': print('Total reclaimed space: 0B')
             script = env.from_string((ROOT / 'ansible/roles/docker_updates/templates/fleet-docker-update.sh.j2').read_text()).render(
                 inventory_hostname='review', update_metrics_dir=str(directory),
                 docker_update_metrics_file='result.prom', docker_update_skip_projects=[],
-                docker_update_prune=True, docker_update_health_wait_seconds=0)
+                docker_update_prune=True, docker_update_health_wait_seconds=0,
+                docker_update_pull_retry_delay_seconds=0, docker_update_minor_step_images=[])
             log = directory / 'commands'
             process_env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'],
                                REVIEW_LOG=str(log), REVIEW_MODE=mode, REVIEW_DIR=str(directory),
@@ -157,10 +163,15 @@ elif args[0] == 'image': print('Total reclaimed space: 0B')
     def test_success_requires_all_files_and_does_not_ignore_registry_errors(self):
         result, commands, metrics = self.probe('success')
         self.assertEqual(result.returncode, 0, result.stderr)
-        pull = next(c for c in commands if 'pull' in c)
-        self.assertIn('--ignore-buildable', pull)
+        pull = next(c for c in commands if 'pull' in c and 'build' not in c and 'up' not in c)
+        self.assertEqual(pull[-2:], ['pull', 'web'])
         self.assertNotIn('--ignore-pull-failures', pull)
         self.assertEqual(pull.count('-f'), 2)
+        build = next(c for c in commands if 'build' in c)
+        self.assertEqual(build[-2:], ['build', '--pull'])
+        up = next(c for c in commands if 'up' in c)
+        self.assertIn('--no-build', up)
+        self.assertEqual(up[up.index('--pull') + 1], 'never')
         self.assertIn('fleet_docker_update_failed 0', metrics)
 
     def test_missing_override_or_labels_prevents_pull_and_redeployment(self):
@@ -174,7 +185,8 @@ elif args[0] == 'image': print('Total reclaimed space: 0B')
     def test_registry_failure_never_redeploys_or_prunes(self):
         result, commands, metrics = self.probe('pull_failure')
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse(any('up' in c or c[0] == 'image' for c in commands))
+        self.assertFalse(any('up' in c or 'build' in c or c[:2] == ['image', 'prune'] for c in commands))
+        self.assertEqual(sum(1 for c in commands if 'pull' in c and c[-1] == 'web'), 2, 'one retry')
         self.assertIn('fleet_docker_update_failed 1', metrics)
 
     def test_discovery_and_readiness_failures_report_failure(self):
@@ -182,7 +194,7 @@ elif args[0] == 'image': print('Total reclaimed space: 0B')
             with self.subTest(mode=mode):
                 result, commands, metrics = self.probe(mode)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertFalse(any(c[0] == 'image' for c in commands))
+                self.assertFalse(any(c[:2] == ['image', 'prune'] for c in commands))
                 self.assertIn('fleet_docker_update_failed 1', metrics)
 
 

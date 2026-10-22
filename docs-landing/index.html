@@ -2,7 +2,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>homelab-infra docs</title>
-<meta name="description" content="Documentation for the stacks in the homelab-infra repository: monitoring, memory, S3 backup, fleet automation and the AI box model queue.">
+<meta name="description" content="Documentation for the stacks in the homelab-infra repository: monitoring, memory, S3 backup, fleet automation, the AI box model queue, security and the vault viewer.">
 <!--
   Deliberately a single static file with no build step and no dependencies: it
   only has to link onward to the MkDocs sites, and giving it another theme
@@ -81,6 +81,13 @@
     <strong>Security Stack</strong>
     <span>Wazuh, CrowdSec, AdGuard Home and Greenbone on four small guests,
     with Suricata and ntopng on the firewall. Open source throughout.</span>
+  </a>
+
+  <a class="card" href="vault-viewer/">
+    <strong>Vault Viewer</strong>
+    <span>A read-only web viewer for an Obsidian vault on a Tailscale address:
+    search, live reload, diagrams and PDF export, with agent-written content
+    treated as untrusted.</span>
   </a>
 
   <footer>

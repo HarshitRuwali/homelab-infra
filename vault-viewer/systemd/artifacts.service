@@ -1,0 +1,29 @@
+# artifacts.service: the read-only vault viewer, as a systemd user unit.
+#
+# This file is a template. install.sh renders it into
+# ${XDG_CONFIG_HOME:-~/.config}/systemd/user/artifacts.service, filling in two
+# double-underscore placeholders on the ExecStart line:
+#   the first is the installed program (default ~/.local/bin/artifacts);
+#   the second is the command line built from install.sh's options (--bind,
+#   --port, --allow-host, --tailnet-user, --title and the vault folders),
+#   already quoted for systemd (a literal % is %%, a literal $ is $$).
+# Edit the rendered copy only for a one-off; re-running install.sh overwrites it.
+#
+# The viewer binds one address and refuses any other Host header; with
+# --tailnet-user it admits only that tailnet user's untagged devices. PDF export
+# runs `docker run --network none` per request, so the user running this unit
+# needs docker access (see the module docs for the PDF image).
+[Unit]
+Description=artifacts: read-only web view of an Obsidian vault (notes, diagrams, artifacts)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 __BIN__ __ARGS__
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=default.target

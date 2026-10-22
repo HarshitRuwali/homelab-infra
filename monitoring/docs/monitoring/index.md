@@ -19,7 +19,7 @@ What is collected, where it is displayed, and what alerts on it.
 
 - :material-bell-alert: **[Alerting](alerting.md)**
 
-    47 rules, the Matrix relay, and how to test the chain.
+    56 rules, the Matrix relay, and how to test the chain.
 
 </div>
 

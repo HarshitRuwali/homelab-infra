@@ -1,20 +1,21 @@
 # Alerting
 
-47 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
-room through a local relay. 42 are committed under
-`grafana/provisioning/alerting/`; the five availability rules are generated
+56 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
+room through a local relay. 50 are committed under
+`grafana/provisioning/alerting/`; the six availability rules are generated
 from the inventory, so adding a host cannot leave a silent gap in
 down-detection.
 
 ## Rule catalogue
 
-=== "Availability (5)"
+=== "Availability (6)"
 
     | uid | Severity | For | Fires when |
     |---|---|---|---|
     | `fleet-host-down` | critical | 0m | no metrics for 10 min ([or-chain](../architecture/push-model.md)) |
     | `fleet-collector-lagging` | warning | 5m | data arriving but >15 min stale |
     | `fleet-remote-write-failing` | warning | 10m | Alloy failing to push samples |
+    | `fleet-prometheus-out-of-order` | warning | 30m | Prometheus still accepting out-of-order samples after 30m: two collectors probably send identical series |
     | `fleet-clock-unsynced` | warning | 30m | NTP not synchronised |
     | `fleet-central-stack-down` | critical | 2m | a core service on the central LXC is not active |
 
@@ -51,7 +52,7 @@ down-detection.
     | `fleet-container-oom` | critical | 0m | container OOM-killed in last 15 min |
     | `fleet-container-memory-near-limit` | warning | 15m | over 90% of its own limit |
     | `fleet-container-unhealthy` | warning | 10m | was healthy, now failing ([why that matters](container-metrics.md#container_health_state-does-not-mean-what-it-looks-like)) |
-    | `fleet-container-disappeared` | warning | 10m | container gone, non-workstation hosts |
+    | `fleet-container-disappeared` | warning | 10m | container gone while host metrics are still arriving, non-workstation hosts; excludes the temporary S3 backup runner |
     | `fleet-docker-update-failed` | critical | 0m | nightly update failed or left restarts, non-workstation hosts |
     | `fleet-docker-update-stale` | warning | 1h | no successful update in 50h |
 
@@ -104,6 +105,27 @@ down-detection.
     | `fleet-gpu-vram-exhausted` | warning | 15m | under 5% VRAM free |
     | `fleet-gpu-fan-stopped` | critical | 15m | fan reads zero while the card is over 70 C |
     | `fleet-gpu-exporter-down` | warning | 15m | the exporter stopped responding |
+
+=== "Hardware (6)"
+
+    Chassis sensors on the hypervisor (a Dell Precision 7920 Tower).
+    Temperatures come from node_exporter's stock hwmon collector (`coretemp`
+    for the CPU packages, `dell_smm_hwmon` for the board sensors); fans come
+    from `roles/dell_fan_metrics`, which reads all twelve the firmware knows,
+    by name. No IPMI or iDRAC exists on a Precision tower. Every query is
+    scoped to `role="hypervisor"`, because the LXC guests share the host's
+    kernel and push identical copies of the hwmon sensors. Liveness keys on
+    the host still pushing `node_uname_info` while the sensors are gone or the
+    fan data has gone stale.
+
+    | uid | Severity | For | Fires when |
+    |---|---|---|---|
+    | `fleet-hw-cpu-temperature-critical` | critical | 5m | a CPU package at or above 90 C (TjMax is 93 C) |
+    | `fleet-hw-cpu-temperature-high` | warning | 15m | a CPU package above its 83 C rated max |
+    | `fleet-hw-fan-stalled` | critical | 5m | a fitted fan under 500 RPM; the BIOS never parks them. Excludes CPU0 (no fan), PSU (no tachometer) and FB4 (no rear bays, so no fan) |
+    | `fleet-hw-fans-high` | warning | 30m | a 120 mm fan above 3000 RPM (75% of max): the BIOS is compensating |
+    | `fleet-hw-board-temperature-high` | warning | 30m | a Dell SMM board sensor above 65 C |
+    | `fleet-hw-sensors-missing` | warning | 15m | the host reports but its CPU sensors do not, or fan data is over 5 min old |
 
 === "Security (1)"
 
@@ -279,7 +301,7 @@ message per alertname rather than one per machine. Warning and critical are
 Suricata alerts go to their own Matrix room, so a real detection is not
 buried under disk and update warnings, and fleet noise never buries a
 detection. The chain: Suricata EVE on the firewall, syslog on 5514/tcp into
-Loki as `host="opnsense"` ([wiring](../../../security/docs/wiring/index.md)),
+Loki as `host="opnsense"` ([wiring](https://harshitruwali.github.io/homelab-infra/security/wiring/)),
 the `security-suricata-alert` rule, then the first route in `policies.yaml`:
 
 ```yaml

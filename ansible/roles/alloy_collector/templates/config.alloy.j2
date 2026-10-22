@@ -31,6 +31,13 @@ prometheus.remote_write "central" {
       password = sys.env("COLLECTOR_BASIC_AUTH_PASSWORD")
     }
 {% endif %}
+{% if collector_ingest_ca_file | trim | length > 0 %}
+
+    // Private HTTPS ingest: trust only the homelab CA that signed it.
+    tls_config {
+      ca_file = "{{ alloy_ingest_ca_path }}"
+    }
+{% endif %}
 
     // Onboarding the whole fleet at once means backfilling a lot of history
     // through a shared ingest path. Retry rather than drop on backpressure.
@@ -77,7 +84,27 @@ prometheus.scrape "host" {
 prometheus.scrape "alloy" {
   job_name   = "alloy"
   targets    = [{"__address__" = "{{ alloy_listen_addr }}"}]
+  forward_to = [prometheus.relabel.alloy_host.receiver]
+}
+
+// Alloy's own loki_write_* metrics use `host` for the destination URL.
+// External labels only fill absent labels, so collectors with the same role
+// otherwise send identical series and Prometheus rejects out-of-order writes.
+prometheus.relabel "alloy_host" {
   forward_to = [prometheus.remote_write.central.receiver]
+
+  // Keep the write destination before overwriting `host`, so the loki_write_*
+  // metrics still show which ingest URL each collector is using.
+  rule {
+    source_labels = ["host"]
+    regex         = "(.+)"
+    target_label  = "destination_host"
+  }
+
+  rule {
+    target_label = "host"
+    replacement  = sys.env("MONITOR_HOSTNAME")
+  }
 }
 
 loki.write "central" {
@@ -94,6 +121,13 @@ loki.write "central" {
     basic_auth {
       username = sys.env("COLLECTOR_BASIC_AUTH_USER")
       password = sys.env("COLLECTOR_BASIC_AUTH_PASSWORD")
+    }
+{% endif %}
+{% if collector_ingest_ca_file | trim | length > 0 %}
+
+    // Private HTTPS ingest: trust only the homelab CA that signed it.
+    tls_config {
+      ca_file = "{{ alloy_ingest_ca_path }}"
     }
 {% endif %}
   }
