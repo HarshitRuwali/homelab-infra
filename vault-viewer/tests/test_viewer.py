@@ -53,6 +53,8 @@ PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
 MERMAID_NOTE = "# Diagram\n\n```mermaid\ngraph TD\n  A-->B\n```\n"
 UNICODE_NAME = "Ünï café.md"
+# An empty zip archive: just the end-of-central-directory record.
+ZIP = b"PK\x05\x06" + bytes(18)
 
 
 def build_vault(base):
@@ -71,12 +73,15 @@ def build_vault(base):
     (vault / "pic.png").write_bytes(PNG)
     (vault / "sub" / "pic2.png").write_bytes(PNG)
     (vault / "code.py").write_text("print('hi')\n")
+    (vault / "Ünï export.zip").write_bytes(ZIP)
     (vault / "notes.xyz").write_text("unknown type\n")
     (vault / ".hidden" / "secret.md").write_text("# secret\n")
     (outside / "secret.png").write_bytes(b"\x89PNG-outside-secret")
     (outside / "secret.md").write_text("# outside\n")
     (vault / "leak.png").symlink_to(outside / "secret.png")
     (vault / "leak.md").symlink_to(outside / "secret.md")
+    (outside / "secret.zip").write_bytes(ZIP)
+    (vault / "leak.zip").symlink_to(outside / "secret.zip")
     return vault
 
 
@@ -88,6 +93,9 @@ def t_resolve(lib):
     check(lib.resolve("vault/sub/../../outside/secret.md") is None, "nested .. traversal -> None")
     check(lib.resolve("vault/.hidden/secret.md") is None, "hidden folder -> None")
     check(lib.resolve("vault/notes.xyz") is None, "unknown extension -> None")
+    check(lib.resolve("vault/Ünï export.zip") is not None, "zip archive resolves")
+    check(lib.resolve("vault/leak.zip") is None, "symlinked zip outside the root -> None")
+    check({i["name"]: i["kind"] for i in lib.scan()}.get("Ünï export.zip") == "archive", "scan lists a zip as kind archive")
     check(lib.resolve("vault/leak.png") is None, "symlink to a file outside the root -> None")
     check(lib.resolve("vault/leak.md") is None, "symlinked note outside the root -> None")
     check(lib.resolve("vault//etc/passwd") is None, "absolute path under the root name -> None")
@@ -215,6 +223,8 @@ def t_http(lib):
         check(c.get("/pdf/vault/.hidden/secret.md")[0] == 404, "/pdf/ hidden file -> 404")
         check(c.get("/pdf/vault/leak.md")[0] == 404, "/pdf/ symlink outside the vault -> 404")
         check(c.get("/raw/vault/leak.png")[0] == 404, "/raw/ symlink outside the vault -> 404")
+        check(c.get("/raw/vault/leak.zip")[0] == 404, "/raw/ zip symlink outside the vault -> 404")
+        check(c.get("/pdf/" + urllib.parse.quote("vault/Ünï export.zip"))[0] == 404, "/pdf/<zip> -> 404")
 
         st, _, body = c.get(note)
         if not shutil.which("docker"):
@@ -230,6 +240,16 @@ def t_http(lib):
             check(st == 200, f"{prefix}<note> -> 200")
         st, hdr, body = c.get("/view/vault/Note.md")
         check("sandbox" in hdr.get("Content-Security-Policy", ""), "/view/<note> carries the sandbox CSP")
+        for prefix in ("/raw/", "/view/"):
+            st, hdr, body = c.get(prefix + urllib.parse.quote("vault/Ünï export.zip"))
+            check(st == 200 and body == ZIP, f"{prefix}<zip> -> 200 with the file bytes")
+            check(hdr.get("Content-Type") == "application/zip", f"{prefix}<zip> is application/zip")
+            want = "filename*=UTF-8''" + urllib.parse.quote("Ünï export.zip")
+            check(hdr.get("Content-Disposition", "").startswith("attachment;") and want in hdr["Content-Disposition"],
+                  f"{prefix}<zip> is an attachment with the UTF-8 file name")
+            check("sandbox" in hdr.get("Content-Security-Policy", ""), f"{prefix}<zip> carries the sandbox CSP")
+        st, _, body = c.get("/")
+        check(b'id="dllink"' in body, "index / has the archive download pane")
 
         print("end-to-end PDF")
         if not image_present("artifacts-pdf:local"):

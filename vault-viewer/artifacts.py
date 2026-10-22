@@ -3,7 +3,8 @@
 
 Renders the whole vault: notes (Markdown with [[wikilinks]], ![[embeds]],
 callouts, frontmatter, backlinks, Mermaid diagrams), HTML artifacts, SVG
-diagrams and images, plus text sources such as .d2. A file tree with a
+diagrams and images, plus text sources such as .d2 and zip archives (a
+download, not a preview). A file tree with a
 "recent" list and search on the left, the selected file on the right,
 reloading when it changes on disk. Any diagram opens full screen with pan and
 zoom.
@@ -69,6 +70,7 @@ KINDS = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".webp": "image",
     ".d2": "text", ".txt": "text", ".json": "text", ".yaml": "text", ".yml": "text", ".mmd": "text",
     ".csv": "text", ".toml": "text", ".py": "text", ".sh": "text", ".go": "text", ".ts": "text", ".js": "text",
+    ".zip": "archive",
     ".css": "asset", ".woff2": "asset",
 }
 CDNS = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com"
@@ -769,6 +771,12 @@ class TailnetGate:
         return ok
 
 
+def attachment(fname):
+    """Content-Disposition for a download: ASCII fallback plus the UTF-8 name."""
+    plain = re.sub(r'[^\w .-]', "_", fname, flags=re.A)
+    return {"Content-Disposition": f"attachment; filename=\"{plain}\"; filename*=UTF-8''{urllib.parse.quote(fname)}"}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "artifacts"
     library: Library = None
@@ -843,10 +851,7 @@ class Handler(BaseHTTPRequestHandler):
                 pdf, why = None, "rendering failed (details in the service log)"
             if pdf is None:
                 return self._send(HTTPStatus.SERVICE_UNAVAILABLE, f"PDF export: {why}\n", "text/plain")
-            fname = p.stem + ".pdf"
-            plain = re.sub(r'[^\w .-]', "_", fname, flags=re.A)
-            return self._send(HTTPStatus.OK, pdf, "application/pdf", {
-                "Content-Disposition": f"attachment; filename=\"{plain}\"; filename*=UTF-8''{urllib.parse.quote(fname)}"})
+            return self._send(HTTPStatus.OK, pdf, "application/pdf", attachment(p.stem + ".pdf"))
         for prefix in ("/raw/", "/view/"):
             if url.path.startswith(prefix):
                 ident = urllib.parse.unquote(url.path[len(prefix):])
@@ -863,6 +868,8 @@ class Handler(BaseHTTPRequestHandler):
                     ctype = "text/plain"
                 if ctype.startswith("text/") or ctype in ("image/svg+xml", "application/json", "application/javascript"):
                     ctype += "; charset=utf-8"
+                if kind == "archive":
+                    return self._send(HTTPStatus.OK, p.read_bytes(), "application/zip", {**sandboxed, **attachment(p.name)})
                 return self._send(HTTPStatus.OK, p.read_bytes(), ctype, sandboxed)
         return self._send(HTTPStatus.NOT_FOUND, "not found\n", "text/plain")
 
@@ -957,6 +964,7 @@ PAGE = r"""<!doctype html>
     </div>
     <div id="stage">
       <div class="empty" id="empty"><div>Pick a note or an artifact on the left.</div></div>
+      <div class="empty hidden" id="dl"><div><div id="dlname"></div><p>Archives are not previewed.</p><a class="btn" id="dllink" download>Download</a></div></div>
       <iframe id="frame" class="hidden" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
       <div id="imgwrap" class="hidden"><button id="closezoom" class="hidden" title="Back to the note (Esc)">&#10005; Close</button><img id="img" alt=""></div>
     </div>
@@ -965,7 +973,7 @@ PAGE = r"""<!doctype html>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
-const ICON = { note: "≣", html: "◈", svg: "◇", image: "▣", text: "≡" };
+const ICON = { note: "≣", html: "◈", svg: "◇", image: "▣", text: "≡", archive: "▤" };
 let items = [], byId = new Map(), current = null, seen = new Set(), firstLoad = true, overlay = false;
 let open = new Set(JSON.parse(localStorage.getItem("vault-open") || "[]"));
 let scrolls = {}, zoom = { s: 1, x: 0, y: 0 }, hits = null, searchTimer = null;
@@ -1122,8 +1130,13 @@ function show(it, opts = {}) {
   $("meta").textContent = metaFor(it);
   $("open").href = "/raw/" + enc(it.id);
   $("pdf").classList.toggle("hidden", it.kind !== "note" && it.kind !== "text");
-  const isImg = it.kind === "svg" || it.kind === "image";
-  $("frame").classList.toggle("hidden", isImg);
+  const isImg = it.kind === "svg" || it.kind === "image", isArc = it.kind === "archive";
+  $("dl").classList.toggle("hidden", !isArc);
+  if (isArc) {
+    $("dlname").textContent = it.name;
+    $("dllink").href = "/raw/" + enc(it.id) + "?v=" + it.mtime;
+  }
+  $("frame").classList.toggle("hidden", isImg || isArc);
   $("imgwrap").classList.toggle("hidden", !isImg);
   $("zoomctl").classList.toggle("hidden", !isImg);
   const v = "?v=" + it.mtime;
