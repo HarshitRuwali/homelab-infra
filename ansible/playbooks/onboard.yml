@@ -54,6 +54,8 @@
 - name: Install the collector on a new host and prove it reaches central
   hosts: monitored
   become: true
+  vars:
+    onboard_ingest_ca_tmp: /tmp/onboard-ingest-ca.crt
 
   pre_tasks:
     - name: Confirm the host carries the inventory vars the collector needs
@@ -78,6 +80,20 @@
         update_cache: true
         cache_valid_time: 3600
 
+    # A private ingest address (monitoring_ingest_base_url on the LAN) is
+    # signed by the homelab CA, which the role installs only later, as
+    # alloy_ingest_ca_path, and which is deliberately not trusted system-wide.
+    # Without staging it for the check below, every LAN host fails there with
+    # a TLS verification error that the uri module reports as "HTTP -1",
+    # indistinguishable from a dead endpoint. Public-URL hosts skip this.
+    - name: Stage the private ingest CA for the reachability check
+      ansible.builtin.copy:
+        src: "{{ collector_ingest_ca_file | trim }}"
+        dest: "{{ onboard_ingest_ca_tmp }}"
+        mode: "0644"
+      changed_when: false
+      when: collector_ingest_ca_file | trim | length > 0
+
     # THE check for a new host. Everything else can be fixed later; a host
     # that cannot reach the ingest endpoint will install cleanly, run
     # cleanly, and ship nothing.
@@ -99,9 +115,17 @@
         url_username: "{{ collector_basic_auth_user if collector_basic_auth_required | bool else omit }}"
         url_password: "{{ collector_basic_auth_password if collector_basic_auth_required | bool else omit }}"
         force_basic_auth: "{{ collector_basic_auth_required | bool }}"
+        ca_path: "{{ onboard_ingest_ca_tmp if collector_ingest_ca_file | trim | length > 0 else omit }}"
       register: onboard_ingest
       failed_when: false
       no_log: true
+
+    - name: Remove the staged ingest CA
+      ansible.builtin.file:
+        path: "{{ onboard_ingest_ca_tmp }}"
+        state: absent
+      changed_when: false
+      when: collector_ingest_ca_file | trim | length > 0
 
     - name: Explain an unreachable ingest endpoint
       ansible.builtin.assert:
@@ -113,7 +137,9 @@
           Alloy would install and run here without ever shipping a sample.
           401 means the collector password is wrong for this host; a
           connection or DNS failure means egress or resolution is broken;
-          502 means the central stack is down. Fix this before continuing.
+          502 means the central stack is down; HTTP -1 on a private https
+          address usually means monitoring_ingest_ca_file is not the CA that
+          signed the central certificate. Fix this before continuing.
         quiet: true
 
     # Prometheus rejects samples whose timestamps fall outside its accepted
