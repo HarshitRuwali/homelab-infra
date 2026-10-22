@@ -21,7 +21,7 @@ itself three weeks ago"**.
 | | Module | What it does | Docs |
 |---|---|---|---|
 | 🤖 | [**`ansible/`**](ansible/README.md) | Fleet control plane. Installs collectors, applies patches, updates containers, onboards hosts, provisions alerting. | [site](https://harshitruwali.github.io/homelab-infra/ansible/) |
-| 📊 | [**`monitoring/`**](monitoring/README.md) | Central Grafana, Prometheus, Loki and Alloy. Dashboards, 56 alert rules, Matrix notifications. | [site](https://harshitruwali.github.io/homelab-infra/monitoring/) |
+| 📊 | [**`monitoring/`**](monitoring/README.md) | Central Grafana, Prometheus, Loki and Alloy. Dashboards, alert rules, Matrix notifications. | [site](https://harshitruwali.github.io/homelab-infra/monitoring/) |
 | 🧠 | [**`memory/`**](memory/README.md) | Self-hosted semantic memory for AI agents. PostgreSQL and Qdrant behind FastAPI, with an MCP server. | [site](https://harshitruwali.github.io/homelab-infra/memory/) |
 | 💾 | [**`s3-backup/`**](s3-backup/README.md) | Nightly off-site backup of Immich and Nextcloud to Amazon S3, with restores drilled monthly. | [site](https://harshitruwali.github.io/homelab-infra/s3-backup/) |
 | 🤖 | [**`aibox-model-queue/`**](aibox-model-queue/README.md) | Serializing proxy so one GPU's LM Studio host is shared without model-swap races. | [README](aibox-model-queue/README.md) |

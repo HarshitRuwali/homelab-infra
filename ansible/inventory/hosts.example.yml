@@ -122,12 +122,12 @@ all:
                   # Renaming it forks its history in Prometheus and Loki.
 
                 sec-crowdsec:
-                  pve_vmid: 210
+                  pve_vmid: 113
                   ansible_host: 10.0.0.210
                   ansible_user: root
 
                 sec-dns:
-                  pve_vmid: 211
+                  pve_vmid: 111
                   ansible_host: 10.0.0.211
                   ansible_user: root
 
@@ -146,12 +146,12 @@ all:
                   monitor_role: workstation
 
                 sec-wazuh:
-                  pve_vmid: 200
+                  pve_vmid: 100
                   ansible_host: 10.0.0.200
                   ansible_user: admin
 
                 sec-scan:
-                  pve_vmid: 201
+                  pve_vmid: 101
                   ansible_host: 10.0.1.201
                   ansible_user: admin
 
@@ -224,9 +224,11 @@ all:
         sec-wazuh: {}
 
     wazuh_agents:
+      # Every monitored host except the manager, which runs its own agent.
+      # Roll out two first, check the alert volume, tune, then the rest.
       hosts:
-        # ubuntu-dev:
-        # t7920:
+        server-01: {}
+        workstation-01: {}
 
     autoupdate:
       hosts:

@@ -1,10 +1,9 @@
 # Alerting
 
-56 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
-room through a local relay. 50 are committed under
-`grafana/provisioning/alerting/`; the six availability rules are generated
-from the inventory, so adding a host cannot leave a silent gap in
-down-detection.
+Provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix room
+through a local relay. Most are committed under
+`grafana/provisioning/alerting/`; the availability rules are generated from the
+inventory, so adding a host cannot leave a silent gap in down-detection.
 
 ## Rule catalogue
 

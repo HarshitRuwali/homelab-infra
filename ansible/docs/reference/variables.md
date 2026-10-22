@@ -310,5 +310,7 @@ ansible-vault edit inventory/group_vars/all/vault.yml
 | `wazuh_enrollment_password_path` | `/var/ossec/etc/enrollment.pass` | Protected agent password file |
 | `wazuh_agent_group` | `homelab` | Must exist on the manager before rollout |
 | `wazuh_log_sources` | journald | List of `location` / `log_format` mappings |
+| `wazuh_fim_directories` | `/etc`, `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, `/root/.ssh` | Paths file integrity monitoring watches in real time |
+| `wazuh_fim_ignore` | Wazuh's stock ignores plus the Proxmox volatile files | List of `type` (`path` or `sregex`) / `value` entries FIM skips. `sregex` is OSSEC's simple regex: only `^`, `$` and `\|`, and `.` is a literal dot |
 
 See [Wazuh rollout prerequisites](playbooks.md#wazuh-agents).

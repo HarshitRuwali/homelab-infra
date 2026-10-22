@@ -7,6 +7,31 @@ in a graph can be lined up against a date.
 
 ---
 
+## 2026-10-22: Wazuh agents on the whole fleet
+
+Until today the manager's own agent was the only one enrolled: the
+`wazuh_agents` group was empty, so no fleet host sent logs, file integrity
+events or its package inventory, and vulnerability detection covered one
+machine.
+
+- Staged as the playbook says: `ubuntu-dev`, then `t7920`, then a pause to
+  read the alert volume.
+- The hypervisor produced 131 level-7 "Integrity checksum changed" alerts in
+  about 40 minutes, every one for `/etc/pve/nodes/t7920/lrm_status`, a
+  Proxmox status file rewritten every few seconds. FIM's `realtime` watch on
+  `/etc` includes the pmxcfs mount.
+- Fix: `wazuh_fim_ignore`, which also restores Wazuh's stock ignore list
+  that the custom `ossec.conf` template had dropped. The Proxmox entry is
+  `sregex` `^/etc/pve/priv/lock/|^/etc/pve/.|lrm_status$`. OSSEC's sregex
+  has no character classes and treats `.` literally, so a full regex such
+  as `nodes/[^/]+/lrm_status` would silently never match. Guest configs and
+  firewall rules under `/etc/pve` stay watched.
+- In the five minutes after the change the two hosts produced 3 alerts, all
+  PAM session events. The other eleven hosts were then enrolled.
+- `skullsiants` could not reach the manager: it is on another network and
+  did not accept the tailnet's subnet routes. `tailscale set
+  --accept-routes=true` gave it the route to `10.10.0.0/24`.
+
 ## 2026-09-23: Hardware sensors on t7920, and a targeted deploy
 
 CPU package temperatures and chassis fan speeds for the hypervisor, as a

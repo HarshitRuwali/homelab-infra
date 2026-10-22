@@ -35,10 +35,10 @@ provisioning script as `SSH_PUBKEY`.
 
 | Guest | Kind | Log in as | Bridge |
 |---|---|---|---|
-| `sec-wazuh` (200) | VM | `admin`, with passwordless `sudo` | trusted |
-| `sec-scan` (201) | VM | `admin`, with passwordless `sudo` | sandbox, so through your jump host |
-| `sec-crowdsec` (210) | LXC | `root` | trusted |
-| `sec-dns` (211) | LXC | `root` | trusted |
+| `sec-wazuh` (100) | VM | `admin`, with passwordless `sudo` | trusted |
+| `sec-scan` (101) | VM | `admin`, with passwordless `sudo` | sandbox, so through your jump host |
+| `sec-crowdsec` (113) | LXC | `root` | trusted |
+| `sec-dns` (111) | LXC | `root` | trusted |
 
 When SSH fails:
 

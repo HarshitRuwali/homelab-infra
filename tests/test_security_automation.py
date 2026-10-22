@@ -259,6 +259,8 @@ class AgentTemplateTests(unittest.TestCase):
             wazuh_manager_ca_path='/var/ossec/etc/manager-ca.pem',
             wazuh_enrollment_password_path='/var/ossec/etc/enrollment.pass',
             wazuh_fim_directories=['/etc'],
+            wazuh_fim_ignore=[{'type': 'path', 'value': '/etc/mtab'},
+                              {'type': 'sregex', 'value': '^/etc/pve/priv/lock/|^/etc/pve/.|lrm_status$'}],
             wazuh_log_sources=[{'location': 'journald', 'log_format': 'journald'},
                                {'location': '/var/log/app&worker.log', 'log_format': 'syslog'}])
         root = ET.fromstring(rendered)
@@ -267,6 +269,31 @@ class AgentTemplateTests(unittest.TestCase):
         self.assertEqual(enrollment.findtext('authorization_pass_path'), '/var/ossec/etc/enrollment.pass')
         self.assertEqual(root.findtext('localfile/location'), 'journald')
         self.assertIn('/var/log/app&worker.log', [node.text for node in root.findall('localfile/location')])
+
+    def test_fim_ignores_render_with_their_type(self):
+        environment = jinja2.Environment(undefined=jinja2.StrictUndefined)
+        template = environment.from_string((ROOT / 'ansible/roles/wazuh_agent/templates/ossec.conf.j2').read_text())
+        defaults = yaml.safe_load((ROOT / 'ansible/roles/wazuh_agent/defaults/main.yml').read_text())
+        rendered = template.render(wazuh_manager_address='manager.example',
+            wazuh_manager_event_port=1514, wazuh_manager_enrollment_port=1515,
+            inventory_hostname='agent', wazuh_agent_group='homelab',
+            wazuh_manager_ca_path='/var/ossec/etc/manager-ca.pem',
+            wazuh_enrollment_password_path='/var/ossec/etc/enrollment.pass',
+            wazuh_fim_directories=defaults['wazuh_fim_directories'],
+            wazuh_fim_ignore=defaults['wazuh_fim_ignore'],
+            wazuh_log_sources=defaults['wazuh_log_sources'])
+        ignores = ET.fromstring(rendered).findall('syscheck/ignore')
+        self.assertEqual(len(ignores), len(defaults['wazuh_fim_ignore']))
+        by_text = {node.text: node.get('type') for node in ignores}
+        # Plain paths carry no type attribute; sregex entries must say so,
+        # or Wazuh compares them as exact paths and never matches.
+        self.assertIsNone(by_text['/etc/mtab'])
+        pve = [t for t in by_text if 'lrm_status' in t]
+        self.assertEqual(len(pve), 1)
+        self.assertEqual(by_text[pve[0]], 'sregex')
+        # OSSEC sregex has no character classes or groups; one here would
+        # silently never match.
+        self.assertNotRegex(pve[0], r'[\[\]()+*?]')
 
 
 class DownloadTests(unittest.TestCase):

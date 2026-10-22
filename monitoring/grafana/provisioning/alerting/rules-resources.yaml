@@ -74,7 +74,7 @@ groups:
           summary: >-
             {{ $labels.host }} root filesystem is {{ printf "%.0f" $values.B.Value }}% full.
             The Wazuh indexer goes read-only at 95%.
-          runbook: "qm resize 200 scsi0 +10G on the Proxmox host, then growpart /dev/sda 1 && resize2fs /dev/sda1 in the guest"
+          runbook: "qm resize 100 scsi0 +10G on the Proxmox host, then growpart /dev/sda 1 && resize2fs /dev/sda1 in the guest"
         noDataState: OK
         execErrState: Error
         data:

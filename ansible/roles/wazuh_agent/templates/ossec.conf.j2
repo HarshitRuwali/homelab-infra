@@ -31,6 +31,9 @@
 {% for d in wazuh_fim_directories %}
     <directories check_all="yes" realtime="yes">{{ d }}</directories>
 {% endfor %}
+{% for i in wazuh_fim_ignore %}
+    <ignore{% if i.type == 'sregex' %} type="sregex"{% endif %}>{{ i.value | e }}</ignore>
+{% endfor %}
   </syscheck>
 
   <rootcheck>
