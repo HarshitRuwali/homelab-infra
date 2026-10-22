@@ -35,11 +35,8 @@ groups:
               # A unit that is failed and will stay failed produces one alert
               # instance per evaluation forever; it is pure noise, and it
               # trains you to ignore the rule that would have caught a real
-              # failure. Two were doing exactly that here:
+              # failure. One was doing exactly that here:
               #
-              #   openipmi.service                  on the central LXC. There
-              #     is no IPMI hardware inside a container, so it can only ever
-              #     fail. Same for anything else hardware-probing in a guest.
               #   NetworkManager-wait-online.service on rpi4b. Times out at
               #     boot when an interface comes up late; the network is fine
               #     afterwards and the unit stays `failed` until reboot.
@@ -47,9 +44,14 @@ groups:
               # Add to this list rather than silencing the rule: a Grafana
               # silence expires and has to be renewed by hand, whereas an
               # exclusion here is version-controlled and self-documenting.
+              #
+              # openipmi.service on the central LXC used to be excluded too. It
+              # could only fail (no IPMI hardware inside a container), so on
+              # 2026-10-22 the package was purged instead. Prefer removing a
+              # unit that has no business on a host over excluding it here.
               expr: |
                 max by (host, name) (
-                  node_systemd_unit_state{state="failed",name!~"(systemd-.*|user@.*|.*-cleanup|openipmi|NetworkManager-wait-online|e2scrub_reap|apt-daily.*|man-db|logrotate)\\.service"} == 1
+                  node_systemd_unit_state{state="failed",name!~"(systemd-.*|user@.*|.*-cleanup|NetworkManager-wait-online|e2scrub_reap|apt-daily.*|man-db|logrotate)\\.service"} == 1
                 )
           - refId: B
             datasourceUid: __expr__

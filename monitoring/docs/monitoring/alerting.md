@@ -170,7 +170,6 @@ would have caught a real failure.
 
 | Excluded | Why |
 |---|---|
-| `openipmi` | no IPMI hardware inside a container |
 | `NetworkManager-wait-online` | times out at boot, network fine afterwards |
 | `systemd-*`, `user@*`, `*-cleanup` | routinely transient |
 | `apt-daily*`, `man-db`, `logrotate`, `e2scrub_reap` | maintenance jobs that retry |
