@@ -1,10 +1,9 @@
 # Alerting
 
-53 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
-room through a local relay. 48 are committed under
-`grafana/provisioning/alerting/`; the five availability rules are generated
-from the inventory, so adding a host cannot leave a silent gap in
-down-detection.
+Provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix room
+through a local relay. Most are committed under
+`grafana/provisioning/alerting/`; the availability rules are generated from the
+inventory, so adding a host cannot leave a silent gap in down-detection.
 
 ## Rule catalogue
 
@@ -78,6 +77,20 @@ down-detection.
     | `fleet-smart-nvme-spare-low` | critical | 15m | under 10% spare blocks left |
     | `fleet-smart-temperature-high` | warning | 30m | over 60 C |
     | `fleet-smart-collector-stale` | warning | 30m | no refresh in an hour on a host that has disks |
+
+=== "Backup (5)"
+
+    Off-site backup health, from the s3-backup module's textfile metrics
+    (`s3_backup.prom`). Only the host that runs the backup produces these
+    series, so every rule uses `noDataState: OK`.
+
+    | uid | Severity | For | Rule |
+    |---|---|---|---|
+    | `fleet-backup-not-succeeded` | critical | 1h | Backup Has Not Succeeded |
+    | `fleet-backup-failed` | warning | 5m | Backup Failed |
+    | `fleet-backup-phase-failed` | warning | 5m | Backup Phase Failed |
+    | `fleet-backup-duration-anomalous` | info | 5m | Backup Duration Anomalous |
+    | `fleet-backup-metrics-stale` | warning | 30m | Backup Metrics Stale |
 
 === "Network (5)"
 

@@ -139,10 +139,11 @@ containers, pending updates and logs, scoped to a single host instead of
 filtered through `$host`. Hosts with an NVIDIA GPU also get GPU utilization,
 VRAM, temperature, power and fan.
 
-**Alert rules** in `grafana/provisioning/alerting/`: 42 committed across
-resources, updates, containers, services, storage, network and GPU, plus five
-more in a `rules-availability.yaml` **generated from the inventory** so adding
-a host cannot leave a silent gap in down-detection. 47 rules load in total.
+**Alert rules** in `grafana/provisioning/alerting/`: committed rule files, plus
+a `rules-availability.yaml` **generated from the inventory** so adding a host
+cannot leave a silent gap in down-detection. The list of files Ansible installs
+is `grafana_alerting_static_files` in
+`ansible/roles/grafana_alerting/defaults/main.yml`.
 
 > [!NOTE]
 > This stack is push-based, so `up` is a series each collector pushes about
