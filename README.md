@@ -10,7 +10,7 @@
 [![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)](https://harshitruwali.github.io/homelab-infra/monitoring/)
 [![Proxmox](https://img.shields.io/badge/Proxmox-E57000?logo=proxmox&logoColor=white)](https://www.proxmox.com/)
 
-Eight independent modules covering a Proxmox and Tailscale estate: Debian VMs,
+Nine independent modules covering a Proxmox and Tailscale estate: Debian VMs,
 LXC containers, Raspberry Pis and one bare-metal hypervisor. Every machine is
 configured, patched and observed the same way, and every automated action
 writes a metric, so **"it updates itself" can never quietly become "it broke
@@ -28,6 +28,7 @@ itself three weeks ago"**.
 | 🖥️ | [**`proxmox/`**](proxmox/README.md) | Builds a VM template and creates VMs and containers from the images already on the hypervisor, plus firewalled VMs leased to other people. Dry run by default. | [README](proxmox/README.md) |
 | 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, Suricata, AdGuard Home, Authelia, OpenBao, ntopng and Greenbone across six small guests. All free and open source. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
 | 📓 | [**`vault-viewer/`**](vault-viewer/README.md) | Read-only web viewer for an Obsidian vault on a Tailscale address, with search, live reload and PDF export. Treats vault content as untrusted. | [site](https://harshitruwali.github.io/homelab-infra/vault-viewer/) |
+| 🌐 | [**`ingress/`**](ingress/README.md) | HTTPS `.lan` names for web UIs on the LAN and the tailnet. One small LXC runs Caddy with its own CA and two dnsmasq instances. | [site](https://harshitruwali.github.io/homelab-infra/ingress/) |
 
 Each module stands alone. Nothing here requires you to run the others, and
 every directory's README is a complete quick start by itself.
@@ -141,6 +142,24 @@ answers. Open `http://100.64.0.10:7777` from your own tailnet devices. Add
 
 </details>
 
+<details>
+<summary><b>🌐 Give web UIs HTTPS names under .lan</b></summary>
+
+```bash
+cd ingress
+sudo mkdir -p /etc/ingress/cas
+sudo cp sites.example.tsv /etc/ingress/sites.tsv    # then edit it
+sudo cp hosts.example.tsv /etc/ingress/hosts.tsv    # then edit it
+sudo ./install.sh                           # dry run: renders, validates, changes nothing
+sudo ./install.sh --apply
+```
+
+Run on a small Debian LXC that is on the home LAN and the tailnet, with Caddy,
+dnsmasq and Tailscale installed. It prints the SHA-256 fingerprint of the
+root certificate your devices need to trust once.
+
+</details>
+
 > [!IMPORTANT]
 > **Run Ansible from `ansible/`, never from here.** `ansible/ansible.cfg`
 > resolves `inventory` and `roles_path` relative to the working directory, and
@@ -159,6 +178,7 @@ s3-backup/      restic and rclone automation, installer, restore drills
 aibox-model-queue/
                 Serializing proxy for a shared LM Studio host
 vault-viewer/   artifacts.py: read-only Obsidian vault viewer, installer, tests
+ingress/        render.sh, install.sh: Caddy and dnsmasq for https://<name>.lan
 proxmox/        pve-guest.sh: VM template, new VMs and containers
 docs-landing/   The static index page of the published docs site
 .github/        Workflows (docs, releases, PR checks) and the scripts they run
@@ -182,9 +202,10 @@ One MkDocs Material site per documented module plus a landing page, on one GitHu
 | [`/aibox-model-queue/`](https://harshitruwali.github.io/homelab-infra/aibox-model-queue/) | `aibox-model-queue/mkdocs.yml` |
 | [`/security/`](https://harshitruwali.github.io/homelab-infra/security/) | `security/mkdocs.yml` |
 | [`/vault-viewer/`](https://harshitruwali.github.io/homelab-infra/vault-viewer/) | `vault-viewer/mkdocs.yml` |
+| [`/ingress/`](https://harshitruwali.github.io/homelab-infra/ingress/) | `ingress/mkdocs.yml` |
 
 ```bash
-cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security, vault-viewer
+cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security, vault-viewer, ingress
 python3 -m venv .venv
 .venv/bin/pip install -r docs/requirements.txt
 .venv/bin/mkdocs serve                      # live preview on :8000

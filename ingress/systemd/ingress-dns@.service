@@ -1,0 +1,15 @@
+# One dnsmasq per answer set: ingress-dns@lan and ingress-dns@tailnet.
+# Installed by ingress/install.sh; config rendered into /etc/ingress/rendered.
+[Unit]
+Description=.lan DNS (%i answers)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/ingress/rendered/dnsmasq-%i.conf --pid-file=/run/ingress-dns-%i.pid
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
