@@ -53,8 +53,9 @@ MANIFEST = ".release-please-manifest.json"
 MARKER = "x-release-please-version"
 # The same pattern release-please's generic updater uses to find the version.
 SEMVER = re.compile(r"\d+\.\d+\.\d+(?:-[\w.]+)?(?:\+[-\w.]+)?")
-# Directories that have a README.md but are not modules.
-NOT_MODULES = {"docs-landing"}
+# Directories that have a README.md but are not modules. tests/ holds the
+# cross-module regression suite for the ansible and security modules.
+NOT_MODULES = {"docs-landing", "tests"}
 # A bare string with one of these suffixes goes through a structured updater
 # before the marker-based one. Rejected so that every entry says what it edits.
 BARE_STRING_REASONS = {

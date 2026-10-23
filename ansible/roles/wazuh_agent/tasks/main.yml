@@ -11,11 +11,36 @@
   ansible.builtin.assert:
     that:
       - wazuh_manager_address | length > 0
+      - wazuh_manager_inventory_host | length > 0
+      - wazuh_manager_ca_src | length > 0
+      - wazuh_agent_group is match('^[A-Za-z0-9_-]+$')
     fail_msg: >-
-      wazuh_manager_address is empty. Set it in
-      inventory/group_vars/wazuh_agents/main.yml. It is deliberately not
-      defaulted in the role: this repository is public.
+      Set wazuh_manager_address, wazuh_manager_ca_src and the wazuh_manager
+      inventory group in your private inventory. Use a valid wazuh_agent_group.
     quiet: true
+
+- name: Require an enrollment secret from the vault
+  ansible.builtin.assert:
+    that:
+      - wazuh_enrollment_password | length >= 20
+      - not (wazuh_enrollment_password is search('\s'))
+    fail_msg: Set vault_wazuh_enrollment_password to the manager's enrollment password.
+    quiet: true
+  no_log: true
+
+- name: Verify the requested group exists on the manager before installing agents
+  ansible.builtin.stat:
+    path: "/var/ossec/etc/shared/{{ wazuh_agent_group }}"
+  delegate_to: "{{ wazuh_manager_inventory_host }}"
+  register: wazuh_manager_group
+
+- name: Require the manager enrollment group
+  ansible.builtin.assert:
+    that:
+      - wazuh_manager_group.stat.isdir | default(false)
+    fail_msg: >-
+      Run security/install/configure-sec-wazuh.sh on the manager first,
+      with WAZUH_AGENT_GROUP matching wazuh_agent_group.
 
 - name: Add the Wazuh APT repository
   ansible.builtin.import_tasks: repo.yml
@@ -26,6 +51,25 @@
     state: present
     update_cache: true
     cache_valid_time: 3600
+
+- name: Install the trusted manager CA
+  ansible.builtin.copy:
+    src: "{{ wazuh_manager_ca_src }}"
+    dest: "{{ wazuh_manager_ca_path }}"
+    owner: root
+    group: wazuh
+    mode: "0640"
+  notify: Restart wazuh-agent
+
+- name: Install the enrollment password without logging its contents
+  ansible.builtin.copy:
+    content: "{{ wazuh_enrollment_password }}\n"
+    dest: "{{ wazuh_enrollment_password_path }}"
+    owner: root
+    group: wazuh
+    mode: "0640"
+  no_log: true
+  notify: Restart wazuh-agent
 
 - name: Configure the agent
   ansible.builtin.template:

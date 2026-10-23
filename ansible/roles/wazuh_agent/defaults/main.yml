@@ -1,7 +1,9 @@
 ---
 # Address of the Wazuh manager (the `sec-wazuh` guest from security/).
 # Set this in inventory, not here: this repository is public and an address is
-# part of the estate map. group_vars/wazuh_agents/main.yml is the right home.
+# part of the estate map. Put it under all.vars in hosts.local.yml, which is
+# gitignored. Not in a committed group_vars file: see
+# group_vars/wazuh_agents/main.yml for why.
 wazuh_manager_address: ""
 
 # Agent enrolment port (1515/tcp) and event port (1514/tcp). Defaults match
@@ -15,6 +17,22 @@ wazuh_manager_event_port: 1514
 # changes do not have to touch every agent.
 wazuh_agent_group: homelab
 
+# Manager inventory entry used for the read-only group preflight. The manager
+# installer creates homelab; custom groups must exist before agent rollout.
+wazuh_manager_inventory_host: "{{ (groups['wazuh_manager'] | default([]) | first) | default('') }}"
+# Public CA PEM on the controller, obtained through a trusted channel. Never
+# fetch it from an unauthenticated enrollment endpoint during deployment.
+wazuh_manager_ca_src: ""
+wazuh_manager_ca_path: /var/ossec/etc/manager-ca.pem
+wazuh_enrollment_password: "{{ vault_wazuh_enrollment_password | default('') }}"
+wazuh_enrollment_password_path: /var/ossec/etc/enrollment.pass
+
+# Debian and Ubuntu use journald for SSH, sudo and system events. Add file
+# sources here for applications that do not write to the journal.
+wazuh_log_sources:
+  - location: journald
+    log_format: journald
+
 # APT repository. Pinned to the 4.x line: Wazuh's manager and agents must stay
 # on the same major version, and an agent that silently jumps major behind the
 # manager's back stops reporting rather than failing loudly.
@@ -25,6 +43,29 @@ wazuh_apt_keyring: /etc/apt/keyrings/wazuh.asc
 # File integrity monitoring. These are the paths where persistence actually
 # gets established, which is the point of FIM. Adding a noisy path here costs
 # you the whole signal, so extend deliberately.
+# Paths file integrity monitoring skips. The first block is Wazuh's own stock
+# list (files that change in normal operation). The sregex covers the
+# Proxmox cluster filesystem's volatile files only (OSSEC sregex: ^ $ | only,
+# "." is a literal dot, so ^/etc/pve/. means the dot-files): lrm_status is
+# rewritten every few seconds (133 alerts in 40 minutes on the hypervisor),
+# priv/lock holds short-lived lock files that FIM cannot open, and the
+# dot-files are pmxcfs status. Guest configs and firewall rules under /etc/pve
+# stay monitored. Override per host in host_vars when a host adds its own noise.
+wazuh_fim_ignore:
+  - {type: path, value: /etc/mtab}
+  - {type: path, value: /etc/hosts.deny}
+  - {type: path, value: /etc/mail/statistics}
+  - {type: path, value: /etc/random-seed}
+  - {type: path, value: /etc/random.seed}
+  - {type: path, value: /etc/adjtime}
+  - {type: path, value: /etc/httpd/logs}
+  - {type: path, value: /etc/utmpx}
+  - {type: path, value: /etc/wtmpx}
+  - {type: path, value: /etc/cups/certs}
+  - {type: path, value: /etc/dumpdates}
+  - {type: path, value: /etc/svc/volatile}
+  - {type: sregex, value: '.log$|.swp$'}
+  - {type: sregex, value: '^/etc/pve/priv/lock/|^/etc/pve/.|lrm_status$'}
 wazuh_fim_directories:
   - /etc
   - /bin

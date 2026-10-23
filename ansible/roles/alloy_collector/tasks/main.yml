@@ -61,8 +61,9 @@
 
 # --- Permissions ---------------------------------------------------------
 # Alloy runs unprivileged. It needs systemd-journal to read the journal, adm
-# for /var/log, and docker for the socket. Group changes only take effect on
-# process restart, hence the notify.
+# for /var/log, docker for the socket, and on the Wazuh manager `wazuh`, since
+# /var/ossec/logs/alerts is wazuh:wazuh 0750. Group changes only take effect
+# on process restart, hence the notify.
 - name: Grant the alloy user the groups it needs
   ansible.builtin.user:
     name: alloy
@@ -73,6 +74,7 @@
       {{
         ['systemd-journal', 'adm']
         + (['docker'] if alloy_docker_effective else [])
+        + (['wazuh'] if inventory_hostname in groups['wazuh_manager'] | default([]) else [])
       }}
   notify: Restart alloy
 

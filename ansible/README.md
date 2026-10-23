@@ -94,6 +94,7 @@ Full reference: [Playbooks](docs/reference/playbooks.md).
 | `alloy_collector` | Grafana Alloy, the collector on every monitored host |
 | `update_metrics` | pending-package and reboot-required textfile exporter |
 | `smart_metrics` | SMART disk health, bare metal only |
+| `pve_guest_metrics` | names each Proxmox guest's NIC counters, PVE hosts only |
 | `gpu_exporter` | NVIDIA GPU telemetry, autodetected off the host |
 | `unattended_upgrades` | apt patching policy, applied by group membership only |
 | `docker_updates` | container image update timer |
