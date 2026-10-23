@@ -1,0 +1,67 @@
+site_name: Ingress
+site_description: HTTPS names under .lan for web UIs on the LAN and the tailnet, served by Caddy and two dnsmasq instances in one small LXC.
+site_author: Harshit Ruwali
+site_url: https://harshitruwali.github.io/homelab-infra/ingress/
+
+repo_url: https://github.com/HarshitRuwali/homelab-infra
+repo_name: HarshitRuwali/homelab-infra
+edit_uri: edit/master/ingress/docs/
+
+theme:
+  name: material
+  language: en
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/HarshitRuwali/homelab-infra
+
+nav:
+  - Home: index.md
+  - Setup: setup.md
+  - Sites: sites.md
+  - Certificates: certificates.md
+  - DNS: dns.md
+  - Operations: operations.md

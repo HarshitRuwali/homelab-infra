@@ -1,0 +1,7 @@
+# Real site data. The module ships sites.example.tsv and hosts.example.tsv;
+# a real sites.tsv or hosts.tsv holds internal addresses and never leaves the
+# host (it lives in /etc/ingress there).
+sites.tsv
+hosts.tsv
+!sites.example.tsv
+!hosts.example.tsv

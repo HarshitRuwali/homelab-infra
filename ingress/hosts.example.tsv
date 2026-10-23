@@ -1,0 +1,9 @@
+# Machines that get a plain <name>.lan address record (for ssh and the like).
+# Copy to /etc/ingress/hosts.tsv on the host and fill in real addresses.
+#
+# LAN clients get lan_ip. Tailnet clients get tailnet_ip when there is one,
+# otherwise lan_ip (reachable through the subnet router).
+#
+# name          lan_ip          tailnet_ip
+pve-host        192.0.2.9       100.64.0.9
+nas             192.0.2.30      -
