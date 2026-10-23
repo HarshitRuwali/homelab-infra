@@ -31,6 +31,10 @@
   ansible.builtin.import_tasks: serial.yml
   tags: [serial]
 
+- name: Add unlisted USB Bluetooth adapters to btusb
+  ansible.builtin.import_tasks: bluetooth.yml
+  tags: [bluetooth]
+
 - name: Install Docker
   ansible.builtin.import_tasks: docker.yml
   tags: [docker]

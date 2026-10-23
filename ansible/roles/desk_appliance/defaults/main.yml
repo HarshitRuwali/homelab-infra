@@ -136,6 +136,39 @@ desk_appliance_echo_cancel_aec_args: {}
 # `lsusb` prints the ids as vendor:product.
 desk_appliance_serial_devices: []
 
+# --- Bluetooth (tag: bluetooth) -------------------------------------------
+# USB Bluetooth adapters that the kernel's btusb binds but does not know: its
+# quirks table has no entry for the id, so the vendor setup and firmware
+# download never run and the log shows `hci0: Opcode 0x0c03 failed: -110`.
+# Each entry is added to btusb's quirks table by a DKMS build of btusb from the
+# kernel's own source (linux-source at the kernel's exact version). Empty
+# means no DKMS module: one an earlier run installed is removed, with its
+# boot-time unit, but the build packages below stay installed. Each entry:
+#
+#   - vendor_id: "<4 hex digits>"
+#     product_id: "<4 hex digits>"
+#     driver_info: "<btusb flags, as the upstream quirks_table entry has them>"
+#
+# `lsusb` prints the ids as vendor:product. driver_info is the flag list of
+# the matching entry in a newer kernel's btusb, for example
+# "BTUSB_MEDIATEK | BTUSB_WIDEBAND_SPEECH" for a MediaTek MT7902. A kernel
+# that already lists every id gets no patched build (it is skipped and keeps
+# its in-tree btusb), so the entry does no harm there, but the skipped build is
+# retried on every run and boot: remove the entry once the installed kernels
+# list the id (see the README, Bluetooth).
+desk_appliance_btusb_quirks: []
+
+# What the DKMS build needs: dkms itself, the headers for the running kernel
+# and, through the metapackage, for each kernel installed later, and the
+# kernel's source tarball, from which drivers/bluetooth is taken. The
+# metapackage alone is not enough: it follows the newest kernel, not the one
+# running.
+desk_appliance_btusb_build_packages:
+  - dkms
+  - "linux-headers-{{ ansible_facts.kernel }}"
+  - "{{ 'linux-headers-generic' if ansible_facts.distribution == 'Ubuntu' else 'linux-headers-amd64' }}"
+  - linux-source
+
 # --- Docker (tag: docker) -----------------------------------------------
 # `distro`  : docker.io and docker-compose-v2 from Ubuntu. Security fixes arrive
 #             through the security pocket, which is what the unattended

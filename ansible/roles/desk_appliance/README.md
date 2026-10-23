@@ -2,15 +2,16 @@
 
 Baseline for an always-on desk appliance: a mini PC with a real X11 desktop
 session that an agent (or a person) drives. It logs itself in, never blanks,
-locks or suspends, has audio and a stable serial symlink, runs Docker, and
-patches and reboots itself in the small hours.
+locks or suspends, has audio and a stable serial symlink, gets a Bluetooth
+adapter working that its kernel does not list yet, runs Docker, and patches
+and reboots itself in the small hours.
 
 Target: Ubuntu 26.04 and Kali Rolling, x86_64 (see
 [Supported platforms](#supported-platforms)). The package names and the
 generated configuration were exercised in an `ubuntu:26.04` and a
 `kalilinux/kali-rolling` container with systemd (see
-[Verification](#verification)); nothing here has been run on the hardware
-itself.
+[Verification](#verification)). Of the layers, only `bluetooth` has been run
+on the hardware itself.
 
 ## What it does
 
@@ -21,6 +22,7 @@ itself.
 | `keyring` | Opt-in (`desk_appliance_plaintext_keyring`, default off). A second, blank-password gnome-keyring as the default, so logins survive an autologin boot. Secrets stored there are plaintext; see [Keyring](#keyring). |
 | `audio` | PipeWire with ALSA and Pulse layers and WirePlumber; the user in `audio`; optional default sink and source; optional WebRTC echo cancellation. |
 | `serial` | The user in `dialout`; a udev rule giving each listed USB serial device a stable `/dev/<name>` symlink. |
+| `bluetooth` | Opt-in (`desk_appliance_btusb_quirks`, default empty). Rebuilds `btusb` through DKMS from the kernel's own source with each listed USB id added to its quirks table, for an adapter the kernel binds but never initialises. See [Bluetooth](#bluetooth). |
 | `docker` | Docker engine and the Compose plugin from Ubuntu or from Docker's repository; the user in `docker`. |
 | `updates` | `unattended-upgrades` for security updates only, with an automatic reboot at a set time when one is needed. Off by default on Kali (see [Kali Rolling](#kali-rolling)). |
 
@@ -72,6 +74,8 @@ Everything host-specific (names, ids) is a variable; nothing is baked in.
 | `desk_appliance_echo_cancel_sink_name` | `echo-cancel-sink` | Virtual speaker for applications. |
 | `desk_appliance_echo_cancel_aec_args` | `{}` | Keys passed to the WebRTC backend, for example `webrtc.gain_control: true`. |
 | `desk_appliance_serial_devices` | `[]` | List of `name`, `vendor_id`, `product_id` and optional `serial`. Ids are four hex digits, quoted. |
+| `desk_appliance_btusb_quirks` | `[]` | List of `vendor_id`, `product_id` (four hex digits, quoted) and `driver_info` (btusb flags joined by ` \| `), each id once. Empty removes the DKMS module and its boot unit; the build packages stay. See [Bluetooth](#bluetooth). |
+| `desk_appliance_btusb_build_packages` | `dkms`, the headers of the running kernel, the headers metapackage (`linux-headers-amd64`; on Ubuntu `linux-headers-generic`), `linux-source` | Installed when the quirk list is not empty. |
 | `desk_appliance_docker_source` | `distro` | `distro` (`docker.io`, `docker-compose-v2`) or `docker_ce` (Docker's repository). |
 | `desk_appliance_docker_packages` | per-source package lists | The Compose plugin is `docker-compose-v2` on Ubuntu and `docker-compose` on Kali. |
 | `desk_appliance_docker_live_restore` | `true` | Writes `/etc/docker/daemon.json` with `{"live-restore": true}` only if that file is absent. See Patching. |
@@ -116,6 +120,10 @@ desk_appliance_serial_devices:
     product_id: "7523"
 desk_appliance_echo_cancel: true
 desk_appliance_audio_default_sink: alsa_output.example-sink-name
+desk_appliance_btusb_quirks:
+  - vendor_id: "0489"
+    product_id: "e156"
+    driver_info: "BTUSB_MEDIATEK | BTUSB_WIDEBAND_SPEECH"
 ```
 
 ```bash
@@ -260,6 +268,81 @@ unlocks it by hand (`seahorse`, or `gnome-keyring-daemon --unlock`). Enable it
 only for an appliance whose account holds nothing you would not leave on disk.
 The Iris desk box has an equivalent keyring, set up by hand.
 
+## Bluetooth
+
+`desk_appliance_btusb_quirks` (tag `bluetooth`, empty by default) is for a USB
+Bluetooth adapter that the installed kernel does not list yet. `btusb` still
+binds it, through the generic Bluetooth class match, but the vendor flag
+(`BTUSB_MEDIATEK` and the like) comes only from btusb's own quirks table. With
+no entry there, the vendor setup and its firmware download never run, so the
+controller does not answer: every boot logs
+`Bluetooth: hci0: Opcode 0x0c03 failed: -110` and `bluetoothctl` finds no
+controller. Two things that look like they should help do not. `modinfo btusb`
+does not list the quirks table, because it is not exported as module aliases.
+`/sys/bus/usb/drivers/btusb/new_id` copies `driver_info` only from the generic
+table, which has no vendor flags.
+
+With a non-empty list the role writes one DKMS module, `desk-appliance-btusb`,
+under `/usr/src/desk-appliance-btusb-1`, builds it for every kernel that has
+headers installed (a kernel waiting for its reboot included), and reloads
+`btusb` when the loaded one is not the one on disk. Before each build, its
+`btusb-prepare.sh`:
+
+- takes `drivers/bluetooth` from the `linux-source` package whose version is
+  the version of the package that ships the kernel's in-tree `btusb.ko`, so the
+  module is the distribution's own `btusb.c` for that kernel, Debian or Kali
+  patches included;
+- adds every listed id that is not in `quirks_table` already;
+- copies the upstream Makefile's `btusb-*` lines, so the multi-file `btusb`
+  of 7.3 and later builds too (checked against the mainline Makefile, not
+  built against 7.3 sources);
+- compiles it.
+
+Whatever goes wrong in that script ends in exit 77, which DKMS records as
+skipped, never as failed: no headers, no `linux-source` at the kernel's
+version, a tarball that does not extract, a source that already lists every
+id, a malformed list, a compile error, and any other failure (an `ERR` trap
+turns it into the same exit). The kernel then keeps its in-tree `btusb`, and a
+kernel package's postinst is not failed by this module's build. What DKMS does
+outside the script (copying the sources in, installing the built module) is
+not covered by that. The play prints the script's reason for each skipped
+kernel; for a skip during an apt run, it is in
+`/var/lib/dkms/desk-appliance-btusb/1/build/make.log`.
+
+`desk-appliance-btusb.service`, a oneshot unit enabled with the module, runs at
+boot: if the module is not installed for the kernel that booted, it builds it,
+then reloads `btusb`. Once the kernels list the id themselves, empty the list.
+
+Things to know:
+
+- **Kernel upgrades.** DKMS autoinstall builds the module for a new kernel,
+  which needs that kernel's headers and its `linux-source` at the same
+  version; the two metapackages bring both. When apt configures the new kernel
+  before `linux-source` has been unpacked, that build is skipped, and the boot
+  unit builds it when the host boots that kernel.
+- **Disk and time.** `linux-source` is a 160 MB tarball, decompressed in full
+  (one xz thread, at low priority) on every build to reach one directory. The
+  compile itself takes a few seconds. A skipped build is tried again on every
+  run of this tag and on every boot, which repeats the decompression: empty
+  the list once the kernels list the id.
+- **Reload.** `modprobe -r btusb` also unloads the modules only it was using
+  (the `bt*` helpers, and the `bluetooth` core when nothing else holds it), and
+  every adapter bound to `btusb` resets: Bluetooth connections drop and come
+  back. The USB controller is not reset, so other devices on it (a USB
+  speakerphone, say) are not touched. A host with an empty list that never had
+  the module is never reloaded.
+- **Secure Boot.** With Secure Boot on, the module has to be signed with a key
+  the firmware trusts. DKMS signs with its own MOK key, which has to be enrolled
+  once (`mokutil --import`); the role does not do that. If the new `btusb` does
+  not load, the role removes its DKMS builds, loads the in-tree `btusb` again
+  and fails, so the host is not left without one; the boot unit does the same
+  for the kernel that booted.
+- **Removal.** An empty list removes the DKMS builds, the sources and the boot
+  unit. `dkms`, the headers and `linux-source` stay installed.
+- **rfkill.** A controller that never came up may have been soft-blocked
+  while it was broken, and systemd-rfkill restores that state at boot. Run
+  `rfkill unblock bluetooth` once; the role does not manage rfkill state.
+
 ## Things to know
 
 - Membership of the `docker` group is root-equivalent on the host.
@@ -290,7 +373,9 @@ The Iris desk box has an equivalent keyring, set up by hand.
 - Give the appliance user `sudo`.
 - Unlock or migrate an existing `login` keyring.
 - Restart LightDM, PipeWire or WirePlumber on a running session.
-- Configure a firewall, remote desktop, SSH, backups or Bluetooth.
+- Configure a firewall, remote desktop, SSH or backups.
+- Pair Bluetooth devices, change BlueZ settings or rfkill state. The
+  `bluetooth` layer only makes an adapter usable.
 - Install GPU drivers.
 - Manage Wayland, or the lock and power settings of a desktop other than XFCE.
 - Install a browser or any desktop autostart application beyond the session
@@ -332,6 +417,38 @@ The `keyring` tag was run separately on `kalilinux/kali-rolling` (no systemd,
 keyring as the default alias, unlocks it without a prompt and stores and reads
 back a secret.
 
+The `bluetooth` tag was run on the hardware it was written for, a Kali
+Rolling mini PC with a MediaTek MT7902 (Bluetooth `0489:e156`, kernel
+`7.1.5+kali-amd64`, which does not list that id):
+`--tags bluetooth,always` with an existing account, the build packages
+already installed. The run builds and installs the DKMS module from
+`linux-source-7.1` for the one kernel with headers and reloads `btusb`;
+`modinfo -n btusb` then names `updates/dkms/btusb.ko.xz`, the controller
+initialises (`hci0: Device setup in ... usecs`) and `bluetoothctl` finds and
+powers it. A second run reports no changes. A list holding only an id the
+kernel already has makes the build decline, the play prints the script's
+reason, and the in-tree `btusb` is loaded. Emptying the list removes the
+builds, the sources and the boot unit and loads the in-tree `btusb`; a second
+run with the empty list neither compares nor reloads `btusb` and reports no
+changes. Restoring the list reinstalls everything, and the run after that
+reports no changes. The boot unit, started by hand, is a no-op while the
+module is installed, and after the build for the running kernel was removed it
+built it again and reloaded `btusb`. The unit passes `systemd-analyze verify`.
+The cold start (the firmware download, about 3.6 s, on a chip that had never
+been initialised) was seen with a hand-built module of the same `srcversion`;
+the host has not been rebooted onto the DKMS module.
+`ansible/tests/desk-appliance-btusb-prepare-test.py` runs `btusb-prepare.sh`
+against fixture source trees in both layouts (the single-file `btusb.c` and
+the split `btusb_main.c` of 7.3), with a fake kbuild directory standing in for
+the compile, drives its dpkg lookup through a fake `dpkg-query` on a
+merged-`/usr` module tree, and checks that each way it can fail, an unexpected
+one included, exits 77. It passes with gawk and with mawk.
+
 Not checked: anything needing hardware or a display (autologin into a running
 desktop, DPMS, USB serial matching, WirePlumber default-device selection,
-suspend behaviour) and the `arm64` Docker repository path.
+suspend behaviour), the `arm64` Docker repository path, the `bluetooth` layer
+on Ubuntu (only its generic `linux-source` tarball lookup covers Ubuntu's
+layout), DKMS autoinstall during a real kernel upgrade (that a skipped build
+does not fail it is read from the dkms 3.2.2 source, where autoinstall counts
+exit 77 as skipped), a reboot onto the DKMS module, and Secure Boot (signing,
+and the fallback when the new `btusb` does not load).

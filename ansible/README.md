@@ -87,7 +87,7 @@ tests/                         consistency checks, run by hand; see the header o
 | `dashboards.yml` | the committed Grafana dashboards |
 | `central-alerting.yml` | the Matrix relay and Grafana unified alerting |
 | `rotate-collector-password.yml` | rotate the shared collector basic-auth password |
-| `desk-appliance.yml` | the `desk_appliances` baseline: X11 autologin desktop, audio, serial, Docker, security updates; not part of `site.yml` |
+| `desk-appliance.yml` | the `desk_appliances` baseline: X11 autologin desktop, audio, serial, Bluetooth adapter quirks, Docker, security updates; not part of `site.yml` |
 
 Full reference: [Playbooks](docs/reference/playbooks.md).
 

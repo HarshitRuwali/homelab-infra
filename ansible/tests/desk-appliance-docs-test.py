@@ -15,7 +15,8 @@ Checks:
   * every distribution in desk_appliance_supported_distributions is named in
     the README's "Supported platforms" section
   * every `--tags a,b` token in a README code block is a tag the role defines
-  * every `src:` template named in tasks/*.yml exists under templates/
+  * every `src:` template named in tasks/*.yml exists under templates/,
+    including the ones inside loop items
   * the playbook, the role and the group are named consistently in the
     fleet README, the docs reference and the example inventory
 """
@@ -108,6 +109,10 @@ for task_file in sorted((ROLE / "tasks").glob("*.yml")):
         # path); only bare names are templates.
         if "/" in src or "{{" in src:
             continue
+        if not (ROLE / "templates" / src).is_file():
+            fail(f"{task_file.name} names template {src}, which templates/ does not have")
+    # Templates named by loop items (`- src: x.j2` with dest and mode below).
+    for src in re.findall(r"^\s+- src: ([A-Za-z0-9_.-]+\.j2)$", task_file.read_text(), re.M):
         if not (ROLE / "templates" / src).is_file():
             fail(f"{task_file.name} names template {src}, which templates/ does not have")
 

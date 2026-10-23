@@ -1,0 +1,17 @@
+# Managed by ansible/roles/desk_appliance. Do not edit by hand.
+#
+# btusb rebuilt from this kernel's own source with the ids in btusb-quirks.list
+# added; btusb-prepare.sh fetches and patches the source before each build.
+# AUTOINSTALL rebuilds it for every kernel that is installed later; when a
+# kernel has no matching linux-source, or already has the ids, the build is
+# recorded as skipped and that kernel keeps its in-tree btusb.
+PACKAGE_NAME="{{ desk_appliance_btusb_dkms_name }}"
+PACKAGE_VERSION="{{ desk_appliance_btusb_dkms_version }}"
+BUILT_MODULE_NAME[0]="btusb"
+DEST_MODULE_LOCATION[0]="/updates/dkms"
+PRE_BUILD="btusb-prepare.sh ${kernelver}"
+MAKE[0]="make -C ${kernel_source_dir} M=${dkms_tree}/${PACKAGE_NAME}/${PACKAGE_VERSION}/build modules"
+# No REMAKE_INITRD: dkms 3.2 only warns that it is deprecated and does not
+# rebuild the initramfs. None is needed: initramfs-tools does not pack btusb
+# (checked with Kali's MODULES=most), so it loads from /lib/modules after boot.
+AUTOINSTALL="yes"

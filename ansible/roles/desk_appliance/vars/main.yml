@@ -1,6 +1,6 @@
 ---
-# Internal paths, derived from the user's home. Not settings: override
-# desk_appliance_home or desk_appliance_user instead.
+# Internal names and paths, most derived from the user's home. Not settings:
+# override desk_appliance_home or desk_appliance_user instead.
 desk_appliance_pipewire_dir: >-
   {{ desk_appliance_home }}/.config/pipewire/pipewire.conf.d
 desk_appliance_wireplumber_dir: >-
@@ -13,3 +13,9 @@ desk_appliance_echo_cancel_file: >-
   {{ desk_appliance_pipewire_dir }}/50-desk-appliance-echo-cancel.conf
 desk_appliance_wireplumber_file: >-
   {{ desk_appliance_wireplumber_dir }}/51-desk-appliance-defaults.conf
+# The DKMS module of the bluetooth layer. The version is fixed: a change to its
+# sources is applied by removing every build and installing again.
+desk_appliance_btusb_dkms_name: desk-appliance-btusb
+desk_appliance_btusb_dkms_version: "1"
+desk_appliance_btusb_dkms_src: >-
+  /usr/src/{{ desk_appliance_btusb_dkms_name }}-{{ desk_appliance_btusb_dkms_version }}

@@ -1,0 +1,7 @@
+# Managed by ansible/roles/desk_appliance. Do not edit by hand.
+#
+# Read by btusb-prepare.sh: one USB Bluetooth device per line, as
+# <vendor id> <product id> <btusb driver_info>, added to btusb's quirks table.
+{% for quirk in desk_appliance_btusb_quirks %}
+{{ quirk.vendor_id | string | lower }} {{ quirk.product_id | string | lower }} {{ quirk.driver_info }}
+{% endfor %}

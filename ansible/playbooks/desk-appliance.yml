@@ -1,13 +1,14 @@
 ---
 # Always-on desk appliance baseline: an X11 desktop with LightDM autologin, no
-# blanking or suspend, PipeWire audio, a stable serial symlink, Docker, and
-# unattended security updates with a reboot window.
+# blanking or suspend, PipeWire audio, a stable serial symlink, btusb rebuilt
+# for unlisted Bluetooth adapters, Docker, and unattended security updates with
+# a reboot window.
 #
 #   ansible-playbook playbooks/desk-appliance.yml --check --diff
 #   ansible-playbook playbooks/desk-appliance.yml --limit <host>
 #   ansible-playbook playbooks/desk-appliance.yml --tags power
 #
-# Tags, one per concern: desktop, power, keyring, audio, serial, docker, updates.
+# Tags, one per concern: desktop, power, keyring, audio, serial, bluetooth, docker, updates.
 #
 # SCOPE is `desk_appliances`, an overlay group like `wazuh_agents`: membership
 # is the ONLY thing that enables the role. Add the host to that group in the

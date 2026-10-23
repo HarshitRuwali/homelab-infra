@@ -17,7 +17,7 @@ A reference list. For what a playbook or a role *is*, see
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
 | `docker-updates.yml` | `autoupdate` | containers, only with `run_now` | container update schedule |
 | `rotate-collector-password.yml` | `central` | `nginx`, central `alloy` | rotating collector auth |
-| `desk-appliance.yml` | `desk_appliances` | `docker` (started on first install, reloaded for `live-restore`); udev rules reloaded; `systemd-logind` told to re-read its config; never a running session | an always-on X11 desk appliance; not part of `site.yml` |
+| `desk-appliance.yml` | `desk_appliances` | `docker` (started on first install, reloaded for `live-restore`); udev rules reloaded; `systemd-logind` told to re-read its config; `btusb` reloaded when its DKMS build changes (Bluetooth connections drop and return); never a running session | an always-on X11 desk appliance; not part of `site.yml` |
 | `force-updates.yml` | `monitored`, except `desk_appliances` | **services, via apt** | installing pending updates NOW; never reboots |
 
 ### Common invocations
@@ -88,9 +88,11 @@ test. Refuses to deploy with placeholder credentials.
 
 Baseline for an always-on desk appliance, applied by membership of
 `desk_appliances` only: LightDM autologin into a named X11 session, no
-blanking or suspend, PipeWire, a serial udev symlink, Docker, and security
+blanking or suspend, PipeWire, a serial udev symlink, a DKMS-patched `btusb`
+for a Bluetooth adapter the kernel does not list yet, Docker, and security
 updates with an automatic reboot window. Tagged per concern: `desktop`,
-`power`, `keyring` (opt-in), `audio`, `serial`, `docker`, `updates`.
+`power`, `keyring` (opt-in), `audio`, `serial`, `bluetooth` (opt-in),
+`docker`, `updates`.
 
 !!! warning "The one host class that reboots itself"
     It sets `Automatic-Reboot "true"`, so it fails early on a host in
