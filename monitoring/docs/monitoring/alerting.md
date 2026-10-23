@@ -1,10 +1,9 @@
 # Alerting
 
-53 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
-room through a local relay. 48 are committed under
-`grafana/provisioning/alerting/`; the five availability rules are generated
-from the inventory, so adding a host cannot leave a silent gap in
-down-detection.
+Provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix room
+through a local relay. Most are committed under
+`grafana/provisioning/alerting/`; the availability rules are generated from the
+inventory, so adding a host cannot leave a silent gap in down-detection.
 
 ## Rule catalogue
 
@@ -28,7 +27,7 @@ down-detection.
     | `fleet-disk-will-fill` | warning | 1h | trending to full in 24h **and** under 10% free |
     | `fleet-memory-high` | warning | 15m | available memory under 10% |
     | `fleet-oom-kills` | critical | 0m | kernel OOM killer active in last 15 min |
-    | `fleet-load-high` | warning | 20m | load15 over 2× core count, `tailscale-router` excluded |
+    | `fleet-load-high` | warning | 20m | load15 over 2× core count; `tailscale-router` and the LXCs on t7920 excluded (lxcfs reports the hypervisor's load inside them) |
     | `fleet-filesystem-readonly` | critical | 5m | kernel remounted a filesystem read-only after an I/O error |
     | `fleet-inodes-high` | warning | 15m | over **90%** of the inode limit, which fails writes while space looks free |
 
@@ -79,6 +78,20 @@ down-detection.
     | `fleet-smart-temperature-high` | warning | 30m | over 60 C |
     | `fleet-smart-collector-stale` | warning | 30m | no refresh in an hour on a host that has disks |
 
+=== "Backup (5)"
+
+    Off-site backup health, from the s3-backup module's textfile metrics
+    (`s3_backup.prom`). Only the host that runs the backup produces these
+    series, so every rule uses `noDataState: OK`.
+
+    | uid | Severity | For | Rule |
+    |---|---|---|---|
+    | `fleet-backup-not-succeeded` | critical | 1h | Backup Has Not Succeeded |
+    | `fleet-backup-failed` | warning | 5m | Backup Failed |
+    | `fleet-backup-phase-failed` | warning | 5m | Backup Phase Failed |
+    | `fleet-backup-duration-anomalous` | info | 5m | Backup Duration Anomalous |
+    | `fleet-backup-metrics-stale` | warning | 30m | Backup Metrics Stale |
+
 === "Network (5)"
 
     Every rule excludes virtual interfaces (`veth`, `tap`, `fwbr`, `vmbr`,
@@ -121,7 +134,7 @@ down-detection.
     |---|---|---|---|
     | `fleet-hw-cpu-temperature-critical` | critical | 5m | a CPU package at or above 90 C (TjMax is 93 C) |
     | `fleet-hw-cpu-temperature-high` | warning | 15m | a CPU package above its 83 C rated max |
-    | `fleet-hw-fan-stalled` | critical | 5m | a fitted fan under 500 RPM; the BIOS never parks them. Excludes CPU0 (no fan), PSU (no tachometer) and FB4 (no rear bays, so no fan) |
+    | `fleet-hw-fan-stalled` | critical | 5m | a fitted fan under 500 RPM; the BIOS never parks them. Excludes CPU0 (no fan), PSU (no tachometer) and FB2-FB4 (listed by the BIOS since 2026-10-01, but no fan is fitted in those bays) |
     | `fleet-hw-fans-high` | warning | 30m | a 120 mm fan above 3000 RPM (75% of max): the BIOS is compensating |
     | `fleet-hw-board-temperature-high` | warning | 30m | a Dell SMM board sensor above 65 C |
     | `fleet-hw-sensors-missing` | warning | 15m | the host reports but its CPU sensors do not, or fan data is over 5 min old |

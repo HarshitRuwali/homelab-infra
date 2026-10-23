@@ -1,0 +1,256 @@
+apiVersion: 1
+
+# Off-site backup health, from the s3-backup module. `s3-backup run` writes
+# $METRICS_DIR/s3_backup.prom from its exit trap, so every run leaves a result
+# behind, success or failure (s3-backup/bin/lib/metrics.sh).
+#
+# EVERY RULE HERE USES noDataState: OK, for the same reason as rules-storage:
+# only the host that runs the backup produces these series, so "no data" is
+# the correct, permanent state for every other host.
+#
+# THE TIMESTAMPS ARE READ THROUGH max_over_time(...[7d]), NOT AS BARE GAUGES.
+# A failed run rewrites the file WITHOUT s3_backup_last_success_timestamp_seconds
+# (it is only written on success), so the series the critical rule depends on
+# disappears on the very first failure. A bare `time() - s3_backup_last_success...`
+# would go NoData, which is OK, at exactly the moment it should start counting.
+# max_over_time keeps the last value visible. 7d is the Prometheus retention; a
+# longer window would promise history that does not exist.
+#
+# Staleness keys on the tool's own s3_backup_last_run_timestamp_seconds, not on
+# node_textfile_mtime_seconds. Alloy's unix exporter puts the FULL path in that
+# metric's `file` label, not the basename, so a `file="s3_backup.prom"` matcher
+# silently matches nothing. The run timestamp is written by the same atomic
+# rename, so it carries the same information without depending on how the
+# collector labels files.
+#
+# The backup runs daily (s3-backup.timer: 01:30 plus up to 30 min of
+# RandomizedDelaySec), so every threshold is in hours and the group only needs
+# evaluating every 5 minutes.
+
+groups:
+  - orgId: 1
+    name: backup
+    folder: Fleet
+    interval: 5m
+    rules:
+
+      # ---------------------------------------------------------------
+      # The one that matters. Two missed nights: the newest restorable copy
+      # is two days old and the next failure makes it three. `for: 1h` on top
+      # of 48h because of the timer's jitter: one failed night followed by a
+      # success that lands later in its 30 min window can read 48h+ for up to
+      # half an hour, and that is one missed night, not two.
+      #
+      # The `or` arm keeps it firing past the 7d window. Once a host has gone
+      # a whole window without a success, max_over_time of the success
+      # timestamp is empty, and on its own the rule would RESOLVE while the
+      # backup is still broken. A host that is still running backups still
+      # emits a run timestamp, so the fallback supplies 0 and the age reads as
+      # "since 1970": still firing, for as long as runs keep failing.
+      - uid: fleet-backup-not-succeeded
+        title: Backup Has Not Succeeded
+        condition: C
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: No successful off-site backup in over 48 hours.
+          runbook: "ssh <host> 'sudo s3-backup-status'. Fix the cause, then: sudo systemctl start --no-block s3-backup.service"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                time() - max by (host) (
+                    max_over_time(s3_backup_last_success_timestamp_seconds[7d])
+                  or
+                    0 * max_over_time(s3_backup_last_run_timestamp_seconds[7d])
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [172800]}
+
+      # ---------------------------------------------------------------
+      # The last run exited non-zero. Only a run rewrites the file, so this
+      # stays firing until the next run succeeds.
+      - uid: fleet-backup-failed
+        title: Backup Failed
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: The last off-site backup run failed.
+          runbook: "ssh <host> 'journalctl -u s3-backup.service -n 100'. The last '=== phase:' line before FAILED is where it died."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: min by (host) (s3_backup_success)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+
+      # ---------------------------------------------------------------
+      # Which phase broke. `phase()` records a phase as 0 before running it and
+      # 1 after, so a run that dies mid-phase leaves exactly that phase at 0,
+      # and phases that never started are absent rather than 0. A failure
+      # before the first phase (preflight, lock, config) raises only
+      # Backup Failed.
+      #
+      # The phase is named in the summary because the fleet.message template
+      # prints only host, mountpoint and unit labels, never `phase`.
+      - uid: fleet-backup-phase-failed
+        title: Backup Phase Failed
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The {{ $labels.phase }} phase of the last off-site backup run failed."
+          runbook: "ssh <host> 'journalctl -u s3-backup.service -n 200'. Read upward from FAILED to the '=== phase:' line."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: min by (host, phase) (s3_backup_phase_success)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+
+      # ---------------------------------------------------------------
+      # A run far longer or shorter than usual, judged against its own median
+      # over the retention window rather than a fixed number, so it follows the
+      # photo library as it grows. Over 50% either side: a run that doubles is
+      # usually a large import or a throttled uplink, and one that halves
+      # usually means a phase did less than it should have.
+      #
+      # Only successful runs are judged. A failed run is short for an obvious
+      # reason and already alerts. Info: worth a look in the morning, never
+      # worth waking anyone, which is what the info route's overnight mute is
+      # for.
+      - uid: fleet-backup-duration-anomalous
+        title: Backup Duration Anomalous
+        condition: C
+        for: 5m
+        labels:
+          severity: info
+        annotations:
+          summary: The last successful backup took over 50% longer or shorter than its 7-day median.
+          runbook: "ssh <host> 'sudo s3-backup-status'. Long after a big photo import is expected; short means a phase moved less data than usual."
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                abs(
+                    max by (host) (s3_backup_duration_seconds)
+                  - max by (host) (quantile_over_time(0.5, s3_backup_duration_seconds[7d]))
+                )
+                / (max by (host) (quantile_over_time(0.5, s3_backup_duration_seconds[7d])) > 0)
+                and max by (host) (s3_backup_success) == 1
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.5]}
+
+      # ---------------------------------------------------------------
+      # The counterpart to noDataState: OK above, and the one usually
+      # forgotten: a backup that stops RUNNING produces no failure at all, so
+      # nothing else here would say a word for two days. 26h is one missed
+      # night plus margin for the jitter and a slow run.
+      #
+      # If the file vanishes outright, max_over_time keeps this firing only
+      # for the rest of the 7d window. Beyond that it takes a check from
+      # outside the fleet, which is what s3-backup's HEALTHCHECK_URL is for.
+      - uid: fleet-backup-metrics-stale
+        title: Backup Metrics Stale
+        condition: C
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: The off-site backup has not run for over 26 hours. Suspect the timer, not the storage.
+          runbook: "ssh <host> 'systemctl list-timers s3-backup.timer; systemctl status s3-backup.service'"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: time() - max by (host) (max_over_time(s3_backup_last_run_timestamp_seconds[7d]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [93600]}

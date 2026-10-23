@@ -37,3 +37,7 @@ grafana_alerting_static_files:
   # fans. Every query is scoped to role="hypervisor" because the LXC guests
   # push copies of the host's hwmon sensors; see the file's header.
   - rules-hardware.yaml
+  # Off-site backup health from the s3-backup module's textfile metrics. Every
+  # rule uses noDataState: OK: only the host that runs the backup has these
+  # series; see the file's header.
+  - rules-backup.yaml
