@@ -1,0 +1,29 @@
+---
+# Supervised Qdrant upgrade on memory, one minor release at a time. Run this
+# when fleet-docker-update fails with "skips a minor release". Pass the missed
+# minors oldest first, newest patch of each:
+#
+#   ansible-playbook playbooks/upgrade-qdrant.yml -e qdrant_steps="v1.20.3 v1.21.1"
+#
+# Take a collection snapshot and copy it to /root/qdrant-upgrade-backup first;
+# the script refuses to start without one from the last day.
+- name: Upgrade the memory Qdrant one minor at a time
+  hosts: memory
+  become: true
+  vars:
+    qdrant_compose_file: /root/memory/docker-compose.yml
+    qdrant_steps: ""
+  tasks:
+    - name: Install the checked migration script
+      ansible.builtin.copy:
+        src: ../../memory/upgrade-qdrant-stepwise.sh
+        dest: /root/upgrade-qdrant-stepwise.sh
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Run the checked, stepwise Qdrant migration
+      ansible.builtin.command:
+        argv: "{{ ['/bin/bash', '/root/upgrade-qdrant-stepwise.sh', qdrant_compose_file] + qdrant_steps.split() }}"
+      async: 1800
+      poll: 10

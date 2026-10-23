@@ -1,0 +1,96 @@
+name: Checks
+
+# Keeps the release automation honest. Two jobs:
+#
+#   pr-title        Pull requests only. The title must be a Conventional Commit,
+#                   because a squash merge uses it as the commit subject on
+#                   master and release-please reads that subject to pick the
+#                   modules to release and the version bump. Branch commits that
+#                   are not conventional only produce a warning: they never reach
+#                   master when the PR is squash-merged. The job also reports what
+#                   the PR does to module versions (a table in the job summary,
+#                   warnings for a change that releases nothing); it never fails
+#                   on that.
+#   release-config  Runs the scripts under .github/scripts/ that test the
+#                   release setup: the commit-message check, the versioning
+#                   report, the registration gate, and release-config-test.sh,
+#                   which asserts release-please-config.json,
+#                   .release-please-manifest.json, the module directories, the
+#                   README Modules table and the version strings in each module's
+#                   files all agree. That last one is the gate that rejects a new
+#                   module directory with no package in the config. The release
+#                   PR that release-please opens is created with GITHUB_TOKEN, so
+#                   no workflow runs on it; this job is what catches drift before
+#                   that PR is built from it.
+#
+# Checks only: it reads the repository, uses no repository secret, and never
+# starts a stack, runs a playbook or reaches a host. Event fields (the PR title
+# and the commit SHAs) reach the scripts through `env:`, never by interpolation
+# into a `run:` script, because the title is text from whoever opened the PR.
+# There is deliberately no `pull_request_target` trigger.
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: Conventional Commit title
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      # Full history so the base..head range is available to the commit check.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check the PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: .github/scripts/conventional-commits.sh --title "$PR_TITLE"
+
+      - name: Check the branch commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/conventional-commits.sh --commits "$BASE_SHA" "$HEAD_SHA"
+
+      # Runs even when the checks above rejected the title, which is when its
+      # warnings are most useful.
+      - name: Report the versioning impact
+        if: ${{ !cancelled() }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: .github/scripts/versioning-impact.sh --title "$PR_TITLE" "$BASE_SHA" "$HEAD_SHA"
+
+  release-config:
+    name: Release configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Test the commit-message check
+        run: .github/scripts/conventional-commits-test.sh
+
+      - name: Test the versioning report
+        run: .github/scripts/versioning-impact-test.sh
+
+      - name: Test the registration gate
+        run: .github/scripts/release-config-gate-test.sh
+
+      - name: Test the release configuration
+        run: .github/scripts/release-config-test.sh

@@ -10,7 +10,7 @@
 [![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)](https://harshitruwali.github.io/homelab-infra/monitoring/)
 [![Proxmox](https://img.shields.io/badge/Proxmox-E57000?logo=proxmox&logoColor=white)](https://www.proxmox.com/)
 
-Six independent modules covering a Proxmox and Tailscale estate: Debian VMs,
+Eight independent modules covering a Proxmox and Tailscale estate: Debian VMs,
 LXC containers, Raspberry Pis and one bare-metal hypervisor. Every machine is
 configured, patched and observed the same way, and every automated action
 writes a metric, so **"it updates itself" can never quietly become "it broke
@@ -21,11 +21,13 @@ itself three weeks ago"**.
 | | Module | What it does | Docs |
 |---|---|---|---|
 | 🤖 | [**`ansible/`**](ansible/README.md) | Fleet control plane. Installs collectors, applies patches, updates containers, onboards hosts, provisions alerting. | [site](https://harshitruwali.github.io/homelab-infra/ansible/) |
-| 📊 | [**`monitoring/`**](monitoring/README.md) | Central Grafana, Prometheus, Loki and Alloy. Dashboards, 47 alert rules, Matrix notifications. | [site](https://harshitruwali.github.io/homelab-infra/monitoring/) |
+| 📊 | [**`monitoring/`**](monitoring/README.md) | Central Grafana, Prometheus, Loki and Alloy. Dashboards, alert rules, Matrix notifications. | [site](https://harshitruwali.github.io/homelab-infra/monitoring/) |
 | 🧠 | [**`memory/`**](memory/README.md) | Self-hosted semantic memory for AI agents. PostgreSQL and Qdrant behind FastAPI, with an MCP server. | [site](https://harshitruwali.github.io/homelab-infra/memory/) |
 | 💾 | [**`s3-backup/`**](s3-backup/README.md) | Nightly off-site backup of Immich and Nextcloud to Amazon S3, with restores drilled monthly. | [site](https://harshitruwali.github.io/homelab-infra/s3-backup/) |
 | 🤖 | [**`aibox-model-queue/`**](aibox-model-queue/README.md) | Serializing proxy so one GPU's LM Studio host is shared without model-swap races. | [README](aibox-model-queue/README.md) |
-| 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, Suricata, AdGuard Home, Authelia, OpenBao, ntopng and Greenbone across six small guests. All free and open source. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
+| 🖥️ | [**`proxmox/`**](proxmox/README.md) | Builds a VM template and creates VMs and containers from the images already on the hypervisor, plus firewalled VMs leased to other people. Dry run by default. | [README](proxmox/README.md) |
+| 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, AdGuard Home and Greenbone on four small guests, with Suricata and ntopng on the firewall. Open source throughout. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
+| 📓 | [**`vault-viewer/`**](vault-viewer/README.md) | Read-only web viewer for an Obsidian vault on a Tailscale address, with search, live reload and PDF export. Treats vault content as untrusted. | [site](https://harshitruwali.github.io/homelab-infra/vault-viewer/) |
 
 Each module stands alone. Nothing here requires you to run the others, and
 every directory's README is a complete quick start by itself.
@@ -126,6 +128,20 @@ the commands that finish the job.
 
 </details>
 
+<details>
+<summary><b>📓 Serve a vault in the browser</b></summary>
+
+```bash
+cd vault-viewer
+./install.sh --bind 100.64.0.10 --tailnet-user you@github ~/obsidian
+```
+
+Installs one Python file and a systemd user unit, then checks that the server
+answers. Open `http://100.64.0.10:7777` from your own tailnet devices. Add
+`--build-pdf-image` for PDF export, which needs docker.
+
+</details>
+
 > [!IMPORTANT]
 > **Run Ansible from `ansible/`, never from here.** `ansible/ansible.cfg`
 > resolves `inventory` and `roles_path` relative to the working directory, and
@@ -143,13 +159,19 @@ memory/         api-service/, memory-service/, mcp-server/, ingestion scripts
 s3-backup/      restic and rclone automation, installer, restore drills
 aibox-model-queue/
                 Serializing proxy for a shared LM Studio host
+vault-viewer/   artifacts.py: read-only Obsidian vault viewer, installer, tests
+proxmox/        pve-guest.sh: VM template, new VMs and containers
 docs-landing/   The static index page of the published docs site
-.github/        One workflow: it builds and publishes the docs, nothing else
+.github/        Workflows (docs, releases, PR checks) and the scripts they run
+CONTRIBUTING.md Commit messages, pull requests, versioning and the release flow
+release-please-config.json
+                Per-module release settings (.release-please-manifest.json
+                holds the last released versions)
 ```
 
 ## Documentation
 
-Five MkDocs Material sites plus a landing page, on one GitHub Pages site:
+One MkDocs Material site per documented module plus a landing page, on one GitHub Pages site:
 
 | Path | Source |
 |---|---|
@@ -160,27 +182,38 @@ Five MkDocs Material sites plus a landing page, on one GitHub Pages site:
 | [`/s3-backup/`](https://harshitruwali.github.io/homelab-infra/s3-backup/) | `s3-backup/mkdocs.yml` |
 | [`/aibox-model-queue/`](https://harshitruwali.github.io/homelab-infra/aibox-model-queue/) | `aibox-model-queue/mkdocs.yml` |
 | [`/security/`](https://harshitruwali.github.io/homelab-infra/security/) | `security/mkdocs.yml` |
+| [`/vault-viewer/`](https://harshitruwali.github.io/homelab-infra/vault-viewer/) | `vault-viewer/mkdocs.yml` |
 
 ```bash
-cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security
+cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security, vault-viewer
 python3 -m venv .venv
 .venv/bin/pip install -r docs/requirements.txt
 .venv/bin/mkdocs serve                      # live preview on :8000
 ```
 
-The five configs share the same Material theme and pinned dependencies, with
+The configs share the same Material theme and pinned dependencies, with
 each site's name, URL and navigation tailored to its module. **Keep shared
-theme and dependency changes aligned across all five.** Pull
+theme and dependency changes aligned across all of them.** Pull
 requests build every site with `--strict`, which turns a broken link or a page
 missing from the nav into a failure rather than a warning nobody reads.
 
 Details, including the manual GitHub Pages step that cannot be automated, are
 in [Building the docs](https://harshitruwali.github.io/homelab-infra/ansible/reference/tooling/).
 
+## Versioning
+
+Each module has its own [SemVer](https://semver.org) version, because each
+stands alone. A release is tagged `<module>-vX.Y.Z` (for example
+`monitoring-v0.2.0`) and published as its own GitHub release, which carries the
+release notes (the same notes go into the module's `CHANGELOG.md`). Versions and notes come from
+[Conventional Commits](https://www.conventionalcommits.org). The commit rules,
+the release flow and pinned deploys are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Secrets
 
-Nothing in this repository holds a plaintext credential, and the docs pipeline
-holds no repository secret either.
+Nothing in this repository holds a plaintext credential, and no workflow holds a
+repository secret either (the release workflow uses only the built-in
+`GITHUB_TOKEN`).
 
 | What | Where it lives |
 |---|---|
@@ -200,18 +233,3 @@ blind the monitoring.
 > password, without which every S3 snapshot is permanently unreadable. Losing
 > the AWS account loses that one *and* the backups together. Keep offline
 > copies of both. See [Secrets](s3-backup/docs/secrets.md).
-
-## History
-
-| Directory | Origin repo |
-|---|---|
-| `memory/` | `HarshitRuwali/open-memory-stack` |
-| `s3-backup/` | `HarshitRuwali/s3-backup-automation` |
-| `monitoring/`, `ansible/` | `HarshitRuwali/monitorting-stack` |
-
-All three repositories were merged in with `git subtree`, so every original
-commit, author and date is preserved and the original SHAs still match the
-archived upstreams. Commits from before the merge refer to paths as they were
-in the standalone repos, so use `git log --follow <path>` to trace a file
-across the boundary. `ansible/` was later promoted out of `monitoring/ansible/`
-to the root, meaning its history crosses two path moves.

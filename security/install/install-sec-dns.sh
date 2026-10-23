@@ -7,8 +7,12 @@ require_root; banner
 run apt-get update
 run apt-get install -y curl ca-certificates
 
-# Official installer, pinned to the documented one-liner.
-run sh -c 'curl -sSL https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh | sh -s -- -v'
+# Download fully before execution and verify the service, not just the shell exit.
+run install -d -m 0700 /var/cache/homelab-security
+download_file https://raw.githubusercontent.com/AdguardTeam/AdGuardHome/master/scripts/install.sh \
+  /var/cache/homelab-security/adguard-install.sh
+run sh /var/cache/homelab-security/adguard-install.sh -v
+run systemctl is-active --quiet AdGuardHome
 
 ok "AdGuard installed. Finish setup at http://<this-guest>:3000"
 cat <<'NOTE'

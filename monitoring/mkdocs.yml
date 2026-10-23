@@ -83,6 +83,11 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.tabbed:
       alternate_style: true
+      # Slug ids ("direct-lxc") instead of generated ones ("__tabbed_1_1"), so
+      # a link like install.md#direct-lxc lands on, and opens, that tab.
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
   - pymdownx.tasklist:
       custom_checkbox: true
   - pymdownx.keys

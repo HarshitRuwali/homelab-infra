@@ -31,7 +31,10 @@ WORK="$(mktemp -d /var/tmp/s3-backup-drill.XXXXXX)"
 SCRATCH=()
 cleanup() {
   local c
-  for c in "${SCRATCH[@]:-}"; do [[ -n "$c" ]] && docker rm -f "$c" >/dev/null 2>&1 || true; done
+  # -v as well: the database images declare a VOLUME, so each scratch
+  # container gets an anonymous data volume that `rm -f` alone leaves behind
+  # (about 1.5 GB per monthly drill on the Immich database).
+  for c in "${SCRATCH[@]:-}"; do [[ -n "$c" ]] && docker rm -fv "$c" >/dev/null 2>&1 || true; done
   rm -rf "$WORK"
   shred_runtime_secrets
 }

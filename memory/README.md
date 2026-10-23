@@ -24,6 +24,11 @@ docker compose up -d --build
 
 The API listens on `http://localhost:8088`, with Swagger UI at `/docs`.
 
+Qdrant follows `:latest`, but it can only migrate its storage one minor
+release at a time. On an existing install more than one minor behind, run
+`./upgrade-qdrant-stepwise.sh <compose file> <each missed minor>` before
+`docker compose up -d`; the script's header explains how to pick the tags.
+
 You also need an embedding model reachable at `AI_VM_HOST:EMBED_PORT` exposing
 llama.cpp's native `POST /embedding` — the stack embeds nothing itself. Without
 one, `/health` is green but every write returns 502.

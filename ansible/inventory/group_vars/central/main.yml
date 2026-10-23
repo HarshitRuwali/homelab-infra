@@ -11,6 +11,11 @@ collector_basic_auth_required: false
 
 alloy_enable_docker: false
 
+# The one host that listens for syslog: the firewall's Suricata EVE output
+# lands here and is forwarded to Loki as job="suricata". See
+# roles/alloy_collector/defaults/main.yml for why the port is not 1514.
+alloy_syslog_listener_port: 5514
+
 # The central LXC usually sits on the same private LAN as the other Proxmox
 # guests, so a controller outside that network needs the same ProxyJump the
 # lan_guests group uses. Set `lan_use_jump_host: false` when running from a

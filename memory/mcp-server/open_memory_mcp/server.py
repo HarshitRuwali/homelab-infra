@@ -45,7 +45,7 @@ LEGACY_AGENT_ID = "legacy"
 
 mcp = _Server(
     "open-memory",
-    version="0.1.0",
+    version="0.2.0",  # x-release-please-version
     instructions=(
         "Semantic long-term memory backed by Qdrant + PostgreSQL. "
         f"Writes from this client are owned by agent '{AGENT_ID}' in project "
