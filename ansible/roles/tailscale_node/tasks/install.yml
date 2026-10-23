@@ -1,0 +1,94 @@
+---
+- name: Check the distribution
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] in ['Debian', 'Ubuntu']
+    fail_msg: >-
+      tailscale_node installs from Tailscale's apt repository and supports
+      Debian and Ubuntu only. {{ inventory_hostname }} reports
+      {{ ansible_facts['distribution'] }}.
+    quiet: true
+
+# An unprivileged LXC has no /dev/net/tun unless the hypervisor passes it
+# through, and tailscaled cannot create its interface without it. Only an LXC
+# is checked: a VM or bare metal creates the node itself. The `pct set` lines
+# that fix it are in the role README, Prerequisites.
+- name: Look for the TUN device
+  ansible.builtin.stat:
+    path: /dev/net/tun
+  register: tailscale_node_tun
+
+- name: Check the TUN device on an LXC guest
+  ansible.builtin.assert:
+    that:
+      - tailscale_node_tun.stat.exists
+    fail_msg: >-
+      {{ inventory_hostname }} is an LXC guest without /dev/net/tun, so
+      tailscaled cannot start. Pass the device through on the hypervisor; the
+      two config lines are in roles/tailscale_node/README.md, Prerequisites.
+    quiet: true
+  when: ansible_facts['virtualization_type'] | default('') == 'lxc'
+
+# Mirrors roles/wazuh_agent/tasks/repo.yml: apt_repository and a key fetched
+# with get_url. Migrate every role to deb822_repository in one change rather
+# than this one alone.
+- name: Install APT prerequisites for the Tailscale repository
+  ansible.builtin.apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - gnupg
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+# Tailscale publishes the key unarmoured (.noarmor.gpg), the form apt reads
+# directly from a signed-by path.
+- name: Install the Tailscale APT signing key
+  ansible.builtin.get_url:
+    url: "{{ tailscale_node_key_url }}"
+    dest: "{{ tailscale_node_apt_keyring }}"
+    checksum: "sha256:{{ tailscale_node_apt_key_sha256 }}"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the Tailscale APT repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by={{ tailscale_node_apt_keyring }}]
+      {{ tailscale_node_repo_url }}
+      {{ ansible_facts['distribution_release'] }} main
+    filename: tailscale
+    state: present
+    update_cache: true
+  register: tailscale_node_repo
+
+# `present` unless tailscale_node_manage_upgrades: a package upgrade restarts
+# tailscaled. The package's own postinst starts the service on first install;
+# this role never restarts it.
+#
+# Under --check, when the repository above would only just be added, apt cannot
+# see the package yet. That failure alone is tolerated in check mode (a real run
+# still fails).
+- name: Install Tailscale
+  ansible.builtin.apt:
+    name: tailscale
+    state: "{{ 'latest' if tailscale_node_manage_upgrades | bool else 'present' }}"
+    update_cache: true
+    cache_valid_time: 3600
+  register: tailscale_node_pkg
+  failed_when: >-
+    tailscale_node_pkg is failed
+    and not (ansible_check_mode and tailscale_node_repo is changed)
+
+# Under --check on a fresh host the unit does not exist yet, so a failure is
+# tolerated in check mode only (failed_when, not ignore_errors: a real run
+# still fails).
+- name: Enable and start tailscaled
+  ansible.builtin.systemd:
+    name: tailscaled
+    enabled: true
+    state: started
+  register: tailscale_node_unit
+  failed_when: tailscale_node_unit is failed and not ansible_check_mode

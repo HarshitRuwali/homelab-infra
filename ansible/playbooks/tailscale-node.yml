@@ -1,0 +1,39 @@
+---
+# Put a host on the tailnet, tagged, and publish local services to it over
+# HTTPS with `tailscale serve`. Used for the Matrix VM (tailnet-only
+# homeserver) and for the image registry guest.
+#
+#   ansible-playbook playbooks/tailscale-node.yml --check --diff
+#   ansible-playbook playbooks/tailscale-node.yml --limit <host>
+#   ansible-playbook playbooks/tailscale-node.yml --tags serve
+#
+# Tags, one per concern: install, join, serve.
+#
+# SCOPE is `tailscale_nodes`, an overlay group like `wazuh_agents`: membership
+# is the ONLY thing that enables the role. Add the host to that group in the
+# gitignored inventory/hosts.local.yml (see hosts.example.yml); this file names
+# no host.
+#
+# NEVER PUT THE TAILNET ROUTER IN `tailscale_nodes`. The exit node and subnet
+# router carries the estate's traffic and restarting tailscaled there drops it.
+# The join step refuses a node that already routes or is an exit node, but
+# group membership is the control; that check is only a backstop.
+#
+# NOT in site.yml, same as wazuh-agents.yml: this is a host-class change you run
+# on purpose, supervised. The auth key is the vault variable
+# vault_tailscale_authkey (a tagged, ideally single-use key); a host that is
+# already on the tailnet is not rejoined and the key is not used.
+#
+# RUN ALONGSIDE, from their own playbooks:
+#   image-registry.yml   image_registry (host also in `image_registries`)
+#   collectors.yml       alloy_collector (host also in `monitored`)
+#
+# Before the first run, Harshit's steps in roles/tailscale_node/README.md:
+# tags and an auth key in the admin console, HTTPS certificates enabled for
+# the tailnet, and TUN passthrough if the host is an LXC guest.
+
+- name: Join the tailnet and publish services
+  hosts: tailscale_nodes
+  become: true
+  roles:
+    - tailscale_node

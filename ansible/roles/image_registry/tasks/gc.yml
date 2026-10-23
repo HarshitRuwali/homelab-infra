@@ -1,0 +1,55 @@
+---
+- name: Check the garbage collection schedule
+  ansible.builtin.command: systemd-analyze calendar "{{ image_registry_gc_oncalendar }}"
+  register: image_registry_gc_calendar
+  changed_when: false
+  check_mode: false
+
+- name: Ensure the textfile collector directory exists
+  ansible.builtin.file:
+    path: "{{ image_registry_metrics_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the garbage collection script
+  ansible.builtin.template:
+    src: fleet-registry-gc.sh.j2
+    dest: "{{ image_registry_gc_script }}"
+    owner: root
+    group: root
+    mode: "0755"
+    validate: bash -n %s
+  notify: Reload systemd
+
+- name: Install the garbage collection systemd service
+  ansible.builtin.template:
+    src: fleet-registry-gc.service.j2
+    dest: /etc/systemd/system/fleet-registry-gc.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Install the garbage collection systemd timer
+  ansible.builtin.template:
+    src: fleet-registry-gc.timer.j2
+    dest: /etc/systemd/system/fleet-registry-gc.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers so systemd sees the new units
+  ansible.builtin.meta: flush_handlers
+
+# Enabled and started (the timer, not the run): the first collection happens at
+# the next scheduled time, not now, because it takes the registry down.
+- name: Enable the garbage collection timer
+  ansible.builtin.systemd:
+    name: fleet-registry-gc.timer
+    enabled: true
+    state: started
+  register: image_registry_gc_unit
+  failed_when: image_registry_gc_unit is failed and not ansible_check_mode

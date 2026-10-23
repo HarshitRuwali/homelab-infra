@@ -1,0 +1,19 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+# The registry reads config.yml at start, and a bind-mounted file is not
+# watched, so a changed configuration or Compose file means a recreate.
+# `up -d` alone would leave a container whose config file changed untouched.
+- name: Recreate the registry
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --file
+      - "{{ image_registry_compose_file }}"
+      - up
+      - --detach
+      - --force-recreate
+  changed_when: true

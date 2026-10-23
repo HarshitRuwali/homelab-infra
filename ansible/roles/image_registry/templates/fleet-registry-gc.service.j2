@@ -1,0 +1,12 @@
+# Managed by ansible/roles/image_registry. Do not edit by hand.
+[Unit]
+Description=Garbage-collect the image registry
+Documentation=file://{{ image_registry_project_dir }}/compose.yml
+After=docker.service
+Requires=docker.service
+
+# No [Install] section, deliberately: the timer starts it. It stops the
+# registry for the length of the run, so a boot must not trigger it.
+[Service]
+Type=oneshot
+ExecStart={{ image_registry_gc_script }}
