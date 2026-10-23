@@ -157,6 +157,14 @@ Installed only where `nvidia-smi` is found on the host (autodetected, same
 | `uu_upgrade_oncalendar` | `*-*-* 03:00` | |
 | `uu_upgrade_randomized_delay` | `3600` | staggers the fleet |
 
+## Desk appliance
+
+`roles/desk_appliance/defaults/main.yml`
+
+Every variable is prefixed `desk_appliance_`. The full table, with defaults
+and what is deliberately left unset, is in `roles/desk_appliance/README.md`;
+it is not repeated here.
+
 ## Container updates
 
 `roles/docker_updates/defaults/main.yml`

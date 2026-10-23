@@ -69,7 +69,7 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: A reboot has been required for over 7 days. Nothing reboots itself here, so schedule a window.
+          summary: A reboot has been required for over 7 days. Nothing reboots itself here, except desk_appliances hosts, so schedule a window.
           runbook: "Reboot one host at a time and confirm it returns before the next."
         noDataState: OK
         execErrState: Error

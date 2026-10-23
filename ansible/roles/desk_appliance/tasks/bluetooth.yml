@@ -1,0 +1,245 @@
+---
+# A Bluetooth adapter whose USB id the kernel's btusb does not list in its
+# quirks table still binds btusb through the generic Bluetooth class match,
+# but without the vendor flag (BTUSB_MEDIATEK and so on), so the vendor setup
+# and its firmware download never run and the controller never comes up. This
+# layer rebuilds btusb through DKMS with the listed ids added. See the README,
+# Bluetooth.
+
+# A malformed entry would only be skipped by btusb-prepare.sh at build time,
+# which leaves the adapter as broken as before with a DKMS log line to say why.
+# `\Z`, not `$`: `$` also matches before a trailing newline.
+- name: Validate the btusb quirk entries
+  ansible.builtin.assert:
+    that:
+      - item.vendor_id is defined
+      - (item.vendor_id | string) is match('^[0-9a-fA-F]{4}\Z')
+      - item.product_id is defined
+      - (item.product_id | string) is match('^[0-9a-fA-F]{4}\Z')
+      - item.driver_info is defined
+      - item.driver_info is string
+      - item.driver_info is match('^BTUSB_[A-Z0-9_]+( [|] BTUSB_[A-Z0-9_]+)*\Z')
+    fail_msg: >-
+      Each desk_appliance_btusb_quirks entry needs vendor_id and product_id (4
+      hex digits each, quoted so YAML does not read them as numbers) and
+      driver_info (btusb flags joined by " | ", for example
+      "BTUSB_MEDIATEK | BTUSB_WIDEBAND_SPEECH"). Got: {{ item }}
+    quiet: true
+  loop: "{{ desk_appliance_btusb_quirks }}"
+  loop_control:
+    label: "{{ item.vendor_id | default('?') }}:{{ item.product_id | default('?') }}"
+
+- name: Refuse a btusb quirk listed twice
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_btusb_ids | length == desk_appliance_btusb_ids | unique | length
+    fail_msg: >-
+      desk_appliance_btusb_quirks lists the same vendor:product more than once:
+      {{ desk_appliance_btusb_ids }}
+    quiet: true
+  vars:
+    desk_appliance_btusb_ids: >-
+      {{ desk_appliance_btusb_quirks | map(attribute='vendor_id') | map('string') | map('lower')
+         | zip(desk_appliance_btusb_quirks | map(attribute='product_id') | map('string') | map('lower'))
+         | map('join', ':') | list }}
+
+- name: Read the btusb DKMS module state
+  ansible.builtin.command: dkms status -m {{ desk_appliance_btusb_dkms_name }}
+  register: desk_appliance_btusb_dkms_status
+  changed_when: false
+  # dkms is not installed yet on a host that never had a quirk list.
+  failed_when: false
+  check_mode: false
+
+- name: Configure the patched btusb
+  when: desk_appliance_btusb_quirks | length > 0
+  block:
+    - name: Install the btusb build dependencies
+      ansible.builtin.apt:
+        name: "{{ desk_appliance_btusb_build_packages }}"
+        state: present
+        install_recommends: false
+
+    - name: Create the btusb DKMS source directory
+      ansible.builtin.file:
+        path: "{{ desk_appliance_btusb_dkms_src }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the btusb DKMS sources
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ desk_appliance_btusb_dkms_src }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "{{ item.mode }}"
+      loop:
+        - src: btusb-dkms.conf.j2
+          dest: dkms.conf
+          mode: "0644"
+        - src: btusb-prepare.sh.j2
+          dest: btusb-prepare.sh
+          mode: "0755"
+        - src: btusb-quirks.list.j2
+          dest: btusb-quirks.list
+          mode: "0644"
+      loop_control:
+        label: "{{ item.dest }}"
+      register: desk_appliance_btusb_sources
+
+    # Every kernel with headers, not only the running one: a kernel installed
+    # and waiting for its reboot needs the patched btusb too.
+    - name: List the kernels with headers installed
+      ansible.builtin.shell: |
+        for include in /lib/modules/*/build/include; do
+          [ -d "$include" ] && basename "$(dirname "$(dirname "$include")")"
+        done
+        exit 0
+      register: desk_appliance_btusb_kernels
+      changed_when: false
+      check_mode: false
+
+    # DKMS keeps a copy of the sources per build, so changed sources need the
+    # old builds removed before the new ones, for every kernel.
+    - name: Remove the btusb DKMS builds made from the previous sources
+      ansible.builtin.command: >-
+        dkms remove -m {{ desk_appliance_btusb_dkms_name }}
+        -v {{ desk_appliance_btusb_dkms_version }} --all
+      when:
+        - desk_appliance_btusb_sources is changed
+        - desk_appliance_btusb_dkms_name in desk_appliance_btusb_dkms_status.stdout
+      changed_when: true
+
+    # Exit 77 is btusb-prepare.sh declining to build; DKMS records it as
+    # skipped and that kernel keeps its in-tree btusb. dkms writes the
+    # script's own output to make.log, so its reason lines are printed here.
+    # A skipped build is tried again on every run (and at boot), decompressing
+    # linux-source each time: empty the list once the kernel lists the ids.
+    - name: Build and install the patched btusb for each kernel with headers
+      ansible.builtin.shell: |
+        dkms install -m "$NAME" -v "$VERSION" -k "$KERNEL" && exit 0
+        rc=$?
+        grep -h '^desk-appliance-btusb:' "/var/lib/dkms/$NAME/$VERSION/build/make.log" 2>/dev/null
+        exit "$rc"
+      environment:
+        NAME: "{{ desk_appliance_btusb_dkms_name }}"
+        VERSION: "{{ desk_appliance_btusb_dkms_version }}"
+        KERNEL: "{{ item }}"
+      loop: "{{ desk_appliance_btusb_kernels.stdout_lines }}"
+      when: >-
+        desk_appliance_btusb_sources is changed
+        or not (desk_appliance_btusb_dkms_status.stdout
+                is search(desk_appliance_btusb_dkms_name ~ '/'
+                          ~ desk_appliance_btusb_dkms_version ~ ', '
+                          ~ (item | regex_escape) ~ ', [^:]+: installed'))
+      register: desk_appliance_btusb_install
+      changed_when: desk_appliance_btusb_install.rc == 0
+      failed_when: desk_appliance_btusb_install.rc not in [0, 77]
+
+    - name: Say why the patched btusb was not built
+      ansible.builtin.debug:
+        msg: "{{ item.item }}: {{ item.stdout_lines | select('match', '^desk-appliance-btusb:') | list }}"
+      loop: "{{ desk_appliance_btusb_install.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: item.rc | default(0) == 77
+
+    - name: Install the boot-time btusb build unit
+      ansible.builtin.template:
+        src: desk-appliance-btusb.service.j2
+        dest: /etc/systemd/system/desk-appliance-btusb.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Enable the boot-time btusb build unit
+      ansible.builtin.systemd:
+        name: desk-appliance-btusb.service
+        enabled: true
+        daemon_reload: true
+      register: desk_appliance_btusb_unit
+      # Under --check on a fresh host the unit file has not been written.
+      failed_when: desk_appliance_btusb_unit is failed and not ansible_check_mode
+
+- name: Remove the patched btusb when no quirks are configured
+  when: desk_appliance_btusb_quirks | length == 0
+  block:
+    - name: Remove the btusb DKMS builds
+      ansible.builtin.command: >-
+        dkms remove -m {{ desk_appliance_btusb_dkms_name }}
+        -v {{ desk_appliance_btusb_dkms_version }} --all
+      when: desk_appliance_btusb_dkms_name in desk_appliance_btusb_dkms_status.stdout
+      register: desk_appliance_btusb_removed
+      changed_when: true
+
+    - name: Check for the boot-time btusb build unit
+      ansible.builtin.stat:
+        path: /etc/systemd/system/desk-appliance-btusb.service
+      register: desk_appliance_btusb_unit_file
+
+    - name: Disable the boot-time btusb build unit
+      ansible.builtin.systemd:
+        name: desk-appliance-btusb.service
+        enabled: false
+      when: desk_appliance_btusb_unit_file.stat.exists
+
+    - name: Remove the btusb DKMS sources and the boot-time unit
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ desk_appliance_btusb_dkms_src }}"
+        - /etc/systemd/system/desk-appliance-btusb.service
+      notify: Reload systemd
+
+# Only on a host that uses the layer or has just stopped using it, so a host
+# that never opted in never has Bluetooth reloaded by this role.
+#
+# srcversion is a hash of a module's sources. A loaded btusb whose srcversion
+# differs from the one modprobe would load now is stale: the patched module was
+# just installed, or just removed. /sys/module/btusb/srcversion is absent for
+# an in-tree module on kernels built without MODULE_SRCVERSION_ALL, and
+# modinfo prints nothing for it then either, so in-tree against in-tree
+# compares equal.
+- name: Compare the loaded btusb with the one on disk
+  ansible.builtin.shell: |
+    set -o pipefail
+    [ -d /sys/module/btusb ] || { echo not-loaded; exit 0; }
+    loaded=$(cat /sys/module/btusb/srcversion 2>/dev/null || true)
+    on_disk=$(modinfo -F srcversion btusb 2>/dev/null || true)
+    if [ "$loaded" = "$on_disk" ]; then echo current; else echo stale; fi
+  args:
+    executable: /bin/bash
+  register: desk_appliance_btusb_loaded
+  changed_when: false
+  check_mode: false
+  when: >-
+    desk_appliance_btusb_quirks | length > 0
+    or desk_appliance_btusb_removed is changed
+
+# Unloads btusb and the modules only it was using (the bt* helpers, and the
+# bluetooth core when nothing else holds it), then loads btusb again: every
+# btusb adapter resets and its connections drop and come back. The USB
+# controller is not reset, so other devices on it are not touched.
+#
+# If the module on disk does not load (on Secure Boot, a DKMS key that is not
+# enrolled), its DKMS builds are removed so the in-tree btusb loads now and
+# after a reboot, and the task fails to say so.
+- name: Reload btusb so the module on disk is the one in use
+  ansible.builtin.shell: |
+    modprobe -r btusb
+    modprobe btusb && exit 0
+    dkms remove -m "$NAME" -v "$VERSION" --all
+    modprobe btusb
+    echo "btusb from DKMS would not load; its builds were removed and the in-tree btusb loaded instead" >&2
+    exit 1
+  environment:
+    NAME: "{{ desk_appliance_btusb_dkms_name }}"
+    VERSION: "{{ desk_appliance_btusb_dkms_version }}"
+  when:
+    - desk_appliance_btusb_loaded is not skipped
+    - desk_appliance_btusb_loaded.stdout == 'stale'
+  changed_when: true
