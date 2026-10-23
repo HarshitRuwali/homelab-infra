@@ -21,6 +21,7 @@ The scope is the module directory, lowercase: `feat(monitoring): add a disk
 alert`, `fix(s3-backup): handle an empty bucket`. Leave it out when a change is
 not about one module. Add `!` before the colon (`feat(ansible)!: drop the old
 inventory format`), or a `BREAKING CHANGE:` footer, for a breaking change.
+A scope that is not a module is rejected.
 
 The PR title becomes the changelog entry, so write it for someone reading the
 changelog: what changed, in plain words, not how or why. The text of a `BREAKING
@@ -44,6 +45,24 @@ say there what to do about it.
 Hidden types do not appear in the release notes, and a module whose only new
 commits are hidden gets no release. Marking one breaking (`chore!:`) overrides
 that. If a change should reach users, use a visible type.
+
+### Check the subject before you commit
+
+`.pre-commit-config.yaml` has one `commit-msg` hook that rejects a commit whose
+subject is not a conventional commit, with the same rules as the PR title check
+below. The scope, when there is one, must be a module registered in
+`release-please-config.json`, so a typo such as `feat(monitring):` is caught. Merge
+commits and `fixup!`, `squash!` and `amend!` commits are let through. Install it
+once per clone:
+
+```bash
+pre-commit install
+```
+
+If you do not have `pre-commit`, `uvx pre-commit install` runs it without
+installing it. Without the hook nothing changes for CI: the PR title is still
+checked there. Run `.github/scripts/conventional-commits.sh --message-file
+.git/COMMIT_EDITMSG` to test the message of the commit you just wrote.
 
 ### PR titles are checked
 

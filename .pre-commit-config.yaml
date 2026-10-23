@@ -1,0 +1,19 @@
+# Local git hooks, run by pre-commit (https://pre-commit.com).
+#
+#   pre-commit install        # once per clone; installs the commit-msg hook
+#
+# The one hook checks the commit subject with the same script, and so the same
+# rules, as the PR title check in .github/workflows/checks.yml. See
+# CONTRIBUTING.md, "Commit messages".
+minimum_pre_commit_version: "3.2.0"
+default_install_hook_types: [commit-msg]
+
+repos:
+  - repo: local
+    hooks:
+      - id: conventional-commit
+        name: Conventional Commit subject
+        entry: .github/scripts/conventional-commits.sh --message-file
+        language: script
+        stages: [commit-msg]
+        always_run: true
