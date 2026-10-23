@@ -71,7 +71,7 @@ Proxmox makes growing a disk trivial and shrinking it a manual, risky
 operation:
 
 ```bash
-qm resize 100 scsi0 +20G     # then grow the filesystem inside the guest
+qm resize 110 scsi0 +20G     # then grow the filesystem inside the guest
 ```
 
 That asymmetry is the whole argument for starting at 25 GB. If real ingest runs

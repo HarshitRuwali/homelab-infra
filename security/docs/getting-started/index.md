@@ -168,9 +168,9 @@ addresses with each guest's DHCP reservation:
 
 | Guest | Platform group under `monitored` | SSH user | VMID |
 |---|---|---|---|
-| `sec-wazuh` | `vm_debian` | `admin` | 100 |
-| `sec-scan` | `vm_debian` | `admin` | 101 |
-| `sec-crowdsec` | `lxc_debian` | `root` | 113 |
+| `sec-wazuh` | `vm_debian` | `admin` | 110 |
+| `sec-scan` | `vm_debian` | `admin` | 113 |
+| `sec-crowdsec` | `lxc_debian` | `root` | 112 |
 | `sec-dns` | `lxc_debian` | `root` | 111 |
 
 Also add all four to the `security_guests` overlay under `monitored`. Its

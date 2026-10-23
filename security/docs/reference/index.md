@@ -4,9 +4,9 @@
 
 | Guest | Type | VMID | vCPU | RAM | Disk | Tier | Bridge |
 |---|---|---|---|---|---|---|---|
-| `sec-wazuh` | VM | 100 | 4 | 8 GB | 25 GB | SSD | trusted (`vmbr0`) |
-| `sec-scan` | VM | 101 | 2 | 6 GB | 40 GB | HDD | sandbox (`vmbr1`) |
-| `sec-crowdsec` | LXC | 113 | 1 | 1 GB | 8 GB | SSD | trusted (`vmbr0`) |
+| `sec-wazuh` | VM | 110 | 4 | 8 GB | 25 GB | SSD | trusted (`vmbr0`) |
+| `sec-scan` | VM | 113 | 2 | 6 GB | 40 GB | HDD | sandbox (`vmbr1`) |
+| `sec-crowdsec` | LXC | 112 | 1 | 1 GB | 8 GB | SSD | trusted (`vmbr0`) |
 | `sec-dns` | LXC | 111 | 1 | 512 MB | 8 GB | SSD | trusted (`vmbr0`) |
 
 Totals: **8 vCPU, 15.5 GB RAM, 81 GB disk**, of which 41 GB on SSD and 40 GB on

@@ -80,7 +80,7 @@ vmbr1   bridge-ports none    10.10.50.0/24   internal, routed by OPNsense
 vmbr2   bridge-ports none    unused
 ```
 
-OPNsense (VMID 102) has a leg on each: `net0` on vmbr0, `net1` on vmbr1,
+OPNsense (VMID 100) has a leg on each: `net0` on vmbr0, `net1` on vmbr1,
 `net2` on vmbr2. So **vmbr0 is OPNsense's WAN and vmbr1 is its LAN.**
 
 ### NAT, and the three things it breaks

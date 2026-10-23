@@ -106,14 +106,14 @@ all:
 
                 # Reached through lan_jump_host; see the overlay below.
                 app-01:
-                  pve_vmid: 103
+                  pve_vmid: 106
                   ansible_host: 10.0.1.11
                   ansible_user: root
                   monitor_role: service
 
                 # The central monitoring stack itself.
                 monitor-lxc:
-                  pve_vmid: 112
+                  pve_vmid: 103
                   ansible_host: 10.0.1.99
                   ansible_user: root
                   monitor_role: central
@@ -122,7 +122,7 @@ all:
                   # Renaming it forks its history in Prometheus and Loki.
 
                 sec-crowdsec:
-                  pve_vmid: 113
+                  pve_vmid: 112
                   ansible_host: 10.0.0.210
                   ansible_user: root
 
@@ -146,12 +146,12 @@ all:
                   monitor_role: workstation
 
                 sec-wazuh:
-                  pve_vmid: 100
+                  pve_vmid: 110
                   ansible_host: 10.0.0.200
                   ansible_user: admin
 
                 sec-scan:
-                  pve_vmid: 101
+                  pve_vmid: 113
                   ansible_host: 10.0.1.201
                   ansible_user: admin
 
