@@ -11,6 +11,7 @@ name: Deploy docs
 #   /homelab-infra/aibox-model-queue/ built from aibox-model-queue/mkdocs.yml
 #   /homelab-infra/security/    built from security/mkdocs.yml
 #   /homelab-infra/vault-viewer/ built from vault-viewer/mkdocs.yml
+#   /homelab-infra/media/       built from media/mkdocs.yml
 #
 # Every module has its own dedicated site; none is folded into another. Adding
 # or removing a stack means touching the path filters on both triggers, the pip
@@ -51,6 +52,8 @@ on:
       - security/mkdocs.yml
       - vault-viewer/docs/**
       - vault-viewer/mkdocs.yml
+      - media/docs/**
+      - media/mkdocs.yml
       - docs-landing/**
       - .github/workflows/deploy-docs.yml
   push:
@@ -71,6 +74,8 @@ on:
       - security/mkdocs.yml
       - vault-viewer/docs/**
       - vault-viewer/mkdocs.yml
+      - media/docs/**
+      - media/mkdocs.yml
       - docs-landing/**
       - .github/workflows/deploy-docs.yml
   workflow_dispatch:
@@ -105,6 +110,7 @@ jobs:
             aibox-model-queue/docs/requirements.txt
             security/docs/requirements.txt
             vault-viewer/docs/requirements.txt
+            media/docs/requirements.txt
 
       # Every requirements file pins the identical set (mkdocs 1.6.1,
       # mkdocs-material 9.7.7, pymdown-extensions 11.0.1, markdown 3.10.3), so
@@ -120,7 +126,8 @@ jobs:
                                 -r s3-backup/docs/requirements.txt \
                                 -r aibox-model-queue/docs/requirements.txt \
                                 -r security/docs/requirements.txt \
-                                -r vault-viewer/docs/requirements.txt
+                                -r vault-viewer/docs/requirements.txt \
+                                -r media/docs/requirements.txt
 
       # --strict turns broken internal links and pages missing from the nav
       # into build failures rather than warnings nobody reads.
@@ -147,6 +154,9 @@ jobs:
 
       - name: Build the vault viewer docs
         run: mkdocs build --strict -f vault-viewer/mkdocs.yml -d ../site/vault-viewer
+
+      - name: Build the media stack docs
+        run: mkdocs build --strict -f media/mkdocs.yml -d ../site/media
 
       # Plain static file, no MkDocs build: it only has to link onward to the
       # sites, and giving it another theme install would be waste.

@@ -17,10 +17,11 @@ apiVersion: 1
 #
 # EVERY QUERY IS SCOPED TO role="hypervisor", AND THAT IS NOT OPTIONAL. The LXC
 # guests share the hypervisor's kernel and therefore its /sys/class/hwmon, so
-# plex, memory, sec-dns, tailscale-router and main-server all push byte-for-
-# byte copies of these same sensors. Unscoped, every rule below would fire six
-# times for one hot CPU. If another bare-metal host joins `metal`, widen the
-# matcher to its role rather than dropping it.
+# memory, sec-dns, tailscale-router and main-server all push byte-for-byte
+# copies of these same sensors. Unscoped, every rule below would fire five
+# times for one hot CPU (the hypervisor plus its four guests). If another
+# bare-metal host joins `metal`, widen the matcher to its role rather than
+# dropping it.
 #
 # noDataState: OK throughout, for the same reason as rules-gpu.yaml: only the
 # hypervisor has these series. The liveness rule at the bottom is what keeps

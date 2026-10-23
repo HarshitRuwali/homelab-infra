@@ -1,3 +1,9 @@
 ---
 # Bound journal growth so backup staging retains space on the VM's 40 GB disk.
 journald_system_max_use: 128M
+
+# The media stack (homelab-infra media/) pins every image tag, and starts a
+# service only once its secret exists. The nightly updater runs `up -d` on the
+# whole project, which would try to start gluetun without its WireGuard key.
+docker_update_skip_projects:
+  - media

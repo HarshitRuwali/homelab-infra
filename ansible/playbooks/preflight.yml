@@ -16,10 +16,10 @@
 
     # How this login reaches root decides how every check below has to run.
     #
-    # The LXC guests (plex, memory, monitor-lxc) log in as root on minimal
+    # The LXC guests (memory, monitor-lxc) log in as root on minimal
     # Debian images that ship no sudo at all, so `sudo -n true` there exits
     # 127, "command not found". Read literally that is "sudo failed", which is
-    # what made the report say NEEDS PASSWORD for three hosts that are already
+    # what made the report say NEEDS PASSWORD for hosts that are already
     # root and sent you to fix a sudoers file that does not exist on a machine
     # that never needed one. Ask the question that actually matters instead:
     # can this play reach root, yes or no.

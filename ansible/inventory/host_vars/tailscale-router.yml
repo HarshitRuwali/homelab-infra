@@ -14,7 +14,7 @@
 # and its exit-node role -- so it belongs to the host. Do NOT promote any of
 # it to group_vars/lxc or group_vars/lxc_debian without checking it against
 # the other containers: the journal and disk caps in particular would be a
-# real behaviour change for plex, memory and monitor-lxc.
+# real behaviour change for memory and monitor-lxc.
 #
 # Two distinct hazards are handled here:
 #   1. Cardinality. PVE enumerates hundreds of transient per-guest systemd

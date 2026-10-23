@@ -30,7 +30,8 @@ cat <<'NOTE'
   datastore passwords, API keys, and service tokens.
 
   Authelia: configure /etc/authelia/configuration.yml with your users and put it in
-  front of the internal UIs (Grafana, Superset, the portal, Netdata, qBittorrent).
+  front of the internal UIs (Grafana, Superset, the portal, Netdata). qBittorrent's
+  WebUI is tailnet-only (media/docs/security.md).
 
   Do NOT publish any management UI through the Cloudflare tunnel. A SIEM dashboard on
   the public internet is worse than the problem it was deployed to solve.

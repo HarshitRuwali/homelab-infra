@@ -10,7 +10,7 @@
 [![Grafana](https://img.shields.io/badge/Grafana-F46800?logo=grafana&logoColor=white)](https://harshitruwali.github.io/homelab-infra/monitoring/)
 [![Proxmox](https://img.shields.io/badge/Proxmox-E57000?logo=proxmox&logoColor=white)](https://www.proxmox.com/)
 
-Eight independent modules covering a Proxmox and Tailscale estate: Debian VMs,
+Nine independent modules covering a Proxmox and Tailscale estate: Debian VMs,
 LXC containers, Raspberry Pis and one bare-metal hypervisor. Every machine is
 configured, patched and observed the same way, and every automated action
 writes a metric, so **"it updates itself" can never quietly become "it broke
@@ -28,6 +28,7 @@ itself three weeks ago"**.
 | 🖥️ | [**`proxmox/`**](proxmox/README.md) | Builds a VM template and creates VMs and containers from the images already on the hypervisor, plus firewalled VMs leased to other people. Dry run by default. | [README](proxmox/README.md) |
 | 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, Suricata, AdGuard Home, Authelia, OpenBao, ntopng and Greenbone across six small guests. All free and open source. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
 | 📓 | [**`vault-viewer/`**](vault-viewer/README.md) | Read-only web viewer for an Obsidian vault on a Tailscale address, with search, live reload and PDF export. Treats vault content as untrusted. | [site](https://harshitruwali.github.io/homelab-infra/vault-viewer/) |
+| 🎬 | [**`media/`**](media/README.md) | Plex, and qBittorrent behind a ProtonVPN WireGuard tunnel with port forwarding, as one Docker Compose stack. Remote Plex access through a Cloudflare tunnel, the WebUI on the tailnet only. | [site](https://harshitruwali.github.io/homelab-infra/media/) |
 
 Each module stands alone. Nothing here requires you to run the others, and
 every directory's README is a complete quick start by itself.
@@ -141,6 +142,21 @@ answers. Open `http://100.64.0.10:7777` from your own tailnet devices. Add
 
 </details>
 
+<details>
+<summary><b>🎬 Run Plex and qBittorrent behind a VPN</b></summary>
+
+```bash
+cd media
+./install.sh                                # dry run: prints every action
+./install.sh --apply                        # deploys to /opt/media
+```
+
+Needs the media share mounted, `/dev/net/tun`, and two root-only secret files
+in `/opt/media/secrets` (a Cloudflare tunnel token and a ProtonVPN WireGuard
+key). Plex starts without them; the tunnel and the VPN wait for their secret.
+
+</details>
+
 > [!IMPORTANT]
 > **Run Ansible from `ansible/`, never from here.** `ansible/ansible.cfg`
 > resolves `inventory` and `roles_path` relative to the working directory, and
@@ -159,6 +175,7 @@ s3-backup/      restic and rclone automation, installer, restore drills
 aibox-model-queue/
                 Serializing proxy for a shared LM Studio host
 vault-viewer/   artifacts.py: read-only Obsidian vault viewer, installer, tests
+media/          compose.yaml: Plex and qBittorrent behind gluetun, installer, tests
 proxmox/        pve-guest.sh: VM template, new VMs and containers
 docs-landing/   The static index page of the published docs site
 .github/        Workflows (docs, releases, PR checks) and the scripts they run
@@ -182,9 +199,10 @@ One MkDocs Material site per documented module plus a landing page, on one GitHu
 | [`/aibox-model-queue/`](https://harshitruwali.github.io/homelab-infra/aibox-model-queue/) | `aibox-model-queue/mkdocs.yml` |
 | [`/security/`](https://harshitruwali.github.io/homelab-infra/security/) | `security/mkdocs.yml` |
 | [`/vault-viewer/`](https://harshitruwali.github.io/homelab-infra/vault-viewer/) | `vault-viewer/mkdocs.yml` |
+| [`/media/`](https://harshitruwali.github.io/homelab-infra/media/) | `media/mkdocs.yml` |
 
 ```bash
-cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security, vault-viewer
+cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security, vault-viewer, media
 python3 -m venv .venv
 .venv/bin/pip install -r docs/requirements.txt
 .venv/bin/mkdocs serve                      # live preview on :8000
