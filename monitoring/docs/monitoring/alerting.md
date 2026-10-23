@@ -27,7 +27,7 @@ inventory, so adding a host cannot leave a silent gap in down-detection.
     | `fleet-disk-will-fill` | warning | 1h | trending to full in 24h **and** under 10% free |
     | `fleet-memory-high` | warning | 15m | available memory under 10% |
     | `fleet-oom-kills` | critical | 0m | kernel OOM killer active in last 15 min |
-    | `fleet-load-high` | warning | 20m | load15 over 2× core count, `tailscale-router` excluded |
+    | `fleet-load-high` | warning | 20m | load15 over 2× core count; `tailscale-router` and the LXCs on t7920 excluded (lxcfs reports the hypervisor's load inside them) |
     | `fleet-filesystem-readonly` | critical | 5m | kernel remounted a filesystem read-only after an I/O error |
     | `fleet-inodes-high` | warning | 15m | over **90%** of the inode limit, which fails writes while space looks free |
 
