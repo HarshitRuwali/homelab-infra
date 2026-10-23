@@ -134,7 +134,7 @@ inventory, so adding a host cannot leave a silent gap in down-detection.
     |---|---|---|---|
     | `fleet-hw-cpu-temperature-critical` | critical | 5m | a CPU package at or above 90 C (TjMax is 93 C) |
     | `fleet-hw-cpu-temperature-high` | warning | 15m | a CPU package above its 83 C rated max |
-    | `fleet-hw-fan-stalled` | critical | 5m | a fitted fan under 500 RPM; the BIOS never parks them. Excludes CPU0 (no fan), PSU (no tachometer) and FB4 (no rear bays, so no fan) |
+    | `fleet-hw-fan-stalled` | critical | 5m | a fitted fan under 500 RPM; the BIOS never parks them. Excludes CPU0 (no fan), PSU (no tachometer) and FB2-FB4 (listed by the BIOS since 2026-10-01, but no fan is fitted in those bays) |
     | `fleet-hw-fans-high` | warning | 30m | a 120 mm fan above 3000 RPM (75% of max): the BIOS is compensating |
     | `fleet-hw-board-temperature-high` | warning | 30m | a Dell SMM board sensor above 65 C |
     | `fleet-hw-sensors-missing` | warning | 15m | the host reports but its CPU sensors do not, or fan data is over 5 min old |
