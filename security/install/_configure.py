@@ -63,8 +63,9 @@ def configure_crowdsec(config_path, credentials_path, url):
     parsed = urlparse(url)
     if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
         raise ValueError("CROWDSEC_LAPI_URL must be an HTTPS URL without credentials")
-    config = yaml.safe_load(Path(config_path).read_text())
-    credentials = yaml.safe_load(Path(credentials_path).read_text())
+    # An empty or comment-only file loads as None.
+    config = yaml.safe_load(Path(config_path).read_text()) or {}
+    credentials = yaml.safe_load(Path(credentials_path).read_text()) or {}
     server = config.setdefault("api", {}).setdefault("server", {})
     server["listen_uri"] = "0.0.0.0:8080"
     server.setdefault("tls", {}).update(cert_file="/etc/crowdsec/tls/server.crt",

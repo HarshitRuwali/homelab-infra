@@ -73,6 +73,7 @@ def main():
         return 1
 
     samples = []
+    failed = []
     for g in guests:
         gtype, vmid = g.get("type"), g.get("vmid")
         # Templates never run, so they never have a device to name. Guests on
@@ -83,7 +84,8 @@ def main():
         try:
             cfg = pvesh(path, "--current", "1")
         except API_ERRORS as e:
-            print("skipping " + gtype + " " + str(vmid) + ": " + str(e), file=sys.stderr)
+            print("config of " + gtype + " " + str(vmid) + " failed: " + str(e), file=sys.stderr)
+            failed.append(str(vmid))
             continue
         name = cfg.get("name") or cfg.get("hostname") or g.get("name") or str(vmid)
         for key, spec in cfg.items():
@@ -98,6 +100,14 @@ def main():
                 "type": gtype,
                 "vmid": str(vmid),
             })
+
+    # A partial collection must not look fresh: the dashboard would show a
+    # current timestamp while that guest's traffic has no name. Keep the
+    # previous file, so its timestamp goes stale, and fail the service.
+    if failed:
+        print("no guest config for VMID(s) " + ", ".join(failed)
+              + ", keeping the previous file", file=sys.stderr)
+        return 1
 
     lines = []
     if samples:

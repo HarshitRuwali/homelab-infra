@@ -255,7 +255,7 @@ adding:
 | Wazuh alert rate by level | `sum by (rule_level) (count_over_time({job="wazuh"}[5m]))` |
 | High-severity Wazuh alerts | `{job="wazuh"} \| json \| rule_level >= 10` |
 | Suricata alerts by signature | `sum by (alert_signature) (count_over_time({job="suricata"} \| json [5m]))` |
-| Agent disconnected or stopped (event) | `sum by (agent_name) (count_over_time({job="wazuh"} \| json \| rule_id =~ "504\|506" [10m])) > 0` |
+| Agent disconnected or stopped (event) | `sum by (agent_name) (count_over_time({job="wazuh"} \| json \| rule_id =~ "50[46]" [10m])) > 0` |
 
 The last row uses Wazuh's explicit disconnect/stop events (rules 504 and 506).
 Keep those level-3 alerts in the forwarding pipeline. An absence of security

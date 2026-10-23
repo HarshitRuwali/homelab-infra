@@ -82,7 +82,7 @@ done
 # exit 0 is the wrong answer to one.
 if [[ -n "$ONLY" ]]; then
   for _n in ${ONLY//,/ }; do
-    printf '%s\n' "${GUESTS[@]}" | cut -d: -f1 | grep -qx "$_n" \
+    printf '%s\n' "${GUESTS[@]}" | cut -d: -f1 | grep -Fqx -- "$_n" \
       || { echo "--only: no such guest '$_n'. Known: $(printf '%s\n' "${GUESTS[@]}" | cut -d: -f1 | tr '\n' ' ')" >&2; exit 2; }
   done
 fi

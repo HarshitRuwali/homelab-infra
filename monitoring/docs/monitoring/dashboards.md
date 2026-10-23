@@ -117,6 +117,11 @@ the hypervisor's side of each guest NIC and named by
 | Most Data Sent / Received, Selected Range | totals over the time picker |
 | Per Guest NIC Totals | 24 hours and 7 days, one row per NIC |
 
+The totals join each five-minute increase to the guest name at that moment, then
+sum them over the range. Proxmox reuses a VMID after a guest is deleted, so the
+device `tap102i0` can name two guests in one window; joining the whole-range
+increase to today's name would credit the old guest's traffic to the new one.
+
 It sees what no other dashboard here can: guests that run no collector (the
 firewall VM, Windows), and traffic between two guests on the same bridge, which
 never reaches a firewall. The `$guest` and `$bridge` pickers filter every panel

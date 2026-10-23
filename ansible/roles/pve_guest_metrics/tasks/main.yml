@@ -73,6 +73,9 @@
         enabled: true
         state: started
         daemon_reload: true
+      # The unit files are not installed in check mode, so a host with no prior
+      # deployment has nothing to enable.
+      when: not ansible_check_mode
 
     # `enabled` only, never `state`, for the same reason as smart_metrics: the
     # unit is wired to multi-user.target so a reboot refreshes it, and the
@@ -81,6 +84,7 @@
       ansible.builtin.systemd:
         name: fleet-pve-guests.service
         enabled: true
+      when: not ansible_check_mode
 
     - name: Flush handlers so metrics exist before we verify them
       ansible.builtin.meta: flush_handlers

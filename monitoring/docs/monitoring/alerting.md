@@ -232,9 +232,11 @@ The labels you can actually match on are:
 
 Ask the embedded Alertmanager directly, on the central box. An instance that a
 silence caught has `state: suppressed` and a populated `silencedBy`:
+`curl -u admin` prompts for the Grafana admin password, which keeps it out of
+shell history and out of the process list:
 
 ```bash
-curl -s -u admin:PASS \
+curl -s -u admin \
   http://127.0.0.1:3000/api/alertmanager/grafana/api/v2/alerts \
   | jq '.[] | {alertname: .labels.alertname, labels, state: .status.state,
                silencedBy: .status.silencedBy}'
@@ -244,7 +246,7 @@ If `state` is `active` rather than `suppressed`, compare the `labels` printed
 there against your silence's matchers; they disagree somewhere.
 
 ```bash
-curl -s -u admin:PASS \
+curl -s -u admin \
   http://127.0.0.1:3000/api/alertmanager/grafana/api/v2/silences \
   | jq '.[] | {id, state: .status.state, startsAt, endsAt,
                matchers: [.matchers[] | "\(.name)\(if .isEqual then "=" else "!=" end)\(.value)"]}'

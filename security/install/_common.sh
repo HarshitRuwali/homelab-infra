@@ -36,8 +36,10 @@ banner() {
 # loses the caller's pipefail setting and can report success on an empty body.
 download_file() {
   local url="$1" dest="$2"
-  run curl --fail --show-error --location --retry 3 --connect-timeout 20 \
-    --max-time 600 --output "${dest}.part" "$url"
+  # --proto-redir as well as --proto: the installer runs as root, so a
+  # redirect to plain HTTP must fail rather than be followed.
+  run curl --fail --show-error --location --proto '=https' --proto-redir '=https' \
+    --retry 3 --connect-timeout 20 --max-time 600 --output "${dest}.part" "$url"
   run test -s "${dest}.part"
   run mv -f "${dest}.part" "$dest"
 }

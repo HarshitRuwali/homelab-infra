@@ -124,6 +124,9 @@
           ansible.builtin.slurp:
             src: "{{ update_metrics_dir }}/{{ docker_update_metrics_file }}"
           register: docker_update_result
+          # A run that dies before writing the file must reach "Fail if the
+          # update did not run", which reports the journal errors, not stop here.
+          failed_when: false
 
         # splitlines(), never split('\n'): inside a >- block the '\n' reaches
         # Jinja as a backslash and an n, so that split never splits and this
@@ -135,7 +138,7 @@
             docker_update_reported: >-
               ^fleet_docker_(projects_updated|containers_recreated|containers_restarting|update_failed|image_bytes_reclaimed)
             docker_update_summary: >-
-              {{ (docker_update_result.content | b64decode).splitlines()
+              {{ (docker_update_result.content | default('') | b64decode).splitlines()
                  | select('match', docker_update_reported ~ ' ') | list }}
 
         # noqa command-instead-of-module: reads the journal of this run only,
@@ -159,15 +162,15 @@
             quiet: true
           vars:
             docker_update_last_run: >-
-              {{ ((docker_update_result.content | b64decode).splitlines()
+              {{ ((docker_update_result.content | default('') | b64decode).splitlines()
                   | select('match', 'fleet_docker_update_last_run_timestamp_seconds ')
                   | first | default('none 0')).split(' ') | last }}
 
         - name: Fail if the update left containers broken
           ansible.builtin.assert:
             that:
-              - "'fleet_docker_update_failed 0' in (docker_update_result.content | b64decode)"
-              - "'fleet_docker_containers_restarting 0' in (docker_update_result.content | b64decode)"
+              - "'fleet_docker_update_failed 0' in (docker_update_result.content | default('') | b64decode)"
+              - "'fleet_docker_containers_restarting 0' in (docker_update_result.content | default('') | b64decode)"
             fail_msg: >-
               Container update reported a failure on {{ inventory_hostname }}:
               {{ docker_update_errors.stdout_lines | join('; ') or 'no ERROR lines in its journal' }}.

@@ -126,7 +126,11 @@ with open(os.environ['REVIEW_LOG'], 'a') as stream:
 mode = os.environ['REVIEW_MODE']
 if args[0] == 'ps':
     if mode == 'discovery_failure': sys.exit(1)
-    if any('health=' in a or 'status=' in a for a in args): sys.exit(0)
+    if any('health=' in a or 'status=' in a for a in args):
+        # The readiness queries: health_failure reports one unhealthy container
+        # and nothing restarting, so only the unhealthy check can catch it.
+        if mode == 'health_failure' and any('health=unhealthy' in a for a in args): print('test-id')
+        sys.exit(0)
     print('test-id')
 elif args[0] == 'inspect':
     if 'Config.Labels' in args[-1]:
@@ -139,7 +143,7 @@ elif args[0] == 'compose':
         print(json.dumps({'services': {'web': {'image': 'nginx:1'},
                                        'app': {'image': 'app:local', 'build': {'context': '.'}}}}))
     if 'pull' in args and 'up' not in args and mode == 'pull_failure': sys.exit(1)
-    if 'up' in args and mode == 'health_failure': sys.exit(1)
+    if 'up' in args and mode == 'up_failure': sys.exit(1)
 elif args[0] == 'image' and args[1] == 'inspect': print('1')
 elif args[0] == 'image' and args[1] == 'prune': print('Total reclaimed space: 0B')
 ''')
@@ -190,7 +194,7 @@ elif args[0] == 'image' and args[1] == 'prune': print('Total reclaimed space: 0B
         self.assertIn('fleet_docker_update_failed 1', metrics)
 
     def test_discovery_and_readiness_failures_report_failure(self):
-        for mode in ('discovery_failure', 'health_failure'):
+        for mode in ('discovery_failure', 'up_failure', 'health_failure'):
             with self.subTest(mode=mode):
                 result, commands, metrics = self.probe(mode)
                 self.assertNotEqual(result.returncode, 0)
