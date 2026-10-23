@@ -321,6 +321,19 @@ for script in sorted((root / ".github/scripts").glob("*.sh")):
     rel = script.relative_to(root).as_posix()
     check(rel in run_commands, f".github/workflows/checks.yml has no step that runs {rel}")
 
+# The pre-commit hook runs conventional-commits.sh, so its script and flag have
+# to exist, and `pre-commit install` has to install a commit-msg hook.
+pre_commit = read(".pre-commit-config.yaml")
+check(
+    re.search(r"^default_install_hook_types:\s*\[commit-msg\]\s*$", pre_commit, re.M) is not None,
+    ".pre-commit-config.yaml: default_install_hook_types must be [commit-msg], or `pre-commit install` installs no hook",
+)
+for entry in re.findall(r"^\s*entry:\s*(\S+)(?:\s+(--[a-z-]+))?\s*$", pre_commit, re.M):
+    hook_script, hook_flag = entry
+    check((root / hook_script).is_file(), f".pre-commit-config.yaml: entry {hook_script} does not exist")
+    if hook_script.endswith("conventional-commits.sh"):
+        check(f"{hook_flag})" in cc_script, f".pre-commit-config.yaml: runs conventional-commits.sh {hook_flag}, which the script does not accept")
+
 for doc in ("README.md", "CONTRIBUTING.md"):
     text = read(doc)
     for ref in sorted(set(re.findall(r"\.github/[A-Za-z0-9_./-]*", text))):
