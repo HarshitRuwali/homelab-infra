@@ -351,11 +351,15 @@ h1 { font-size: 1.9em; margin-top: 0; } h2 { font-size: 1.45em; border-bottom:1p
 h3 { font-size: 1.2em; } h4 { font-size: 1.05em; }
 a { color: #5b3fd1; text-decoration: none; }
 a.internal { color: inherit; }
+/* Code shows the characters as typed (no "->" arrow ligature). Inline code
+   draws its side padding as a shadow: real padding leaves a gap that PDF
+   readers copy as a space ("NEW.conf ." instead of "NEW.conf."). */
 code { font: .9em/1.5 "JetBrains Mono", "DejaVu Sans Mono", monospace; background: #f3f4f6;
-  padding: .1em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+  font-variant-ligatures: none; padding: .1em 0; border-radius: 4px; overflow-wrap: anywhere;
+  box-shadow: .25em 0 0 #f3f4f6, -.25em 0 0 #f3f4f6; }
 pre { background: #f6f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px;
   white-space: pre-wrap; overflow-wrap: anywhere; }
-pre code, pre code.hljs { background: none; padding: 0; font-size: .85em; }
+pre code, pre code.hljs { background: none; padding: 0; box-shadow: none; overflow: visible; font-size: .85em; }
 blockquote { margin: 1em 0; padding: .2em 1em; border-left: 3px solid #d0d7de; color: #57606a; }
 table { border-collapse: collapse; margin: 1em 0; font-size: .92em; }
 th, td { border: 1px solid #d0d7de; padding: 5px 9px; text-align:left; vertical-align: top; }
@@ -631,14 +635,25 @@ def search(lib, q, limit=40):
 # to the version in its tag, because Playwright launches the browser build that
 # matches its own version.
 PDF_BASE = "mcr.microsoft.com/playwright/python:v1.63.0-noble"
+# Inter as static TrueType, from the upstream release. Debian's fonts-inter
+# ships CFF outlines (.otf), which Chromium can only embed in a PDF as Type 3
+# glyph drawings: PDF readers then select and copy that text badly or not at all.
+PDF_INTER_URL = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
+PDF_INTER_SHA256 = "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e"
 PDF_DOCKERFILE = f"""
 ARG BASE={PDF_BASE}
 FROM node:22-slim AS lib
 RUN npm install --prefix /build --no-audit --no-fund \\
       mermaid@11 @mermaid-js/layout-elk@0 @highlightjs/cdn-assets@11.9.0
+FROM node:22-slim AS fonts
+ADD --checksum=sha256:{PDF_INTER_SHA256} {PDF_INTER_URL} /inter.zip
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \\
+    && unzip -j /inter.zip 'extras/ttf/Inter-*.ttf' -d /inter
 FROM ${{BASE}}
 ARG PLAYWRIGHT
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-inter fonts-jetbrains-mono python3-pip \\
+# Before the apt install below, whose font package refreshes the font cache.
+COPY --from=fonts /inter /usr/share/fonts/truetype/inter
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-jetbrains-mono python3-pip \\
     && rm -rf /var/lib/apt/lists/* \\
     && python3 -m pip install --no-cache-dir --break-system-packages playwright==${{PLAYWRIGHT}}
 COPY --from=lib /build/node_modules /opt/vault-pdf/lib

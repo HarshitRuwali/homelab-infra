@@ -67,7 +67,7 @@ def build_vault(base):
     (vault / "Other.md").write_text("# Other\n\nBack to [[Note]].\n")
     (vault / "Inline.md").write_text('# Inline\n\n<img src="Other.md" alt="x">\n')
     (vault / "Mermaid.md").write_text(MERMAID_NOTE)
-    (vault / UNICODE_NAME).write_text(MERMAID_NOTE)
+    (vault / UNICODE_NAME).write_text(MERMAID_NOTE + "\nBody text with `inline code`.\n")
     (vault / "pic.png").write_bytes(PNG)
     (vault / "sub" / "pic2.png").write_bytes(PNG)
     (vault / "code.py").write_text("print('hi')\n")
@@ -243,6 +243,8 @@ def t_http(lib):
             check(body.startswith(b"%PDF"), "body starts with %PDF")
             want = "filename*=UTF-8''" + urllib.parse.quote(UNICODE_NAME[:-3]) + ".pdf"
             check(want in hdr.get("Content-Disposition", ""), "Content-Disposition carries the UTF-8 file name")
+            check(b"/Subtype /Type3" not in body and b"/Subtype /CIDFontType2" in body,
+                  "PDF text is in embedded TrueType fonts, no Type 3 (readers select and copy Type 3 text badly)")
     finally:
         srv.shutdown()
         srv.server_close()
@@ -282,6 +284,14 @@ def t_pdf_build():
           and "playwright==${PLAYWRIGHT}" in A.PDF_DOCKERFILE and "python3-pip" in A.PDF_DOCKERFILE
           and A.PDF_DOCKERFILE.count("1.63.0") == 1,
           "Dockerfile takes BASE (defaulting to PDF_BASE) and PLAYWRIGHT as build args")
+    check(re.fullmatch(r"[0-9a-f]{64}", A.PDF_INTER_SHA256) is not None
+          and f"ADD --checksum=sha256:{A.PDF_INTER_SHA256} {A.PDF_INTER_URL} " in A.PDF_DOCKERFILE
+          and "fonts-inter" not in A.PDF_DOCKERFILE,
+          "Dockerfile takes Inter as TrueType from the checksummed release, not Debian's CFF fonts-inter")
+    code_rule = re.search(r"^code \{[^}]*\}", A.PDF_CSS, re.MULTILINE)
+    check(code_rule is not None and "font-variant-ligatures: none" in code_rule.group(0)
+          and "padding: .1em 0;" in code_rule.group(0),
+          "PDF code: no ligatures, and no side padding (copied as a space)")
 
     calls = []
     real_run, real_argv = A.subprocess.run, sys.argv

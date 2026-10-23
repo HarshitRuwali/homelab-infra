@@ -18,6 +18,8 @@ HTML artifacts, SVGs and images have no PDF button.
   to the page width but stay vector, so they zoom cleanly.
 - External links, which stay clickable.
 - A footer on every page: the title on the left, `page / total` on the right.
+- Selectable text that copies as written. Every font is embedded as TrueType,
+  and code shows its characters as typed (no `->` arrow ligature).
 
 ## What it leaves out
 
@@ -77,6 +79,13 @@ The image is `artifacts-pdf:local`. It is built from the Dockerfile embedded in
 `artifacts.py` (`PDF_DOCKERFILE`): the Playwright Python image, the matching
 `playwright` pip package, Mermaid 11 with the ELK layout, highlight.js, and the
 two fonts. It is large; expect several GB on disk after the build.
+
+Inter comes from its upstream release as static TrueType (`PDF_INTER_URL`,
+checked against `PDF_INTER_SHA256`; the build fails on a mismatch), not from
+Debian's `fonts-inter`. That package ships CFF outlines (`.otf`), which
+Chromium can only embed in a PDF as Type 3 glyph drawings, and PDF readers
+select and copy Type 3 text badly or not at all. An image built before this
+change still has those fonts: rebuild it.
 
 ```bash
 # Build, or rebuild to pick up a newer Mermaid
