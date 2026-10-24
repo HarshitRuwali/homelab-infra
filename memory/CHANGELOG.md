@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/HarshitRuwali/homelab-infra/compare/memory-v0.2.0...memory-v0.3.0) (2026-10-23)
+
+
+### Features
+
+* **security:** add the security stack with Wazuh, CrowdSec, AdGuard Home and Greenbone ([#3](https://github.com/HarshitRuwali/homelab-infra/issues/3)) ([058beb0](https://github.com/HarshitRuwali/homelab-infra/commit/058beb0371eb178e1899d552b001c48129f66031))
+
 ## [0.2.0](https://github.com/HarshitRuwali/homelab-infra/compare/memory-v0.1.0...memory-v0.2.0) (2026-10-20)
 
 

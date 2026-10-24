@@ -1,6 +1,6 @@
 [project]
 name = "personal-assistant-fastapi"
-version = "0.2.0"
+version = "0.3.0"
 description = "FastAPI middleware for the personal assistant memory and LLM services."
 requires-python = ">=3.12"
 dependencies = [
