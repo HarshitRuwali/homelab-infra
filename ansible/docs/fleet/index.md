@@ -26,7 +26,7 @@ monitored host sits in exactly one leaf.
 
 | Group | Hosts | Collector | Auto-patched | Container updates |
 |---|---|---|---|---|
-| `lxc` → `lxc_debian` | tailscale-router, memory, monitor-lxc | yes | yes, `central` see below | memory only |
+| `lxc` → `lxc_debian` | tailscale-router, ingress, memory, monitor-lxc | yes | yes, `central` see below | memory only |
 | `vm` → `vm_debian` | ubuntu-dev, ubuntu-ai, cloud-services, matrix | yes | yes | yes |
 | `pi` → `pi_debian` | rpi5, rpi4b | yes | yes | rpi5 only |
 | `metal` → `metal_debian` | t7920 (the Proxmox host) | yes | **no**, deliberately | no |
@@ -144,7 +144,7 @@ Documented so the omission is a decision, not a gap.
       [media stack](https://harshitruwali.github.io/homelab-infra/media/) on
       cloud-services, so the VM's collector covers it.
     - **win11 (VM 108)**: would need `windows_exporter`, a separate path.
-    - **skullsiants, expl01t**: pentest tooling is deliberately version-pinned.
+    - **skullsaints, expl01t**: pentest tooling is deliberately version-pinned.
     - **Macs, iPhone**: excluded by request.
 
 ## Inventory layout
