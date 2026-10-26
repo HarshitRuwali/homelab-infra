@@ -91,6 +91,10 @@
     # Loki has no equivalent check: `/loki/ready` is a 404 through nginx
     # because Loki's readiness path is `/ready` and the proxy preserves the
     # `/loki` prefix. See docs/fleet/verification.md.
+    #
+    # check_mode: false because it is a GET and changes nothing. uri skips
+    # itself under --check, which left the assert below failing every dry run
+    # with "connection failed" whatever the network was doing.
     - name: Confirm this host can reach the central ingest endpoint
       ansible.builtin.uri:
         url: "{{ prometheus_remote_write_url | regex_replace('/api/v1/write$', '/-/ready') }}"
@@ -102,6 +106,7 @@
       register: onboard_ingest
       failed_when: false
       no_log: true
+      check_mode: false
 
     - name: Explain an unreachable ingest endpoint
       ansible.builtin.assert:
@@ -127,6 +132,7 @@
       register: onboard_ntp
       changed_when: false
       failed_when: false
+      check_mode: false
 
     - name: Warn about an undisciplined clock
       ansible.builtin.debug:
@@ -163,6 +169,16 @@
     # rather than on the target. And always keyed on monitor_hostname, not
     # inventory_hostname: monitor-lxc pushes as `main-server`, so keying on
     # the inventory name would look for a host that never reports.
+    #
+    # All skipped under --check: a dry run installs nothing, so there is no
+    # data to find, and the asserts would fail on that rather than on a fault.
+    - name: Say what a dry run cannot prove
+      ansible.builtin.debug:
+        msg: >-
+          Dry run: nothing was installed, so the metrics and logs arrival
+          checks are skipped. Run without --check to install and prove them.
+      when: ansible_check_mode
+
     - name: Wait for this host's metrics to land in central Prometheus
       ansible.builtin.uri:
         url: "https://{{ monitoring_domain }}/prometheus/api/v1/query"
@@ -185,6 +201,7 @@
       retries: 20
       delay: 15
       until: onboard_metrics.json.data.result | default([]) | length > 0
+      when: not ansible_check_mode
 
     - name: Confirm metrics arrived
       ansible.builtin.assert:
@@ -197,6 +214,7 @@
           Check the clock warning above, and see
           docs/fleet/troubleshooting.md.
         quiet: true
+      when: not ansible_check_mode
 
     - name: Wait for this host's logs to land in central Loki
       ansible.builtin.uri:
@@ -214,6 +232,7 @@
       retries: 10
       delay: 15
       until: monitor_hostname in (onboard_logs.json.data | default([]))
+      when: not ansible_check_mode
 
     - name: Confirm logs arrived
       ansible.builtin.assert:
@@ -225,6 +244,7 @@
           volatile-only journal there may genuinely be nothing to ship yet.
           Check `journalctl -u alloy | grep -i loki` on the host.
         quiet: true
+      when: not ansible_check_mode
 
     - name: Report
       ansible.builtin.debug:
@@ -235,3 +255,4 @@
           `ansible-playbook playbooks/site.yml --limit {{ inventory_hostname }}`
           applies the patching and container-update policy for whichever
           groups this host is in.
+      when: not ansible_check_mode

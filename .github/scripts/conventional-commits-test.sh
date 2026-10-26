@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Self-test for conventional-commits.sh: a table of accepted and rejected
-# titles, the argument handling, and --commits against a throwaway git repo
-# (one good commit, one bad commit, one merge commit).
+# titles, the module scopes, --message-file (what the commit-msg hook runs), the
+# argument handling, and --commits against a throwaway git repo (one good
+# commit, one bad commit, one merge commit).
 #
 # Run from anywhere: .github/scripts/conventional-commits-test.sh
 
@@ -21,7 +22,8 @@ good_titles=(
   'fix(monitoring): y'
   'feat(ansible)!: z'
   'chore: release master'
-  'chore(master): release 0.1.0'
+  'chore: release 0.1.0'
+  'feat(vault-viewer): w'
   'Revert "feat: x"'
 )
 
@@ -29,6 +31,9 @@ bad_titles=(
   'Feat: x'
   'feat:x'
   'feat(Ansible): x'
+  'feat(monitring): typo in the module name'
+  'docs(readme): not a module'
+  'feat(): empty scope'
   'feat x'
   'Add Grafana alerting rules for hardware monitoring'
   'desk_appliance role: x'
@@ -48,6 +53,14 @@ for title in "${bad_titles[@]}"; do
     fail "title should be rejected with exit 1 (got $status): '$title'"
   fi
 done
+
+# Every module registered in release-please-config.json is a valid scope, so a
+# new module needs no change here.
+config="$here/../../release-please-config.json"
+while IFS= read -r module; do
+  "$script" --title "feat($module): x" >/dev/null 2>&1 \
+    || fail "the registered module '$module' should be accepted as a scope"
+done < <(python3 -I -c 'import json, sys; print("\n".join(json.load(open(sys.argv[1]))["packages"]))' "$config")
 
 # A rejected title is explained in one line on stderr.
 message=$("$script" --title 'Add things' 2>&1 >/dev/null)
@@ -69,6 +82,8 @@ bad_args=(
   '--commits'
   '--commits onlyone'
   '--commits a b c'
+  '--message-file'
+  '--message-file a b'
   '--nope'
 )
 for args in "${bad_args[@]}"; do
@@ -79,6 +94,49 @@ for args in "${bad_args[@]}"; do
     fail "arguments '$args' should exit 2 (got $status)"
   fi
 done
+
+# --message-file: the first line that is not blank or a "#" comment is the subject.
+msgdir=$(mktemp -d)
+write_msg() { printf '%b' "$1" >"$msgdir/msg"; }
+accepted_messages=(
+  'feat(monitoring): add a disk alert\n\nA body.\n'
+  '# git template comment\n\nfix: x\n'
+  'Merge branch '"'"'side'"'"' into main\n'
+  'fixup! feat: x\n'
+  'squash! feat: x\n'
+  'Revert "feat: x"\n'
+)
+rejected_messages=(
+  'Add a thing\n'
+  'feat(monitring): typo\n'
+  '# only a comment\n'
+  ''
+  '\n\nno subject type\n'
+)
+for message in "${accepted_messages[@]}"; do
+  write_msg "$message"
+  "$script" --message-file "$msgdir/msg" >/dev/null 2>&1 \
+    || fail "message should be accepted: '$message'"
+done
+for message in "${rejected_messages[@]}"; do
+  write_msg "$message"
+  "$script" --message-file "$msgdir/msg" >/dev/null 2>&1
+  status=$?
+  if [[ $status -ne 1 ]]; then
+    fail "message should be rejected with exit 1 (got $status): '$message'"
+  fi
+done
+write_msg 'Add a thing\n'
+message=$("$script" --message-file "$msgdir/msg" 2>&1 >/dev/null)
+if [[ $(printf '%s\n' "$message" | wc -l) -ne 1 || $message != 'Commit subject "Add a thing"'* ]]; then
+  fail "a rejected message should print a one-line explanation naming the subject, got: '$message'"
+fi
+"$script" --message-file "$msgdir/missing" >/dev/null 2>&1
+status=$?
+if [[ $status -ne 2 ]]; then
+  fail "--message-file with an unreadable file should exit 2 (got $status)"
+fi
+rm -rf "$msgdir"
 
 # --commits, against a real (temporary) repository.
 tmp=$(mktemp -d)

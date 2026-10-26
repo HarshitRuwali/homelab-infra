@@ -1,0 +1,27 @@
+---
+# OFF BY DEFAULT, ENABLED BY INVENTORY MEMBERSHIP, exactly like
+# roles/smart_metrics and for the same reason: the switch should be one obvious
+# line in group_vars. Only a Proxmox VE node has guests to name, and
+# group_vars/metal is where "this host runs PVE" is already written down.
+#
+# WHAT IT IS FOR. node_exporter on a PVE node already reports every running
+# guest NIC, because Proxmox gives each one a network device on the host:
+#   VM   netN -> tap<vmid>i<N>     (tap102i0 is OPNsense's net0)
+#   LXC  netN -> veth<vmid>i<N>    (veth112i0 is the grafana container's net0)
+# So node_network_*_bytes_total{device="tap102i0"} is already per-guest
+# traffic, including traffic between two guests on one bridge, which never
+# reaches a firewall. What it lacks is a name. This role writes one info series
+# per guest NIC, keyed by that device and carrying the guest's name, VMID, type,
+# NIC and bridge, so the Guest Traffic dashboard can join the two.
+pve_guest_metrics_enabled: false
+
+pve_guest_metrics_dir: "{{ alloy_textfile_dir }}"
+pve_guest_metrics_file: fleet-pve-guests.prom
+pve_guest_metrics_script: /usr/local/bin/fleet-pve-guests
+
+# Every 5 minutes, not the 15 of update_metrics and smart_metrics. Names and
+# bridges rarely change, but a newly created guest should be named within
+# minutes rather than a quarter of an hour. A run is one pvesh call for the
+# guest list plus one per guest, which is cheap.
+pve_guest_metrics_oncalendar: "*:0/5"
+pve_guest_metrics_randomized_delay: 60

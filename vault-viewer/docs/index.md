@@ -12,7 +12,7 @@ input. See [Security](security.md) for the model.
 - **Renders the whole vault.** Notes with `[[wikilinks]]`, `![[embeds]]`,
   callouts, frontmatter and backlinks; Mermaid diagrams; self-contained HTML
   artifacts; SVG and raster images; text sources such as `.d2`, `.json` and
-  `.py`.
+  `.py`; `.zip` archives, which download instead of previewing.
 - **Navigates it.** A file tree with a "recent" list and search on the left,
   the selected file on the right. The page reloads within seconds when a file
   changes on disk. Any diagram opens full screen with pan and zoom.

@@ -107,7 +107,9 @@ as an image, which cannot run scripts.
   and never served, and `..` is rejected.
 - Only a fixed list of file types is served: Markdown, HTML, SVG, common image
   formats, and plain-text sources such as `.txt`, `.json`, `.yaml`, `.py`, `.sh`
-  and `.d2`.
+  and `.d2`, plus `.zip` archives. An archive is sent as
+  `application/zip` with `Content-Disposition: attachment` and is never
+  unpacked or rendered by the viewer.
 - The server answers `GET` and `HEAD` only. Nothing writes to the vault.
 
 ## What it does not do

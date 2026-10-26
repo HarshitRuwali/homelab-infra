@@ -11,6 +11,25 @@ policies:
     group_interval: 5m
     repeat_interval: 12h
     routes:
+      # Security alerts go to their own room and nowhere else. FIRST, with
+      # continue: false, because a Suricata severity 1 alert is labelled
+      # severity=critical, and below this point the critical route would take
+      # it into the fleet room instead.
+      #
+      # Grouped per signature: one message for a signature, however many
+      # flows. The 15 minute interval means a burst that keeps growing updates
+      # the room at most four times an hour, and repeat_interval re-announces
+      # a signature that keeps firing once a day rather than every twelve
+      # hours. Never muted: an intrusion does not wait for morning.
+      - receiver: matrix-security
+        object_matchers:
+          - ['route', '=', 'security']
+        group_by: [alertname, alert_signature_id]
+        group_wait: 30s
+        group_interval: 15m
+        repeat_interval: 24h
+        continue: false
+
       # Critical bypasses the slow grouping and repeats aggressively.
       - receiver: matrix-homelab
         object_matchers:

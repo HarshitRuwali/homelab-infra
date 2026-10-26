@@ -20,8 +20,8 @@ Grafana Alloy collector on every host.
 
 - :material-bell-alert: **Alerts**
 
-    Grafana unified alerting posts to Matrix through a local relay. 47 rules,
-    also provisioned from files.
+    Grafana unified alerting posts to Matrix through a local relay. Rules are
+    provisioned from files too.
 
 - :material-eye-check: **Proves it**
 

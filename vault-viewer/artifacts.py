@@ -3,7 +3,8 @@
 
 Renders the whole vault: notes (Markdown with [[wikilinks]], ![[embeds]],
 callouts, frontmatter, backlinks, Mermaid diagrams), HTML artifacts, SVG
-diagrams and images, plus text sources such as .d2. A file tree with a
+diagrams and images, plus text sources such as .d2 and zip archives (a
+download, not a preview). A file tree with a
 "recent" list and search on the left, the selected file on the right,
 reloading when it changes on disk. Any diagram opens full screen with pan and
 zoom.
@@ -69,6 +70,7 @@ KINDS = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".webp": "image",
     ".d2": "text", ".txt": "text", ".json": "text", ".yaml": "text", ".yml": "text", ".mmd": "text",
     ".csv": "text", ".toml": "text", ".py": "text", ".sh": "text", ".go": "text", ".ts": "text", ".js": "text",
+    ".zip": "archive",
     ".css": "asset", ".woff2": "asset",
 }
 CDNS = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com"
@@ -351,11 +353,15 @@ h1 { font-size: 1.9em; margin-top: 0; } h2 { font-size: 1.45em; border-bottom:1p
 h3 { font-size: 1.2em; } h4 { font-size: 1.05em; }
 a { color: #5b3fd1; text-decoration: none; }
 a.internal { color: inherit; }
+/* Code shows the characters as typed (no "->" arrow ligature). Inline code
+   draws its side padding as a shadow: real padding leaves a gap that PDF
+   readers copy as a space ("NEW.conf ." instead of "NEW.conf."). */
 code { font: .9em/1.5 "JetBrains Mono", "DejaVu Sans Mono", monospace; background: #f3f4f6;
-  padding: .1em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+  font-variant-ligatures: none; padding: .1em 0; border-radius: 4px; overflow-wrap: anywhere;
+  box-shadow: .25em 0 0 #f3f4f6, -.25em 0 0 #f3f4f6; }
 pre { background: #f6f8fa; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px;
   white-space: pre-wrap; overflow-wrap: anywhere; }
-pre code, pre code.hljs { background: none; padding: 0; font-size: .85em; }
+pre code, pre code.hljs { background: none; padding: 0; box-shadow: none; overflow: visible; font-size: .85em; }
 blockquote { margin: 1em 0; padding: .2em 1em; border-left: 3px solid #d0d7de; color: #57606a; }
 table { border-collapse: collapse; margin: 1em 0; font-size: .92em; }
 th, td { border: 1px solid #d0d7de; padding: 5px 9px; text-align:left; vertical-align: top; }
@@ -631,14 +637,25 @@ def search(lib, q, limit=40):
 # to the version in its tag, because Playwright launches the browser build that
 # matches its own version.
 PDF_BASE = "mcr.microsoft.com/playwright/python:v1.63.0-noble"
+# Inter as static TrueType, from the upstream release. Debian's fonts-inter
+# ships CFF outlines (.otf), which Chromium can only embed in a PDF as Type 3
+# glyph drawings: PDF readers then select and copy that text badly or not at all.
+PDF_INTER_URL = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
+PDF_INTER_SHA256 = "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e"
 PDF_DOCKERFILE = f"""
 ARG BASE={PDF_BASE}
 FROM node:22-slim AS lib
 RUN npm install --prefix /build --no-audit --no-fund \\
       mermaid@11 @mermaid-js/layout-elk@0 @highlightjs/cdn-assets@11.9.0
+FROM node:22-slim AS fonts
+ADD --checksum=sha256:{PDF_INTER_SHA256} {PDF_INTER_URL} /inter.zip
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \\
+    && unzip -j /inter.zip 'extras/ttf/Inter-*.ttf' -d /inter
 FROM ${{BASE}}
 ARG PLAYWRIGHT
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-inter fonts-jetbrains-mono python3-pip \\
+# Before the apt install below, whose font package refreshes the font cache.
+COPY --from=fonts /inter /usr/share/fonts/truetype/inter
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-jetbrains-mono python3-pip \\
     && rm -rf /var/lib/apt/lists/* \\
     && python3 -m pip install --no-cache-dir --break-system-packages playwright==${{PLAYWRIGHT}}
 COPY --from=lib /build/node_modules /opt/vault-pdf/lib
@@ -769,6 +786,12 @@ class TailnetGate:
         return ok
 
 
+def attachment(fname):
+    """Content-Disposition for a download: ASCII fallback plus the UTF-8 name."""
+    plain = re.sub(r'[^\w .-]', "_", fname, flags=re.A)
+    return {"Content-Disposition": f"attachment; filename=\"{plain}\"; filename*=UTF-8''{urllib.parse.quote(fname)}"}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "artifacts"
     library: Library = None
@@ -843,10 +866,7 @@ class Handler(BaseHTTPRequestHandler):
                 pdf, why = None, "rendering failed (details in the service log)"
             if pdf is None:
                 return self._send(HTTPStatus.SERVICE_UNAVAILABLE, f"PDF export: {why}\n", "text/plain")
-            fname = p.stem + ".pdf"
-            plain = re.sub(r'[^\w .-]', "_", fname, flags=re.A)
-            return self._send(HTTPStatus.OK, pdf, "application/pdf", {
-                "Content-Disposition": f"attachment; filename=\"{plain}\"; filename*=UTF-8''{urllib.parse.quote(fname)}"})
+            return self._send(HTTPStatus.OK, pdf, "application/pdf", attachment(p.stem + ".pdf"))
         for prefix in ("/raw/", "/view/"):
             if url.path.startswith(prefix):
                 ident = urllib.parse.unquote(url.path[len(prefix):])
@@ -863,6 +883,8 @@ class Handler(BaseHTTPRequestHandler):
                     ctype = "text/plain"
                 if ctype.startswith("text/") or ctype in ("image/svg+xml", "application/json", "application/javascript"):
                     ctype += "; charset=utf-8"
+                if kind == "archive":
+                    return self._send(HTTPStatus.OK, p.read_bytes(), "application/zip", {**sandboxed, **attachment(p.name)})
                 return self._send(HTTPStatus.OK, p.read_bytes(), ctype, sandboxed)
         return self._send(HTTPStatus.NOT_FOUND, "not found\n", "text/plain")
 
@@ -957,6 +979,7 @@ PAGE = r"""<!doctype html>
     </div>
     <div id="stage">
       <div class="empty" id="empty"><div>Pick a note or an artifact on the left.</div></div>
+      <div class="empty hidden" id="dl"><div><div id="dlname"></div><p>Archives are not previewed.</p><a class="btn" id="dllink" download>Download</a></div></div>
       <iframe id="frame" class="hidden" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
       <div id="imgwrap" class="hidden"><button id="closezoom" class="hidden" title="Back to the note (Esc)">&#10005; Close</button><img id="img" alt=""></div>
     </div>
@@ -965,7 +988,7 @@ PAGE = r"""<!doctype html>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
-const ICON = { note: "≣", html: "◈", svg: "◇", image: "▣", text: "≡" };
+const ICON = { note: "≣", html: "◈", svg: "◇", image: "▣", text: "≡", archive: "▤" };
 let items = [], byId = new Map(), current = null, seen = new Set(), firstLoad = true, overlay = false;
 let open = new Set(JSON.parse(localStorage.getItem("vault-open") || "[]"));
 let scrolls = {}, zoom = { s: 1, x: 0, y: 0 }, hits = null, searchTimer = null;
@@ -1122,8 +1145,13 @@ function show(it, opts = {}) {
   $("meta").textContent = metaFor(it);
   $("open").href = "/raw/" + enc(it.id);
   $("pdf").classList.toggle("hidden", it.kind !== "note" && it.kind !== "text");
-  const isImg = it.kind === "svg" || it.kind === "image";
-  $("frame").classList.toggle("hidden", isImg);
+  const isImg = it.kind === "svg" || it.kind === "image", isArc = it.kind === "archive";
+  $("dl").classList.toggle("hidden", !isArc);
+  if (isArc) {
+    $("dlname").textContent = it.name;
+    $("dllink").href = "/raw/" + enc(it.id) + "?v=" + it.mtime;
+  }
+  $("frame").classList.toggle("hidden", isImg || isArc);
   $("imgwrap").classList.toggle("hidden", !isImg);
   $("zoomctl").classList.toggle("hidden", !isImg);
   const v = "?v=" + it.mtime;
