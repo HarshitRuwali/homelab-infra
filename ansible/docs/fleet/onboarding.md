@@ -125,6 +125,7 @@ exactly as Grafana would.
 | Ingest check `401` | The collector password is wrong for this host. Check `vault_collector_basic_auth_password`. |
 | Ingest check connection/DNS error | Egress or resolution is broken from the host. |
 | Ingest check `502` | The central stack is down. Fix that first. |
+| Ingest check `HTTP -1` on a private `https://` address | TLS verification failed. Either `monitoring_ingest_ca_file` is not the CA that signed the central certificate, or the central certificate lacks the Authority Key Identifier extension, which Python 3.13 and later (Debian 13) reject while curl and Alloy accept it. Reissue it with `subjectKeyIdentifier=hash` and `authorityKeyIdentifier=keyid:always` in its extensions file. |
 | Metrics never arrive | Alloy is running but not shipping. `journalctl -u alloy -n 50` on the host shows `remote_write` errors directly. Check the clock warning. |
 | Logs never arrive, metrics fine | Ingest and credentials are good; the journal source is not. On an LXC with a volatile-only journal there may be nothing to ship yet. |
 
