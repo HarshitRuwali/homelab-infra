@@ -197,7 +197,7 @@ Gold 6138) the chips are:
 
 !!! warning "Every LXC guest reports the hypervisor's sensors too"
     An LXC shares the host kernel, so it sees the same `/sys/class/hwmon`.
-    plex, memory, sec-dns, tailscale-router and main-server all push exact
+    memory, sec-dns, tailscale-router and main-server all push exact
     copies of t7920's fans and temperatures under their own `host` label.
     Always scope hardware queries to `host="t7920"` or `role="hypervisor"`,
     as every rule in `rules-hardware.yaml` does.

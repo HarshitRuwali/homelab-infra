@@ -46,6 +46,7 @@ Current fleet, and what each tag actually permits:
 | `matrix-synapse` | `matrixdotorg/synapse:latest` | **anything** |
 | `matrix-cloudflared` | `cloudflare/cloudflared:latest` | **anything** |
 | `fastapi` | locally built, no registry | rebuilt if its compose file has `build:`, otherwise not pulled |
+| `plex`, `plex-tunnel`, `gluetun`, `qbittorrent` | pinned tags (`media/compose.yaml`) | **skipped**: project `media` is in `docker_update_skip_projects` on cloud-services |
 
 !!! danger "The corollary"
     Do not change PostgreSQL or MySQL to `:latest`: the updater cannot migrate
@@ -67,6 +68,13 @@ docker_update_skip_projects:
 `matrix` is the obvious candidate: updating it restarts the Synapse homeserver
 that the alert relay posts into, so a bad image there takes out your ability
 to be told about it.
+
+`media` is skipped on cloud-services
+(`inventory/host_vars/cloud-services.yml`). The updater runs `docker compose up
+-d` on a whole project when no service list is given, which would try to start
+gluetun without its WireGuard secret, and every media image is pinned. Those
+images change only by bumping the pin in `media/compose.yaml` and re-running
+`media/install.sh --apply` (see `media/docs/operations.md`).
 
 Prefer pinning the tag in the compose file where you can. A pin is a statement
 about the service; a skip list is a statement about this scheduler.

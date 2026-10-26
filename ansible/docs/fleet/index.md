@@ -26,7 +26,7 @@ monitored host sits in exactly one leaf.
 
 | Group | Hosts | Collector | Auto-patched | Container updates |
 |---|---|---|---|---|
-| `lxc` → `lxc_debian` | tailscale-router, ingress, plex, memory, monitor-lxc | yes | yes, `central` see below | memory only |
+| `lxc` → `lxc_debian` | tailscale-router, ingress, memory, monitor-lxc | yes | yes, `central` see below | memory only |
 | `vm` → `vm_debian` | ubuntu-dev, ubuntu-ai, cloud-services, matrix | yes | yes | yes |
 | `pi` → `pi_debian` | rpi5, rpi4b | yes | yes | rpi5 only |
 | `metal` → `metal_debian` | t7920 (the Proxmox host) | yes | **no**, deliberately | no |
@@ -64,7 +64,7 @@ host is in as many as apply.
 
 | Group | Hosts | Answers |
 |---|---|---|
-| `lan_guests` | plex, memory, matrix | **how** it is reached: `ProxyJump` via `lan_jump_host` |
+| `lan_guests` | memory, matrix | **how** it is reached: `ProxyJump` via `lan_jump_host` |
 | `central` | monitor-lxc | **what it runs**: the monitoring stack itself |
 | `autoupdate` | every host except t7920 | **whether** it is auto-patched |
 | `no_autoupdate` | t7920 | monitored, package lists refreshed, but **never** patched automatically |
@@ -108,17 +108,19 @@ visibility.**
 
 Documented so the omission is a decision, not a gap.
 
-??? note "qbittorrent (LXC 103)"
-    Dropped for two independent reasons. Its sshd rejects every key we hold,
-    so it was never onboarded and has no collector. And its data filesystem is
-    *expected* to run at ~100% full, which made the disk alert permanently
-    noisy. While it was still in `monitored` it also sat in the host-down
-    or-chain, so it fired `Host Down` every minute forever.
+??? note "qbittorrent (LXC 103): retired to the media stack"
+    qBittorrent now runs in the
+    [media stack](https://harshitruwali.github.io/homelab-infra/media/) on
+    cloud-services, behind a VPN, and is covered by that VM's collector. The
+    LXC was never onboarded (its sshd rejected every key we held) and has no
+    collector. It is being retired: set to not start at boot and kept stopped
+    for two weeks as a way back.
 
-    To bring it back: install a key, re-add it under `lxc_debian`,
-    `lan_guests` **and** `autoupdate`, and give it a mountpoint exclusion in
-    `rules-resources.yaml` **before** you do, or you will re-create the disk
-    noise.
+    It stays out of `monitored`. While it was in the inventory it sat in the
+    host-down or-chain and fired `Host Down` every minute, and its data
+    filesystem is *expected* to run at ~100% full, which made the disk alert
+    permanently noisy. Do not re-add it; if you must, give it a mountpoint
+    exclusion in `rules-resources.yaml` first.
 
 ??? note "t7920, the Proxmox host: monitored, never auto-patched"
     It **is** monitored, as the sole member of the `metal` platform group, and
@@ -137,7 +139,10 @@ Documented so the omission is a decision, not a gap.
     to everything else.
 
 ??? note "Others"
-    - **arr-stack (LXC 104)**: stopped in Proxmox.
+    - **arr-stack (LXC 104)**: destroyed.
+    - **plex**: no longer an LXC guest or an inventory host. It runs in the
+      [media stack](https://harshitruwali.github.io/homelab-infra/media/) on
+      cloud-services, so the VM's collector covers it.
     - **win11 (VM 108)**: would need `windows_exporter`, a separate path.
     - **skullsaints, expl01t**: pentest tooling is deliberately version-pinned.
     - **Macs, iPhone**: excluded by request.
@@ -166,7 +171,7 @@ variable files. Their hosts inherit the applicable parent-group settings.
 
 !!! note "Host-specific overrides for `tailscale-router`"
     Its `host_vars` contain settings for its 2.0 GB rootfs and exit-node role.
-    Keeping them scoped to this host avoids applying them to plex, memory and
+    Keeping them scoped to this host avoids applying them to memory and
     monitor-lxc.
 
 !!! warning "The repo is public"

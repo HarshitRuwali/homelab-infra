@@ -45,7 +45,7 @@ doubt, quote it.
 | Term | Meaning | Here |
 |---|---|---|
 | **Control node** | the machine running `ansible-playbook` | your Mac, or `ubuntu-dev` |
-| **Managed node** | a machine being configured | rpi5, matrix, plex, … |
+| **Managed node** | a machine being configured | rpi5, matrix, memory, … |
 
 Ansible only needs to be installed on the control node. Managed nodes need
 SSH and Python, which they already have.

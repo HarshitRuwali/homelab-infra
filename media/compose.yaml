@@ -1,0 +1,101 @@
+# Media stack: Plex, and qBittorrent behind a ProtonVPN WireGuard tunnel.
+#
+# Deployed by ./install.sh into MEDIA_DIR (default /opt/media) on the
+# cloud-services VM. Every value that differs per host lives in .env, so this
+# file is copied as is. Secrets live in MEDIA_DIR/secrets, root-only, and are
+# never part of this repository.
+#
+# Exposure, by design:
+#   plex           host network, :32400. Remote access goes through the
+#                  plex-tunnel container (Cloudflare), not a router port.
+#   qbittorrent    no port on the host except 127.0.0.1:${QBT_WEBUI_PORT}.
+#                  install.sh puts that on the tailnet with `tailscale serve`.
+#                  All torrent traffic leaves through gluetun; if the tunnel
+#                  drops, gluetun's firewall blocks it rather than leaking.
+
+name: media
+
+services:
+  plex:
+    image: plexinc/pms-docker:1.43.5.11029-6bf8af3f0
+    container_name: plex
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      PLEX_UID: ${MEDIA_UID}
+      PLEX_GID: ${MEDIA_GID}
+    volumes:
+      - ${MEDIA_DIR}/config/plex:/config
+      - ${MEDIA_DIR}/transcode:/transcode
+      # Mounted at the path the libraries were created with, so moving
+      # hosts needs no rescan and keeps watch history.
+      - ${MEDIA_ROOT}:/data/share:ro
+
+  plex-tunnel:
+    image: cloudflare/cloudflared:2026.10.3
+    container_name: plex-tunnel
+    # Host network so the tunnel's remote-managed ingress
+    # (http://localhost:32400) reaches Plex unchanged.
+    network_mode: host
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    env_file:
+      - ${MEDIA_DIR}/secrets/plex-tunnel.env   # TUNNEL_TOKEN=...
+
+  gluetun:
+    image: qmcgaw/gluetun:v3.41.3
+    container_name: gluetun
+    restart: unless-stopped
+    cap_add: [NET_ADMIN]
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    environment:
+      TZ: ${TZ}
+      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_TYPE: wireguard
+      # Read from /run/secrets/wireguard_private_key (the secret below).
+      WIREGUARD_PRIVATE_KEY_SECRETFILE: /run/secrets/wireguard_private_key
+      # Proton NAT-PMP port forwarding; P2P servers only.
+      VPN_PORT_FORWARDING: "on"
+      PORT_FORWARD_ONLY: "on"
+      # Tell qBittorrent the forwarded port and bind it to the tunnel
+      # interface. qBittorrent shares this network namespace, so 127.0.0.1
+      # is qBittorrent itself, and it must allow localhost without a login
+      # (WebUI\LocalHostAuth=false, which install.sh seeds on a fresh install).
+      # See docs/security.md for who else can reach 127.0.0.1 here.
+      VPN_PORT_FORWARDING_UP_COMMAND: >-
+        /bin/sh -c 'wget -O- --retry-connrefused --post-data
+        "json={\"listen_port\":{{PORT}},\"current_network_interface\":\"{{VPN_INTERFACE}}\",\"random_port\":false,\"upnp\":false}"
+        http://127.0.0.1:${QBT_WEBUI_PORT}/api/v2/app/setPreferences 2>&1'
+      VPN_PORT_FORWARDING_DOWN_COMMAND: >-
+        /bin/sh -c 'wget -O- --retry-connrefused --post-data
+        "json={\"listen_port\":0,\"current_network_interface\":\"lo\"}"
+        http://127.0.0.1:${QBT_WEBUI_PORT}/api/v2/app/setPreferences 2>&1'
+    secrets:
+      - wireguard_private_key
+    ports:
+      # qBittorrent's WebUI, loopback only. See install.sh for the tailnet.
+      - "127.0.0.1:${QBT_WEBUI_PORT}:${QBT_WEBUI_PORT}"
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:5.3.0_v2.1.2-ls484
+    container_name: qbittorrent
+    # No network of its own: every packet goes through gluetun.
+    network_mode: service:gluetun
+    restart: unless-stopped
+    depends_on:
+      gluetun:
+        condition: service_healthy
+    environment:
+      TZ: ${TZ}
+      PUID: ${MEDIA_UID}
+      PGID: ${MEDIA_GID}
+      WEBUI_PORT: ${QBT_WEBUI_PORT}
+    volumes:
+      - ${MEDIA_DIR}/config/qbittorrent:/config
+      - ${MEDIA_ROOT}/Torrent:/data/share/Torrent
+
+secrets:
+  wireguard_private_key:
+    file: ${MEDIA_DIR}/secrets/wireguard_private_key
