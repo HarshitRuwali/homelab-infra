@@ -134,7 +134,7 @@
       "id": 11,
       "links": [{"title": "t7920 hardware detail", "url": "/d/host-t7920/t7920"}],
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "min(fleet_dell_fan_rpm{host=~\"$host\",fan!~\"CPU0|PSU|FB4\"})", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "min(fleet_dell_fan_rpm{host=~\"$host\",fan!~\"CPU0|PSU|FB[2-4]\"})", "refId": "A"}],
       "title": "Slowest Chassis Fan",
       "type": "stat"
     },
@@ -146,7 +146,7 @@
       "id": 12,
       "links": [{"title": "t7920 hardware detail", "url": "/d/host-t7920/t7920"}],
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(fleet_dell_fan_rpm{host=~\"$host\",fan!~\"CPU0|PSU|FB4\"} < 500) or vector(0)", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "count(fleet_dell_fan_rpm{host=~\"$host\",fan!~\"CPU0|PSU|FB[2-4]\"} < 500) or vector(0)", "refId": "A"}],
       "title": "Fans Stalled",
       "type": "stat"
     },
@@ -174,7 +174,7 @@
       "links": [{"title": "t7920 hardware detail", "url": "/d/host-t7920/t7920"}],
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=~\"$host\",fan!~\"CPU0|PSU|FB4\"}", "legendFormat": "{{host}} {{fan}}", "refId": "A"},
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=~\"$host\",fan!~\"CPU0|PSU|FB[2-4]\"}", "legendFormat": "{{host}} {{fan}}", "refId": "A"},
         {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "node_hwmon_fan_rpm{host=~\"$host\",role=\"pi\"}", "legendFormat": "{{host}} cooler", "refId": "B"}
       ],
       "title": "Fan Speeds",

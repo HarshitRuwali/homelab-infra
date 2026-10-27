@@ -288,10 +288,18 @@ groups:
               # alert permanently firing for that one host. See
               # host_vars/tailscale-router.yml for its other host-specific
               # exclusions.
+              #
+              # The LXCs on t7920 are excluded (main-server, memory,
+              # ingress, sec-dns, and sec-crowdsec once it exists):
+              # lxcfs there runs without loadavg virtualisation, so every
+              # LXC reports the hypervisor's whole load against its own 1
+              # or 2 cores, and a 1-core LXC fires whenever t7920 is busy.
+              # Add any new LXC here. VMs, the Pis and t7920 itself stay
+              # evaluated, so hypervisor load still alerts through t7920.
               expr: |
-                max by (host) (node_load15{host!="tailscale-router"})
+                max by (host) (node_load15{host!~"tailscale-router|main-server|memory|ingress|sec-dns|sec-crowdsec"})
                   / on (host)
-                count by (host) (count by (host, cpu) (node_cpu_seconds_total{mode="idle",host!="tailscale-router"}))
+                count by (host) (count by (host, cpu) (node_cpu_seconds_total{mode="idle",host!~"tailscale-router|main-server|memory|ingress|sec-dns|sec-crowdsec"}))
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}
