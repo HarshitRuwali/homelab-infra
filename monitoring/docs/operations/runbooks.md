@@ -73,7 +73,8 @@ journald_system_max_use: 64M
 
 **Alert:** `fleet-reboot-required-too-long`: 7 days outstanding.
 
-This fleet never reboots itself, so this is always a human action.
+This fleet never reboots itself, except hosts in `desk_appliances` (see the
+`desk_appliance` role), so for any other host this is a human action.
 
 ```bash
 ansible <host> -m reboot --become

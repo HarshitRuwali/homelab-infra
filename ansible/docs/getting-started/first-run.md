@@ -236,7 +236,8 @@ After a successful `site.yml`, every host has:
 
 - the Alloy collector, configured and shipping
 - the apt/reboot metrics exporter and its timer
-- unattended-upgrades configured, never rebooting
+- unattended-upgrades configured, never rebooting (hosts in `desk_appliances`
+  are configured by their own role and do reboot, in a set window)
 - the container update timer installed
 
 !!! warning "Configuring is not upgrading"

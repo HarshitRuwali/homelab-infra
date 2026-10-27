@@ -1,0 +1,117 @@
+---
+- name: Check the Docker source
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_docker_source in desk_appliance_docker_packages
+    fail_msg: >-
+      desk_appliance_docker_source must be one of
+      {{ desk_appliance_docker_packages.keys() | list }}, got
+      {{ desk_appliance_docker_source }}.
+    quiet: true
+
+# Mirrors roles/wazuh_agent/tasks/repo.yml: same keyring directory, same
+# armoured-key approach, same apt_repository module. Migrate every role to
+# deb822_repository in one change rather than this one alone.
+- name: Add the Docker APT repository
+  when: desk_appliance_docker_source == 'docker_ce'
+  block:
+    - name: Install APT prerequisites for the Docker repository
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - gnupg
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Ensure the APT keyring directory exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the Docker APT signing key
+      ansible.builtin.get_url:
+        url: "{{ desk_appliance_docker_apt_key_url }}"
+        dest: "{{ desk_appliance_docker_apt_keyring }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Add the Docker APT repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ desk_appliance_docker_arch }}
+          signed-by={{ desk_appliance_docker_apt_keyring }}]
+          {{ desk_appliance_docker_apt_url }}
+          {{ desk_appliance_docker_apt_suite }} stable
+        filename: docker
+        state: present
+        update_cache: true
+
+# Written before the engine is installed so the first start already reads it.
+# `force: false` makes this create-only: an existing daemon.json, hand-written
+# or not, is never touched (JSON has no comment to mark ownership with, so
+# "already ours" cannot be told apart from "someone else's"). Turning the
+# variable off later does not remove a file this role wrote.
+- name: Ensure the Docker configuration directory exists
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: desk_appliance_docker_live_restore | bool
+
+- name: Keep containers running while the Docker daemon restarts
+  ansible.builtin.copy:
+    content: |
+      {"live-restore": true}
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+  when: desk_appliance_docker_live_restore | bool
+  notify: Reload Docker
+
+- name: Install the Docker engine and the Compose plugin
+  ansible.builtin.apt:
+    name: "{{ desk_appliance_docker_packages[desk_appliance_docker_source] }}"
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+
+# Under --check on a fresh host the unit does not exist yet, so a failure is
+# tolerated in check mode only (failed_when, not ignore_errors: a real run
+# still fails).
+- name: Enable and start Docker
+  ansible.builtin.systemd:
+    name: docker
+    enabled: true
+    state: started
+  register: desk_appliance_docker_unit
+  failed_when: desk_appliance_docker_unit is failed and not ansible_check_mode
+
+# The docker group does not exist until the engine package creates it, so it is
+# looked up rather than assumed (--check on a fresh host has not installed it).
+- name: Look up the groups on the host
+  ansible.builtin.getent:
+    database: group
+    key: docker
+    fail_key: false
+
+# Membership of this group is root-equivalent on the host. That is the cost of
+# letting the agent run containers without sudo; see the role README.
+- name: Put the appliance user in the docker group
+  ansible.builtin.user:
+    name: "{{ desk_appliance_user }}"
+    groups: docker
+    append: true
+  when:
+    - desk_appliance_user_present | bool
+    - ansible_facts.getent_group['docker'] is not none

@@ -1,0 +1,78 @@
+---
+- name: Refuse a distribution the role has not been exercised on
+  ansible.builtin.assert:
+    that:
+      - ansible_facts.distribution in desk_appliance_supported_distributions
+    fail_msg: >-
+      {{ inventory_hostname }} runs {{ ansible_facts.distribution }}; this role has
+      been exercised on {{ desk_appliance_supported_distributions | join(', ') }}
+      only. Its package names and update origins would be wrong elsewhere, and
+      the update layer in particular would pass its checks while patching
+      nothing. Try the role on a scratch copy first, then add the name to
+      desk_appliance_supported_distributions.
+    quiet: true
+
+- name: Refuse an unusable appliance user name
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_user is match('^[a-z_][a-z0-9_-]*$')
+      - desk_appliance_user != 'root'
+    fail_msg: >-
+      desk_appliance_user must be a lowercase login name and must not be root:
+      autologin as root is not something this role will configure.
+    quiet: true
+
+# Password locked (`!`): autologin needs none, and a usable one on a box that
+# is reachable from a desk is a credential to leak. No sudo group either; grant
+# that deliberately in the inventory if the agent really needs it.
+- name: Create the appliance user
+  ansible.builtin.user:
+    name: "{{ desk_appliance_user }}"
+    home: "{{ desk_appliance_home }}"
+    shell: "{{ desk_appliance_user_shell }}"
+    create_home: true
+    password: "!"
+    update_password: on_create
+    state: present
+  when: desk_appliance_create_user | bool
+
+# Under --check on a fresh host the user does not exist yet, and any task that
+# names it as an owner or a group member would abort the dry run. This fact is
+# what those tasks gate on. A real run always ends with it true.
+- name: Look up the appliance user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ desk_appliance_user }}"
+    fail_key: false
+
+- name: Record whether the appliance user exists
+  ansible.builtin.set_fact:
+    desk_appliance_user_present: >-
+      {{ ansible_facts.getent_passwd[desk_appliance_user] is not none }}
+
+# With create_user false nothing will make the account, so a missing one is a
+# mistake to stop on, not something to skip past: every per-user task below
+# (autologin, XFCE and audio files, group membership) would otherwise be
+# skipped and the play would report success on a box that cannot log in. This
+# holds under --check too, because nothing in a dry run creates it either.
+- name: Refuse a missing appliance user that the role is not to create
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_user_present | bool
+    fail_msg: >-
+      {{ desk_appliance_user }} does not exist on {{ inventory_hostname }} and
+      desk_appliance_create_user is false. Create the account, or set
+      desk_appliance_create_user: true. Without it LightDM autologin and every
+      per-user setting would be silently skipped.
+    quiet: true
+  when: not desk_appliance_create_user | bool
+
+- name: Say so when --check cannot see the user yet
+  ansible.builtin.debug:
+    msg: >-
+      {{ desk_appliance_user }} does not exist yet, so the per-user tasks are
+      skipped in this dry run. They run on a real run, after the user is
+      created.
+  when:
+    - desk_appliance_create_user | bool
+    - not desk_appliance_user_present | bool

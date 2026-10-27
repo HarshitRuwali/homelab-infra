@@ -1,0 +1,11 @@
+# Managed by ansible/roles/desk_appliance. Do not edit by hand.
+#
+# autologin-session and user-session name an X11 session explicitly. Ubuntu
+# 26.04 also ships an XFCE Wayland session, and an unnamed default is how a
+# box ends up on it.
+[Seat:*]
+autologin-user={{ desk_appliance_user }}
+autologin-user-timeout=0
+autologin-session={{ desk_appliance_session }}
+user-session={{ desk_appliance_session }}
+allow-guest=false
