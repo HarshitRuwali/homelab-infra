@@ -133,7 +133,7 @@ jobs:
                                 -r aibox-model-queue/docs/requirements.txt \
                                 -r security/docs/requirements.txt \
                                 -r vault-viewer/docs/requirements.txt \
-                                -r media/docs/requirements.txt
+                                -r media/docs/requirements.txt \
                                 -r ingress/docs/requirements.txt
 
       # --strict turns broken internal links and pages missing from the nav
