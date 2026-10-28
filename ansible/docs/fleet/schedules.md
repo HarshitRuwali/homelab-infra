@@ -60,9 +60,10 @@ The update-metrics exporter runs **every 15 minutes plus jitter**:
 
     Fixed by giving `fleet-update-metrics.service` its own
     `[Install] WantedBy=multi-user.target`, so a boot triggers it directly
-    without the jitter. Safe because this fleet never auto-reboots: every boot
-    is deliberate and one machine at a time, so there is no thundering herd to
-    protect against.
+    without the jitter. Safe because this fleet never auto-reboots, except
+    hosts in `desk_appliances` (see [package patching](patching.md)): every
+    other boot is deliberate and one machine at a time, so there is no
+    thundering herd to protect against.
 
 `fleet-docker-update.service` deliberately has **no** `[Install]` section. It
 pulls gigabytes and restarts services; a host coming back from maintenance

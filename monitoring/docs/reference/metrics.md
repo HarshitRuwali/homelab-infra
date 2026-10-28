@@ -129,6 +129,34 @@ physical drive.
     already carries 23 from a past event, so a `> 0` rule would fire forever.
     `fleet-smart-crc-errors-rising` uses `increase(...[24h]) > 0`.
 
+## Proxmox guest NICs
+
+Written to `fleet-pve-guests.prom` by `fleet-pve-guests`, every 5 minutes and
+at boot, from `ansible/roles/pve_guest_metrics`. Only on a Proxmox VE node,
+which today means the `metal` group.
+
+| Metric | Meaning |
+|---|---|
+| `fleet_pve_guest_nic_info` | always `1`; one series per guest NIC, labelled `device`, `guest`, `vmid`, `type`, `nic` and `bridge` |
+| `fleet_pve_guest_nics_total` | guest NICs named on this node |
+| `fleet_pve_guests_collection_timestamp_seconds` | when naming last ran |
+
+It carries no traffic itself. It names the traffic node_exporter already
+reports: Proxmox gives every guest NIC a device on the host, `tap<vmid>i<n>` for
+a VM and `veth<vmid>i<n>` for a container, and `device` is the join key.
+
+```promql
+# bytes per second each guest NIC SENDS
+rate(node_network_receive_bytes_total{device=~"(tap|veth)[0-9]+i[0-9]+"}[5m])
+  * on (host, device) group_left (guest, nic, bridge) fleet_pve_guest_nic_info
+```
+
+!!! warning "Receive on the host is send on the guest"
+    The device is the host's end of the guest's virtual cable, so the host's
+    *receive* counter is what the guest *sent*. Every panel on
+    [Guest Traffic](../monitoring/dashboards.md#guest-traffic) swaps the two;
+    do the same in your own queries.
+
 ## GPU telemetry
 
 Scraped from the standalone `nvidia_gpu_exporter` service (see
@@ -169,7 +197,7 @@ Gold 6138) the chips are:
 
 !!! warning "Every LXC guest reports the hypervisor's sensors too"
     An LXC shares the host kernel, so it sees the same `/sys/class/hwmon`.
-    plex, memory, sec-dns, tailscale-router and main-server all push exact
+    memory, sec-dns, tailscale-router and main-server all push exact
     copies of t7920's fans and temperatures under their own `host` label.
     Always scope hardware queries to `host="t7920"` or `role="hypervisor"`,
     as every rule in `rules-hardware.yaml` does.

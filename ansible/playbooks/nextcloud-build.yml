@@ -1,0 +1,20 @@
+---
+# The Nextcloud image is built locally from nextcloud:stable-apache to remap
+# www-data for the virtiofs share. Declare that build on both services so the
+# fleet updater can refresh the base image instead of trying Docker Hub for
+# nextcloud-virtiofs:stable.
+- name: Keep the local Nextcloud image updateable
+  hosts: cloud-services
+  become: true
+  tasks:
+    - name: Declare the local build for app and cron
+      ansible.builtin.replace:
+        path: /home/harshit/nextcloud/compose.yaml
+        regexp: '(?m)^(  (?:app|cron):\n)(    image: \$\{NC_IMAGE\}\n)'
+        replace: '\1    build:\n      context: ./build\n\2'
+        backup: true
+
+    - name: Validate the Compose configuration
+      ansible.builtin.command:
+        cmd: docker compose --project-directory /home/harshit/nextcloud -f /home/harshit/nextcloud/compose.yaml config -q
+      changed_when: false

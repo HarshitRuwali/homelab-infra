@@ -46,7 +46,9 @@ ansible-playbook playbooks/site.yml             # everything, idempotent
 > [!IMPORTANT]
 > `site.yml` **configures** the machinery; it does not itself install packages
 > or pull images. Those apply on a schedule: **03:00** for packages, **04:00**
-> for containers, both with jitter. Nothing here ever reboots a machine.
+> for containers, both with jitter. Nothing here ever reboots a machine, with one
+> opt-in exception: the `desk_appliance` role, for a host that is not in the
+> patching groups.
 
 New to Ansible? [Ansible concepts](docs/getting-started/ansible-basics.md)
 assumes no prior knowledge and uses examples from this repository.
@@ -85,6 +87,7 @@ tests/                         consistency checks, run by hand; see the header o
 | `dashboards.yml` | the committed Grafana dashboards |
 | `central-alerting.yml` | the Matrix relay and Grafana unified alerting |
 | `rotate-collector-password.yml` | rotate the shared collector basic-auth password |
+| `desk-appliance.yml` | the `desk_appliances` baseline: X11 autologin desktop, audio, serial, Bluetooth adapter quirks, Docker, security updates; not part of `site.yml` |
 | `tailscale-node.yml` | the `tailscale_nodes` baseline: Tailscale installed, the host joined under a tag, local services published with `tailscale serve`; not part of `site.yml` |
 | `image-registry.yml` | the `image_registries` baseline: Docker, the private container image registry on loopback, weekly garbage collection; not part of `site.yml` |
 
@@ -97,12 +100,14 @@ Full reference: [Playbooks](docs/reference/playbooks.md).
 | `alloy_collector` | Grafana Alloy, the collector on every monitored host |
 | `update_metrics` | pending-package and reboot-required textfile exporter |
 | `smart_metrics` | SMART disk health, bare metal only |
+| `pve_guest_metrics` | names each Proxmox guest's NIC counters, PVE hosts only |
 | `gpu_exporter` | NVIDIA GPU telemetry, autodetected off the host |
 | `unattended_upgrades` | apt patching policy, applied by group membership only |
 | `docker_updates` | container image update timer |
 | `grafana_dashboards` | the committed dashboard JSON |
 | `grafana_alerting` | provisioned alert rules and contact points |
 | `matrix_webhook` | the local Grafana-to-Matrix relay |
+| `desk_appliance` | an always-on X11 desk appliance; see `roles/desk_appliance/README.md` |
 | `tailscale_node` | Tailscale on a host, joined under a tag, with `tailscale serve` publishing; see `roles/tailscale_node/README.md` |
 | `image_registry` | the private container image registry; see `roles/image_registry/README.md` |
 
@@ -128,7 +133,10 @@ given variable belongs to and why. Start there.
 
 ## Design commitments
 
-- **Machines never reboot themselves**, under any policy. Kernel updates
+- **Machines never reboot themselves**, under any policy, except hosts in the
+  opt-in `desk_appliances` group, which reboot in a set window (Kali hosts
+  only when `desk_appliance_updates_enabled` is set) and are kept
+  out of `autoupdate` and `no_autoupdate`. Kernel updates
   therefore accumulate until a human acts, which is why
   `fleet-reboot-required-too-long` nags at seven days.
 - **Patching is decided by inventory group membership only**, never by a

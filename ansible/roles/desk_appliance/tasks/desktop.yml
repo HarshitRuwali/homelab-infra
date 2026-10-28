@@ -1,0 +1,71 @@
+---
+# Without this answer, installing lightdm on a host that already has another
+# display manager stops to ask which one to use, and an unattended run hangs.
+- name: Preseed LightDM as the display manager
+  ansible.builtin.debconf:
+    name: lightdm
+    question: shared/default-x-display-manager
+    value: lightdm
+    vtype: select
+
+- name: Install the X11 session, LightDM and the desktop
+  ansible.builtin.apt:
+    name: >-
+      {{ desk_appliance_desktop_packages + desk_appliance_extra_packages }}
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Look for the X11 session file
+  ansible.builtin.stat:
+    path: "/usr/share/xsessions/{{ desk_appliance_session }}.desktop"
+  register: desk_appliance_session_file
+
+# /usr/share/xsessions holds X11 sessions only; Wayland ones live in
+# /usr/share/wayland-sessions. Requiring the file here is what makes
+# "X11, not Wayland" a checked property rather than a hope.
+- name: Assert the configured session is an X11 session
+  ansible.builtin.assert:
+    that:
+      - desk_appliance_session_file.stat.exists
+    fail_msg: >-
+      /usr/share/xsessions/{{ desk_appliance_session }}.desktop does not exist.
+      desk_appliance_session must name an X11 session installed by
+      desk_appliance_desktop_packages (see ls /usr/share/xsessions).
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Ensure the LightDM drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/lightdm/lightdm.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure LightDM autologin into the X11 session
+  ansible.builtin.template:
+    src: lightdm-autologin.conf.j2
+    dest: /etc/lightdm/lightdm.conf.d/50-desk-appliance.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Boot to the graphical target
+  ansible.builtin.file:
+    src: /usr/lib/systemd/system/graphical.target
+    dest: /etc/systemd/system/default.target
+    state: link
+
+# Enabled, not started. Starting the display manager mid-play would switch the
+# console to the desktop under whoever is running this; the next boot starts it.
+# Under --check on a fresh host the unit does not exist yet, so a failure is
+# tolerated in check mode only. failed_when rather than ignore_errors: a real
+# run still fails, and a tolerated check-mode failure is not reported as one.
+- name: Enable LightDM
+  ansible.builtin.systemd:
+    name: lightdm
+    enabled: true
+  register: desk_appliance_lightdm_unit
+  failed_when: desk_appliance_lightdm_unit is failed and not ansible_check_mode

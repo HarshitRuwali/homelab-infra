@@ -1,0 +1,27 @@
+---
+# Keep Immich on its stable release channel. The database and Valkey remain on
+# their compatible major/extension tags, but their image digests must float so
+# rebuilt images receive fixes during the nightly Compose pull.
+- name: Track stable Immich container images
+  hosts: cloud-services
+  become: true
+  tasks:
+    - name: Follow the stable Immich release channel
+      ansible.builtin.lineinfile:
+        path: /home/harshit/immich-app/.env
+        regexp: '^IMMICH_VERSION='
+        line: IMMICH_VERSION=release
+        backup: true
+      no_log: true
+
+    - name: Remove fixed digests from compatible database and cache tags
+      ansible.builtin.replace:
+        path: /home/harshit/immich-app/docker-compose.yml
+        regexp: '(?m)^(\s+image: (?:docker\.io/valkey/valkey:9|ghcr\.io/immich-app/postgres:14-vectorchord0\.4\.3-pgvectors0\.2\.0))@sha256:[0-9a-f]{64}$'
+        replace: '\1'
+        backup: true
+
+    - name: Validate the Immich Compose configuration
+      ansible.builtin.command:
+        cmd: docker compose --project-directory /home/harshit/immich-app -f /home/harshit/immich-app/docker-compose.yml config -q
+      changed_when: false

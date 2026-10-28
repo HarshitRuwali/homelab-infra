@@ -1,6 +1,6 @@
 [project]
 name = "personal-assistant-fastapi"
-version = "0.1.0"
+version = "0.2.0"
 description = "FastAPI middleware for the personal assistant memory and LLM services."
 requires-python = ">=3.12"
 dependencies = [
@@ -10,7 +10,7 @@ dependencies = [
     "httpx==0.28.1",
     "psycopg2-binary==2.9.10",
     "pydantic-settings==2.6.1",
-    "qdrant-client==1.12.1",
+    "qdrant-client>=1.19,<2",
     "sqlalchemy[asyncio]==2.0.36",
     "uvicorn[standard]==0.32.1",
 ]

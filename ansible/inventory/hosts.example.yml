@@ -53,11 +53,16 @@
 #   monitored      -> gets the Alloy collector and the update-metrics exporter
 #   lan_guests     -> HOW it is reached (ProxyJump, not direct)
 #   central        -> WHAT IT RUNS (the monitoring stack itself)
+#   security_guests -> the four guests from security/, with standard host telemetry
 #   autoupdate     -> ALSO gets unattended-upgrades (auto-apply, never reboot)
 #   no_autoupdate  -> monitored but NEVER auto-patched
 #   wazuh_agents   -> ALSO gets the Wazuh agent, reporting to the sec-wazuh
 #                     guest from security/. Membership is the only thing that
 #                     enables it, same contract as `autoupdate`.
+#   desk_appliances -> an always-on X11 desk box (roles/desk_appliance). It
+#                     owns its own patching, INCLUDING automatic reboots, so
+#                     keep it out of `autoupdate` and `no_autoupdate`; the
+#                     role refuses to run on a host in either.
 #   tailscale_nodes -> ALSO joined to the tailnet under a tag, with local
 #                     services published by `tailscale serve`
 #                     (roles/tailscale_node). NEVER the tailnet router
@@ -80,6 +85,13 @@ all:
     # Public hostname of the central stack. Used to build the remote_write and
     # Loki push URLs in group_vars/all/main.yml.
     monitoring_domain: monitor.example.com
+    # Optional: if every collector can reach the central nginx privately,
+    # avoid sending internal telemetry through the public tunnel. Use HTTPS
+    # with a certificate from your own CA (see "Private ingest" in the
+    # monitoring architecture docs) so the Basic Auth credential never
+    # crosses the network in cleartext; the CA path is on this machine.
+    # monitoring_ingest_base_url: https://10.0.0.10
+    # monitoring_ingest_ca_file: /path/to/homelab-ca/ca.crt
 
     # Host used as a ProxyJump to reach `lan_guests`. Must be set here, not in
     # group_vars/lan_guests: group_vars beats inventory vars, so a default
@@ -106,20 +118,30 @@ all:
 
                 # Reached through lan_jump_host; see the overlay below.
                 app-01:
-                  pve_vmid: 103
+                  pve_vmid: 106
                   ansible_host: 10.0.1.11
                   ansible_user: root
                   monitor_role: service
 
                 # The central monitoring stack itself.
                 monitor-lxc:
-                  pve_vmid: 112
+                  pve_vmid: 103
                   ansible_host: 10.0.1.99
                   ansible_user: root
                   monitor_role: central
                   # monitor_hostname is pinned in host_vars/monitor-lxc.yml to
                   # the value already in /etc/default/alloy on that box.
                   # Renaming it forks its history in Prometheus and Loki.
+
+                sec-crowdsec:
+                  pve_vmid: 112
+                  ansible_host: 10.0.0.210
+                  ansible_user: root
+
+                sec-dns:
+                  pve_vmid: 111
+                  ansible_host: 10.0.0.211
+                  ansible_user: root
 
         # --- Proxmox KVM virtual machines ----------------------------------
         # Own kernel, so kernel upgrades and reboot-required are real here.
@@ -134,6 +156,16 @@ all:
                   ansible_host: 10.0.0.12
                   ansible_user: someoneelse
                   monitor_role: workstation
+
+                sec-wazuh:
+                  pve_vmid: 110
+                  ansible_host: 10.0.0.200
+                  ansible_user: admin
+
+                sec-scan:
+                  pve_vmid: 113
+                  ansible_host: 10.0.1.201
+                  ansible_user: admin
 
         # --- Bare-metal ARM SBCs -------------------------------------------
         # group_vars/pi holds the SD-card IO tuning; group_vars/pi_debian
@@ -174,6 +206,17 @@ all:
         lan_guests:
           hosts:
             app-01: {}
+            sec-scan: {}
+
+        # Standard Alloy host metrics, journal logs and update visibility.
+        # Replace the example addresses above with DHCP reservations. Add
+        # trusted-side guests to lan_guests too if they need ProxyJump.
+        security_guests:
+          hosts:
+            sec-wazuh: {}
+            sec-scan: {}
+            sec-crowdsec: {}
+            sec-dns: {}
 
         # The central stack. Pushes to itself over loopback rather than out
         # through the WAN and back; see group_vars/central.
@@ -187,10 +230,24 @@ all:
     # Roll out in stages and tune the alert volume after the first two hosts.
     # An untuned default ruleset across the whole fleet at once is the
     # documented failure mode. See playbooks/wazuh-agents.yml.
-    wazuh_agents:
+    # Manager access verifies the enrollment group. Harden it before agents.
+    wazuh_manager:
       hosts:
-        # ubuntu-dev:
-        # t7920:
+        sec-wazuh: {}
+
+    wazuh_agents:
+      # Every monitored host except the manager, which runs its own agent.
+      # Roll out two first, check the alert volume, tune, then the rest.
+      hosts:
+        server-01: {}
+        workstation-01: {}
+
+    desk_appliances:
+      # desk-01:
+      #   ansible_host: 192.0.2.10
+      # Per-host settings (user, serial ids, audio device names) go in
+      # host_vars/desk-01.yml; see roles/desk_appliance/README.md.
+      hosts: {}
 
     autoupdate:
       hosts:

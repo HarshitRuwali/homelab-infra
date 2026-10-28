@@ -1,8 +1,8 @@
 # Container updates
 
-Pulls new images for every Docker Compose project on a host, recreates only
-the containers whose image actually changed, then reclaims the layers that
-fell out of use.
+Pulls new registry images and rebuilds local images with fresh base images for
+every Docker Compose project on a host. It applies changed images, checks for
+restart loops, then reclaims layers that fell out of use.
 
 ```bash
 ansible-playbook playbooks/docker-updates.yml                        # configure, no pull
@@ -25,33 +25,37 @@ deployment mechanism.
 
 ## What makes this safe
 
-!!! success "Your tag discipline, not the script"
-    The script has no cleverness that prevents a destructive database
-    upgrade. **Tag pinning in the compose files does.**
-
-    `postgres:16-alpine` resolves only to 16.x, so a pull gets patch fixes and
-    can never jump to 17 and refuse to start on a v16 data directory.
+!!! success "Database majors are migrated separately"
+    PostgreSQL and MySQL keep floating tags within their current major
+    version. A pull gets current security and patch releases without asking a
+    new database binary to start against an incompatible data directory.
+    Moving to a newer database major requires a supervised data migration.
 
 Current fleet, and what each tag actually permits:
 
 | Container | Image | On a pull |
 |---|---|---|
-| `qdrant` | `qdrant/qdrant:v1.9.2` | no-op, fully pinned |
-| `immich_postgres` | `ghcr.io/immich-app/postgres:14-vectorchord…` | no-op, fully pinned |
+| `qdrant` | `qdrant/qdrant:latest` | latest stable; blocked if more than one minor ahead |
+| `immich_postgres` | `ghcr.io/immich-app/postgres:14-vectorchord…` | rebuilt compatible tag, no fixed digest |
 | `postgres`, `matrix-postgres` | `postgres:16-alpine` | patch within 16.x |
-| `redis` | `redis:7.2-alpine` | patch within 7.2.x |
+| `redis` | `redis:8-alpine` | latest stable 8.x |
 | `mysql` | `mysql:8.0` | patch within 8.0.x |
-| `immich_redis` | `valkey/valkey:9` | minor+patch within 9.x |
-| `immich_server`, `immich_machine_learning` | `…:v3` | minor+patch within v3 |
+| `immich_redis` | `valkey/valkey:9` | latest 9.x, no fixed digest |
+| `immich_server`, `immich_machine_learning` | `…:release` | latest stable Immich release |
+| `nextcloud-app-1`, `nextcloud-cron-1` | local build from `nextcloud:stable-apache` | rebuild against current stable base |
 | `matrix-synapse` | `matrixdotorg/synapse:latest` | **anything** |
 | `matrix-cloudflared` | `cloudflare/cloudflared:latest` | **anything** |
-| `fastapi` | locally built, no registry | skipped, nothing to pull |
+| `fastapi` | locally built, no registry | rebuilt if its compose file has `build:`, otherwise not pulled |
+| `plex`, `plex-tunnel`, `gluetun`, `qbittorrent` | pinned tags (`media/compose.yaml`) | **skipped**: project `media` is in `docker_update_skip_projects` on cloud-services |
 
 !!! danger "The corollary"
-    If you ever retag a **stateful** service to `:latest` or to a bare major
-    like `postgres`, this will happily perform a destructive major upgrade at
-    04:00. Pin stateful services, or add the project to
-    `docker_update_skip_projects`.
+    Do not change PostgreSQL or MySQL to `:latest`: the updater cannot migrate
+    their data directories. Qdrant is the exception because it is listed in
+    `docker_update_minor_step_images`: the updater accepts a new image only if
+    it is at most one minor ahead of the running one. Otherwise it points the
+    tag back at the running image, updates the rest of the project and fails
+    the run. Then step through the missed minors with
+    `playbooks/upgrade-qdrant.yml -e qdrant_steps="v1.20.3 v1.21.1"`.
 
 ## Skipping a project
 
@@ -65,6 +69,13 @@ docker_update_skip_projects:
 that the alert relay posts into, so a bad image there takes out your ability
 to be told about it.
 
+`media` is skipped on cloud-services
+(`inventory/host_vars/cloud-services.yml`). The updater runs `docker compose up
+-d` on a whole project when no service list is given, which would try to start
+gluetun without its WireGuard secret, and every media image is pinned. Those
+images change only by bumping the pin in `media/compose.yaml` and re-running
+`media/install.sh --apply` (see `media/docs/operations.md`).
+
 Prefer pinning the tag in the compose file where you can. A pin is a statement
 about the service; a skip list is a statement about this scheduler.
 
@@ -76,9 +87,11 @@ flowchart TD
     B --> C{"in skip list?"}
     C -->|yes| Z["next project"]
     C -->|no| D["record image IDs BEFORE"]
-    D --> E["docker compose pull<br/>--ignore-pull-failures"]
-    E --> F["docker compose up -d"]
-    F --> G["record image IDs AFTER"]
+    D --> E["docker compose pull<br/>registry services only, one retry"]
+    E --> M["minor-step images:<br/>undo a jump of more than one minor"]
+    M --> F["docker compose build --pull"]
+    F --> N["docker compose up -d<br/>--pull never --no-build"]
+    N --> G["record image IDs AFTER"]
     G --> H{"changed?"}
     H -->|yes| I["count recreated containers"]
     H -->|no| Z
@@ -97,15 +110,65 @@ and backups. The labels describe only what is **actually deployed right now**.
 the wrong file silently creates a **second** stack rather than updating the
 existing one.
 
-### `--ignore-pull-failures` is required, not defensive
+### Local images are rebuilt
 
-Locally built images have nothing to pull. Without the flag, one unpullable
-service aborts the pull for **every other service in the same project**.
+The pull covers only services a registry can provide. Services with a `build`
+section are rebuilt by `docker compose build --pull` against fresh base
+images, and an image that exists locally but never came from a registry (built
+by hand and referenced only by `image:`) is left alone rather than requested
+from Docker Hub.
+
+A failed pull or build is retried once after
+`docker_update_pull_retry_delay_seconds` (120 s), which absorbs Docker Hub rate
+limits and short registry outages. A failure that survives the retry fails the
+run and appears in the update alert.
+
+### Pull failures stop that project's update
+
+A pull or build that still fails after its one retry marks the run failed and
+prevents that project's `up`. Authentication failures, missing tags and network
+errors are not treated as successful updates. `up` uses `--pull never
+--no-build`, so it applies only the images already fetched or built. A failed
+run retains old images by skipping pruning and returns a nonzero exit status as
+well as setting `fleet_docker_update_failed`.
+
+!!! warning "No `--wait`, on purpose"
+    Compose's `up --wait` treats **any** exited container as a failure, exit
+    code 0 included, unless another service depends on it with
+    `service_completed_successfully`. One-shot containers are normal (Greenbone
+    ships seven that copy feed data and exit), so `--wait` turns a healthy
+    project into a nightly failure. Readiness is checked after the health wait
+    instead, across the host: any container restarting or unhealthy fails the
+    run, including one this update did not touch.
+
+The nonzero exit leaves `fleet-docker-update.service` in the `failed` state.
+**Systemd Unit Failed** excludes that unit, because **Container Update Failed**
+already pages for the same failure with more detail. One failure, one page.
+On a workstation, no page: **Container Update Failed**
+[skips workstations](#verification-after-the-run) on purpose, and without this
+exclusion **Systemd Unit Failed** would page there instead.
+
+Every Compose file recorded in the container labels must still be readable,
+including overrides. A missing file stops the project before any pull or
+redeployment; falling back to a base file could change ports and volume mounts.
+The full configuration is reapplied, so editing it can recreate containers even
+when their image IDs have not changed.
+
+### Opting a host out
+
+Move the host from `autoupdate` to `no_autoupdate` and run `site.yml` for that
+host. The Docker play stops and disables existing updater units, removes their
+files and deletes stale updater metrics. Hosts that remain monitored but are
+removed from `autoupdate` are cleaned up too. Explicit `no_autoupdate` wins if a
+host is accidentally in both groups. Keep a decommissioning host in inventory
+until cleanup has run; Ansible cannot remove timers from a host it cannot target.
+The opt-out play stops an active updater as well, so schedule the change outside
+its update window to avoid interrupting a Compose operation.
 
 ### No `--remove-orphans`
 
-That deletes containers this project did not create, which on a shared host
-means deleting something a human started by hand.
+That removes containers carrying the same project label whose services are
+absent from the current Compose model. Preserve them for manual review.
 
 ### Change detection compares image IDs
 
@@ -127,10 +190,20 @@ docker image prune -a     # NO
 
 ## Verification after the run
 
-The script waits 60 seconds, then checks for containers stuck restarting. That
-matters because a pull that succeeds and an `up -d` that returns `0` can still
-leave a container crash-looping on a new image, which is exactly the case
-worth alerting on.
+When any image changed, the script waits `docker_update_health_wait_seconds`
+(60 by default) for containers to settle. Then, on every run, it checks the
+whole host for unhealthy and restarting containers. That matters because a pull
+that succeeds and an `up -d` that returns `0` can still leave a container
+crash-looping on a new image, which is exactly the case worth alerting on.
+
+!!! warning "A healthcheck that can never pass fails every run"
+    The check is host-wide and runs even when nothing changed, so a container
+    whose **healthcheck** is broken, not its service, fails the update every
+    night. The qdrant image ships no `curl`, so a `curl` healthcheck on it reads
+    `unhealthy` forever while the database serves normally, and
+    `fleet-container-unhealthy` never fires because it was never healthy to
+    begin with. Fix the check rather than skip the host: `memory/docker-compose.yml`
+    has a curl-free one.
 
 Metrics written to `fleet-docker.prom`:
 
@@ -141,6 +214,7 @@ Metrics written to `fleet-docker.prom`:
 | `fleet_docker_projects_updated` | projects whose images changed |
 | `fleet_docker_containers_recreated` | containers moved to a new image |
 | `fleet_docker_containers_restarting` | stuck restarting after the update |
+| `fleet_docker_containers_unhealthy` | failing their healthcheck; any at all fails the run |
 | `fleet_docker_image_bytes_reclaimed` | freed by pruning |
 
 Two alerts consume them: `fleet-docker-update-failed` (critical) and

@@ -1,24 +1,24 @@
 # Alerting
 
-53 provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix
-room through a local relay. 48 are committed under
-`grafana/provisioning/alerting/`; the five availability rules are generated
-from the inventory, so adding a host cannot leave a silent gap in
-down-detection.
+Provisioned rules in the `Fleet` folder, routed to a self-hosted Matrix room
+through a local relay. Most are committed under
+`grafana/provisioning/alerting/`; the availability rules are generated from the
+inventory, so adding a host cannot leave a silent gap in down-detection.
 
 ## Rule catalogue
 
-=== "Availability (5)"
+=== "Availability (6)"
 
     | uid | Severity | For | Fires when |
     |---|---|---|---|
     | `fleet-host-down` | critical | 0m | no metrics for 10 min ([or-chain](../architecture/push-model.md)) |
     | `fleet-collector-lagging` | warning | 5m | data arriving but >15 min stale |
     | `fleet-remote-write-failing` | warning | 10m | Alloy failing to push samples |
+    | `fleet-prometheus-out-of-order` | warning | 30m | Prometheus still accepting out-of-order samples after 30m: two collectors probably send identical series |
     | `fleet-clock-unsynced` | warning | 30m | NTP not synchronised |
     | `fleet-central-stack-down` | critical | 2m | a core service on the central LXC is not active |
 
-=== "Resources (8)"
+=== "Resources (9)"
 
     | uid | Severity | For | Threshold |
     |---|---|---|---|
@@ -27,9 +27,10 @@ down-detection.
     | `fleet-disk-will-fill` | warning | 1h | trending to full in 24h **and** under 10% free |
     | `fleet-memory-high` | warning | 15m | available memory under 10% |
     | `fleet-oom-kills` | critical | 0m | kernel OOM killer active in last 15 min |
-    | `fleet-load-high` | warning | 20m | load15 over 2× core count, `tailscale-router` excluded |
+    | `fleet-load-high` | warning | 20m | load15 over 2× core count; `tailscale-router` and the LXCs on t7920 excluded (lxcfs reports the hypervisor's load inside them) |
     | `fleet-filesystem-readonly` | critical | 5m | kernel remounted a filesystem read-only after an I/O error |
     | `fleet-inodes-high` | warning | 15m | over **90%** of the inode limit, which fails writes while space looks free |
+    | `wazuh-indexer-disk` | warning | 15m | `sec-wazuh` root over **80%**; OpenSearch stops writing at 90 to 95%, before `fleet-disk-high` would fire |
 
 === "Updates (6)"
 
@@ -50,7 +51,7 @@ down-detection.
     | `fleet-container-oom` | critical | 0m | container OOM-killed in last 15 min |
     | `fleet-container-memory-near-limit` | warning | 15m | over 90% of its own limit |
     | `fleet-container-unhealthy` | warning | 10m | was healthy, now failing ([why that matters](container-metrics.md#container_health_state-does-not-mean-what-it-looks-like)) |
-    | `fleet-container-disappeared` | warning | 10m | container gone, non-workstation hosts |
+    | `fleet-container-disappeared` | warning | 10m | container gone while host metrics are still arriving, non-workstation hosts; excludes the temporary S3 backup runner |
     | `fleet-docker-update-failed` | critical | 0m | nightly update failed or left restarts, non-workstation hosts |
     | `fleet-docker-update-stale` | warning | 1h | no successful update in 50h |
 
@@ -77,6 +78,20 @@ down-detection.
     | `fleet-smart-nvme-spare-low` | critical | 15m | under 10% spare blocks left |
     | `fleet-smart-temperature-high` | warning | 30m | over 60 C |
     | `fleet-smart-collector-stale` | warning | 30m | no refresh in an hour on a host that has disks |
+
+=== "Backup (5)"
+
+    Off-site backup health, from the s3-backup module's textfile metrics
+    (`s3_backup.prom`). Only the host that runs the backup produces these
+    series, so every rule uses `noDataState: OK`.
+
+    | uid | Severity | For | Rule |
+    |---|---|---|---|
+    | `fleet-backup-not-succeeded` | critical | 1h | Backup Has Not Succeeded |
+    | `fleet-backup-failed` | warning | 5m | Backup Failed |
+    | `fleet-backup-phase-failed` | warning | 5m | Backup Phase Failed |
+    | `fleet-backup-duration-anomalous` | info | 5m | Backup Duration Anomalous |
+    | `fleet-backup-metrics-stale` | warning | 30m | Backup Metrics Stale |
 
 === "Network (5)"
 
@@ -120,10 +135,19 @@ down-detection.
     |---|---|---|---|
     | `fleet-hw-cpu-temperature-critical` | critical | 5m | a CPU package at or above 90 C (TjMax is 93 C) |
     | `fleet-hw-cpu-temperature-high` | warning | 15m | a CPU package above its 83 C rated max |
-    | `fleet-hw-fan-stalled` | critical | 5m | a fitted fan under 500 RPM; the BIOS never parks them. Excludes CPU0 (no fan), PSU (no tachometer) and FB4 (no rear bays, so no fan) |
+    | `fleet-hw-fan-stalled` | critical | 5m | a fitted fan under 500 RPM; the BIOS never parks them. Excludes CPU0 (no fan), PSU (no tachometer) and FB2-FB4 (listed by the BIOS since 2026-10-01, but no fan is fitted in those bays) |
     | `fleet-hw-fans-high` | warning | 30m | a 120 mm fan above 3000 RPM (75% of max): the BIOS is compensating |
     | `fleet-hw-board-temperature-high` | warning | 30m | a Dell SMM board sensor above 65 C |
     | `fleet-hw-sensors-missing` | warning | 15m | the host reports but its CPU sensors do not, or fan data is over 5 min old |
+
+=== "Security (1)"
+
+    Routed to the **security room**, never the fleet room. See
+    [Security alerts](#security-alerts).
+
+    | uid | Severity | For | Fires when |
+    |---|---|---|---|
+    | `security-suricata-alert` | ET severity 1 is critical, 2 is warning | 0m | Suricata on the firewall raised a severity 1 or 2 alert in the last 5 min, known-noise SIDs excluded |
 
 ## Rule structure
 
@@ -156,10 +180,10 @@ would have caught a real failure.
 
 | Excluded | Why |
 |---|---|
-| `openipmi` | no IPMI hardware inside a container |
 | `NetworkManager-wait-online` | times out at boot, network fine afterwards |
 | `systemd-*`, `user@*`, `*-cleanup` | routinely transient |
 | `apt-daily*`, `man-db`, `logrotate`, `e2scrub_reap` | maintenance jobs that retry |
+| `fleet-docker-update` | not harmless, already covered: **Container Update Failed** pages for the same failure, so this would page twice, and would page for workstations, which that rule skips on purpose |
 
 Thresholds were raised deliberately: a homelab routinely runs boxes in the
 high 80s, and a warning that is always on is a warning nobody reads.
@@ -222,9 +246,11 @@ The labels you can actually match on are:
 
 Ask the embedded Alertmanager directly, on the central box. An instance that a
 silence caught has `state: suppressed` and a populated `silencedBy`:
+`curl -u admin` prompts for the Grafana admin password, which keeps it out of
+shell history and out of the process list:
 
 ```bash
-curl -s -u admin:PASS \
+curl -s -u admin \
   http://127.0.0.1:3000/api/alertmanager/grafana/api/v2/alerts \
   | jq '.[] | {alertname: .labels.alertname, labels, state: .status.state,
                silencedBy: .status.silencedBy}'
@@ -234,7 +260,7 @@ If `state` is `active` rather than `suppressed`, compare the `labels` printed
 there against your silence's matchers; they disagree somewhere.
 
 ```bash
-curl -s -u admin:PASS \
+curl -s -u admin \
   http://127.0.0.1:3000/api/alertmanager/grafana/api/v2/silences \
   | jq '.[] | {id, state: .status.state, startsAt, endsAt,
                matchers: [.matchers[] | "\(.name)\(if .isEqual then "=" else "!=" end)\(.value)"]}'
@@ -283,6 +309,70 @@ message per alertname rather than one per machine. Warning and critical are
     ```
 
     And that single error aborts provisioning for **every** alerting file.
+
+## Security alerts
+
+Suricata alerts go to their own Matrix room, so a real detection is not
+buried under disk and update warnings, and fleet noise never buries a
+detection. The chain: Suricata EVE on the firewall, syslog on 5514/tcp into
+Loki as `host="opnsense"` ([wiring](https://harshitruwali.github.io/homelab-infra/security/wiring/)),
+the `security-suricata-alert` rule, then the first route in `policies.yaml`:
+
+```yaml
+- receiver: matrix-security       # same relay, room_id=$__env{MATRIX_SECURITY_ROOM_ID}
+  matchers: [route = security]
+  group_by: [alertname, alert_signature_id]
+  group_wait: 30s
+  group_interval: 15m
+  repeat_interval: 24h
+  continue: false                 # never also posted to the fleet room
+```
+
+One message per **signature**, listing up to 10 flows with counts, a
+dashboard link pre-filtered to that SID, and a silence link. Resolve messages
+are off: an IDS alert does not "recover", and a second message saying so is
+noise.
+
+**What does not page.** ET severity 3, which is mostly protocol trivia; it
+stays on the [Suricata Alerts dashboard](dashboards.md#suricata-alerts). And
+SIDs excluded in the rule's query as known noise in this network (UPnP SSDP
+discovery, the torrent client resolving `.tk` and `.to` trackers). They are
+listed with reasons in `rules-security.yaml`. Noise with no investigative
+value is better disabled in OPNsense by SID; exclude in the rule only what
+should stay visible on the dashboard.
+
+**Timing.** A new signature arrives about 30 seconds after the alert.
+Further flows of the **same** signature wait for the 15 minute group
+interval, so a burst becomes one follow-up, not a stream.
+
+### Setting up the room
+
+1. Create a private room. Leave encryption off: the relay posts through the
+   plain API, and an encrypted room can show its messages as undecryptable.
+2. Invite `@grafana-alerts:<homeserver>`. The relay joins on its first post.
+3. Copy the internal ID (Room settings, Advanced; it starts with `!`) into
+   the vault as `vault_matrix_security_room_id`, quoted, since a bare `!` is
+   a YAML tag.
+4. `ansible-playbook playbooks/central-alerting.yml`. It refuses to run
+   without the ID rather than deploy a contact point that posts nowhere.
+
+### Testing it
+
+```bash
+# From any host whose traffic crosses the firewall. Trips sid 2100498.
+curl "http://httpbin.org/base64/$(printf 'uid=0(root) gid=0(root) groups=0(root)\n' | base64)"
+```
+
+A "GPL ATTACK_RESPONSE id check returned root" message should reach the room
+within about two minutes. The relay alone can be tested as in
+[Testing the chain](#testing-the-chain), with the security room's ID.
+
+!!! bug "Use `.Labels`, not `$labels`, in a provisioned rule's labels"
+    Grafana expands environment variables in provisioned **label** values
+    (not in annotations or templates), so `$labels.alert_severity` became
+    `.alert_severity`. The template then failed, and the raw
+    `{{ if ... }}` text shipped as the label, into the message and the silence
+    link. `.Labels.alert_severity` is the same data with no `$` to expand.
 
 ## Provisioned rules are not UI rules
 

@@ -88,7 +88,7 @@ none is folded into another:
 ## Publishing
 
 The repository-root `.github/workflows/deploy-docs.yml` publishes to GitHub
-Pages. It is the only workflow here.
+Pages. It is the only workflow that publishes docs.
 
 ```mermaid
 flowchart LR
