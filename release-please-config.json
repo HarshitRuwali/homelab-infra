@@ -36,6 +36,10 @@
       "component": "ansible",
       "initial-version": "0.1.0"
     },
+    "media": {
+      "component": "media",
+      "initial-version": "0.1.0"
+    },
     "memory": {
       "component": "memory",
       "initial-version": "0.1.0",

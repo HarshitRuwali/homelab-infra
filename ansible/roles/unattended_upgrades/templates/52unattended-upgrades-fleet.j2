@@ -4,6 +4,10 @@
 // Filename is numbered above 50 so it overrides the distro's stock
 // /etc/apt/apt.conf.d/50unattended-upgrades rather than fighting it.
 
+// APT merges lists across files. Clear both vendor origin mechanisms before
+// declaring the fleet policy, otherwise security-only still allows base updates.
+#clear Unattended-Upgrade::Allowed-Origins;
+#clear Unattended-Upgrade::Origins-Pattern;
 Unattended-Upgrade::Origins-Pattern {
 {% if uu_apply_security_only %}
         "origin=Debian,codename=${distro_codename},label=Debian-Security";
@@ -23,6 +27,7 @@ Unattended-Upgrade::Origins-Pattern {
 {% endif %}
 };
 
+#clear Unattended-Upgrade::Package-Blacklist;
 Unattended-Upgrade::Package-Blacklist {
 {% for pkg in uu_package_blacklist %}
         "{{ pkg }}";

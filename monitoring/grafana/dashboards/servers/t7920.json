@@ -118,18 +118,18 @@
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "Slowest fitted chassis fan (CPU0, PSU and FB4 have no working fan and are excluded, as in fleet-hw-fan-stalled). The BIOS never parks these: under 500 RPM is a stalled fan and pages after 5 min.",
+      "description": "Slowest fitted chassis fan (CPU0, PSU and FB2-FB4 have no working fan and are excluded, as in fleet-hw-fan-stalled). The BIOS never parks these: under 500 RPM is a stalled fan and pages after 5 min.",
       "fieldConfig": {"defaults": {"unit": "rotrpm", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 500}, {"color": "orange", "value": 3000}]}}, "overrides": []},
       "gridPos": {"h": 5, "w": 6, "x": 18, "y": 13},
       "id": 24,
       "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
-      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "min(fleet_dell_fan_rpm{host=\"t7920\",fan!~\"CPU0|PSU|FB4\"})", "refId": "A"}],
+      "targets": [{"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "min(fleet_dell_fan_rpm{host=\"t7920\",fan!~\"CPU0|PSU|FB[2-4]\"})", "refId": "A"}],
       "title": "Slowest Fan",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "description": "Every Dell chassis fan at its physical position, laid out as the two fan figures in Dell's Precision 7920 Tower Owner's Manual (Removing and installing components, figures 1 and 2). Speeds are read from the firmware every 30 s by roles/dell_fan_metrics and named from SMBIOS. Grey outlined positions are ones this machine's BIOS does not list. CPU0 is a header Dell leaves empty on this model; the PSU fan has no tachometer on SMM; FB4 is listed by the BIOS but this machine has no rear drive bays, so no fan is fitted there. Red under 500 RPM (stalled), orange over 3000.",
+      "description": "Every Dell chassis fan at its physical position, laid out as the two fan figures in Dell's Precision 7920 Tower Owner's Manual (Removing and installing components, figures 1 and 2). Speeds are read from the firmware every 30 s by roles/dell_fan_metrics and named from SMBIOS. Grey outlined positions are ones this machine's BIOS does not list. CPU0 is a header Dell leaves empty on this model; the PSU fan has no tachometer on SMM; FB2-FB4 are listed by the BIOS (FB2 and FB3 only since 2026-10-01) but this machine has no rear drive bays, so no fan is fitted there. Red under 500 RPM (stalled), orange over 3000.",
       "fieldConfig": {"defaults": {"unit": "rotrpm", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 500}, {"color": "orange", "value": 3000}]}}, "overrides": [{"matcher": {"id": "byName", "options": "CPU0"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "no fan fitted", "color": "#5a5a5a", "index": 0}}}]}]}, {"matcher": {"id": "byName", "options": "PSU"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "not reported", "color": "#5a5a5a", "index": 0}}}]}]}]},
       "gridPos": {"h": 16, "w": 24, "x": 0, "y": 18},
       "id": 31,
@@ -161,7 +161,7 @@
       "id": 26,
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=\"t7920\",fan!~\"CPU0|PSU|FB4\"}", "legendFormat": "{{fan}} ({{zone}})", "refId": "A"}
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=\"t7920\",fan!~\"CPU0|PSU|FB[2-4]\"}", "legendFormat": "{{fan}} ({{zone}})", "refId": "A"}
       ],
       "title": "Fan Speeds",
       "type": "timeseries"
@@ -218,7 +218,7 @@
       "id": 30,
       "options": {"displayMode": "gradient", "orientation": "horizontal", "showUnfilled": true, "valueMode": "color", "namePlacement": "left", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
       "targets": [
-        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=\"t7920\",fan!~\"CPU0|PSU|FB4\"}", "legendFormat": "{{fan}}", "refId": "A"}
+        {"datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "fleet_dell_fan_rpm{host=\"t7920\",fan!~\"CPU0|PSU|FB[2-4]\"}", "legendFormat": "{{fan}}", "refId": "A"}
       ],
       "title": "Fan Speeds Now",
       "type": "bargauge"

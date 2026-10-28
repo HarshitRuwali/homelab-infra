@@ -1,7 +1,8 @@
 # Package patching
 
 Every host in `autoupdate` applies **every** available update nightly and
-**never reboots**.
+**never reboots**. The one exception is the opt-in `desk_appliances` group,
+described [below](#desk-appliances-the-exception).
 
 ## The policy
 
@@ -56,6 +57,25 @@ ansible autoupdate -m shell \
     Kernel updates accumulate until a human acts. `fleet-reboot-required-too-long`
     nags at seven days, and that alert is what makes "never auto-reboot" a
     safe policy rather than a way to silently run unpatched kernels.
+
+### Desk appliances: the exception
+
+Hosts in the opt-in `desk_appliances` group are the one place this policy does
+not hold. The [`desk_appliance` role](https://github.com/HarshitRuwali/homelab-infra/blob/master/ansible/roles/desk_appliance/README.md)
+sets `Automatic-Reboot "true"` and reboots at a set time (04:30 by default)
+whenever `/run/reboot-required` exists at that moment. That includes a flag
+left by a daytime `apt upgrade`, not only by the nightly security run. On a
+Kali host the update layer, and with it the reboot, is off unless
+`desk_appliance_updates_enabled` is set: Kali is rolling, with no
+security-only pocket to apply unattended.
+
+They are kept out of `autoupdate` and `no_autoupdate`: the role refuses to run
+on a host in either, because the `unattended_upgrades` role above asserts the
+opposite setting. `force-updates.yml` leaves them out too (`hosts:
+monitored:!desk_appliances`), so a fleet-wide forced pass never leaves one of
+them with a reboot flag waiting for its window. The role also sets
+`Automatic-Reboot-Time` on purpose, the setting the box above warns about:
+there it is the reboot schedule rather than an accident.
 
 ### `MinimalSteps` and `AutoFixInterruptedDpkg`
 
@@ -141,3 +161,22 @@ query.
 The role ends with `unattended-upgrade --dry-run --debug`, asserting no
 `Traceback` and no blacklisted package appears. That fails the play rather
 than discovering breakage at 03:00.
+
+## Policy changes and manual holds
+
+The fleet configuration clears both `Allowed-Origins` and `Origins-Pattern`
+before declaring its origin policy, and clears the vendor package blacklist
+before applying `uu_package_blacklist`. APT otherwise merges these lists across
+files; merely using a filename after `50unattended-upgrades` does not replace
+list contents. `uu_apply_security_only: true` therefore restricts the effective
+origins rather than retaining the distro's base-release entries. Later local
+APT snippets can still override the policy; inspect `apt-config dump` after
+adding one.
+
+`force-updates.yml` records existing `apt-mark` holds, resolves blacklist regular
+expressions against installed package names, and temporarily holds only matches
+not already held. It releases only those temporary holds in its `always` block,
+including when the upgrade task fails. Existing administrator pins survive.
+Failure to place a required hold aborts the upgrade. If the controller is killed
+or the SSH connection is lost, inspect the holds before resuming; `always` cannot
+run on an unreachable host.

@@ -112,7 +112,10 @@ See [Building the docs](reference/tooling.md).
 These are the decisions everything else follows from. Each one is load-bearing
 and each one has bitten this fleet at least once.
 
-**Machines never reboot themselves.** Not on any host, under any policy.
+**Machines never reboot themselves.** Not on any host, under any policy,
+except hosts you put in the opt-in `desk_appliances` group (the
+`desk_appliance` role), which reboot in a set window and are kept out of the
+patching groups.
 Kernel updates therefore accumulate until a human acts, which is why
 `fleet-reboot-required-too-long` exists to nag at seven days. Without that
 alert, "never auto-reboot" is just a way to silently run unpatched kernels.

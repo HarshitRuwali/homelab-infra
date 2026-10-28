@@ -32,6 +32,17 @@ alloy_enable_process: false
 # conditional in scripts/lxc-install.sh.
 alloy_enable_docker: auto
 
+# TCP port for syslog from a device that cannot run Alloy, currently the
+# firewall's Suricata EVE output. Empty disables the listener, which is what
+# every host but the central one wants: a listener everywhere would be an open
+# port per host for a single sender. Set it in group_vars/central.
+#
+# 5514 rather than the obvious 1514, which is also Wazuh's agent event port.
+# They would sit on different hosts, so there is no real conflict, but a
+# Suricata listener answering on the Wazuh port is a bad thing to meet while
+# debugging. See security/docs/wiring/index.md.
+alloy_syslog_listener_port: ""
+
 # NOTE ON BACKSLASHES: these strings land inside double quotes in the
 # generated .alloy file, and Alloy uses Go string escaping there. A lone `\.`
 # is an "unknown escape sequence" and `alloy fmt` rejects the whole config.

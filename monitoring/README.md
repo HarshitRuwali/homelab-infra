@@ -15,7 +15,7 @@ Source under [`docs/`](docs/index.md); build it locally with
 | | |
 |---|---|
 | **Collects** | Alloy on every host ships host metrics, systemd journal logs, container metrics and container logs to one place |
-| **Patches** | `unattended-upgrades` applies every origin nightly and **never reboots**; container images update from their Compose files on a separate schedule |
+| **Patches** | `unattended-upgrades` applies every origin nightly and **never reboots** (except hosts in `desk_appliances`, see the `desk_appliance` role); container images update from their Compose files on a separate schedule |
 | **Alerts** | Grafana unified alerting posts to Matrix through a local relay; rules are provisioned from files, not clicked into the UI |
 | **Proves it** | Every automated action writes a metric, so "it updates itself" cannot quietly become "it broke itself three weeks ago" |
 
@@ -139,10 +139,11 @@ containers, pending updates and logs, scoped to a single host instead of
 filtered through `$host`. Hosts with an NVIDIA GPU also get GPU utilization,
 VRAM, temperature, power and fan.
 
-**Alert rules** in `grafana/provisioning/alerting/`: 42 committed across
-resources, updates, containers, services, storage, network and GPU, plus five
-more in a `rules-availability.yaml` **generated from the inventory** so adding
-a host cannot leave a silent gap in down-detection. 47 rules load in total.
+**Alert rules** in `grafana/provisioning/alerting/`: committed rule files, plus
+a `rules-availability.yaml` **generated from the inventory** so adding a host
+cannot leave a silent gap in down-detection. The list of files Ansible installs
+is `grafana_alerting_static_files` in
+`ansible/roles/grafana_alerting/defaults/main.yml`.
 
 > [!NOTE]
 > This stack is push-based, so `up` is a series each collector pushes about
@@ -223,7 +224,8 @@ Frequently wanted:
 
 ## Design commitments
 
-- **Machines never reboot themselves**, under any policy. Kernel updates
+- **Machines never reboot themselves**, under any policy, except hosts in the
+  opt-in `desk_appliances` group (the `desk_appliance` role). Kernel updates
   therefore accumulate until a human acts, which is why
   `fleet-reboot-required-too-long` nags at seven days.
 - **Nothing is held back from patching** except the Raspberry Pi kernel and

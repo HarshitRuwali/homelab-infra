@@ -2,7 +2,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>homelab-infra docs</title>
-<meta name="description" content="Documentation for the stacks in the homelab-infra repository: monitoring, memory, S3 backup, fleet automation, the AI box model queue, security, the vault viewer and the .lan ingress.">
+<meta name="description" content="Documentation for the stacks in the homelab-infra repository: monitoring, memory, S3 backup, fleet automation, the AI box model queue, security, the vault viewer, the media stack and the .lan ingress.">
 <!--
   Deliberately a single static file with no build step and no dependencies: it
   only has to link onward to the MkDocs sites, and giving it another theme
@@ -79,8 +79,8 @@
 
   <a class="card" href="security/">
     <strong>Security Stack</strong>
-    <span>Wazuh, CrowdSec, Suricata, AdGuard Home, Authelia, OpenBao, ntopng and
-    Greenbone across six small guests. All free and open source.</span>
+    <span>Wazuh, CrowdSec, AdGuard Home and Greenbone on four small guests,
+    with Suricata and ntopng on the firewall. Open source throughout.</span>
   </a>
 
   <a class="card" href="vault-viewer/">
@@ -88,6 +88,12 @@
     <span>A read-only web viewer for an Obsidian vault on a Tailscale address:
     search, live reload, diagrams and PDF export, with agent-written content
     treated as untrusted.</span>
+  </a>
+
+  <a class="card" href="media/">
+    <strong>Media stack</strong>
+    <span>Plex with a Cloudflare tunnel, and qBittorrent behind a ProtonVPN
+    WireGuard tunnel with port forwarding, as one Docker Compose stack.</span>
   </a>
 
   <a class="card" href="ingress/">

@@ -1,0 +1,67 @@
+---
+# gnome-keyring unlocks its `login` keyring with the password typed at login.
+# Autologin types none, so that keyring stays locked and every app that stores
+# a secret through the Secret Service (a music client's login token, a browser
+# password) loses it at the next boot. A second keyring with a blank password
+# and no lock timer unlocks itself on first use, with no prompt. It is the
+# default keyring, so new secrets go there.
+#
+# THE COST: secrets stored from now on sit in plaintext in that file, readable
+# by anyone who can read the account's home. Off by default for that reason;
+# see the README. The existing login.keyring and user.keystore are not
+# touched, and what is already in login.keyring stays locked until it is
+# unlocked by hand.
+
+- name: Install gnome-keyring
+  ansible.builtin.apt:
+    name: "{{ desk_appliance_keyring_packages }}"
+    state: present
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 3600
+  when: desk_appliance_keyring_packages | length > 0
+
+- name: Ensure the per-user keyring directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ desk_appliance_user }}"
+    group: "{{ desk_appliance_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ desk_appliance_home }}/.local"
+      mode: "0755"
+    - path: "{{ desk_appliance_home }}/.local/share"
+      mode: "0755"
+    - path: "{{ desk_appliance_keyring_dir }}"
+      mode: "0700"
+  when: desk_appliance_user_present | bool
+
+# force: false, so a keyring that already holds secrets is never overwritten
+# with an empty one. Only the first run writes it.
+- name: Create the blank-password plaintext keyring
+  ansible.builtin.copy:
+    content: |
+      [keyring]
+      display-name=Default keyring
+      lock-on-idle=false
+      lock-after=false
+    dest: "{{ desk_appliance_keyring_dir }}/Default_keyring.keyring"
+    owner: "{{ desk_appliance_user }}"
+    group: "{{ desk_appliance_user }}"
+    mode: "0600"
+    force: false
+  when: desk_appliance_user_present | bool
+
+# The `default` file holds the name of the default keyring (the file name
+# without `.keyring`). `backup: true` keeps a dated copy of the old pointer.
+- name: Make it the default keyring
+  ansible.builtin.copy:
+    content: |
+      Default_keyring
+    dest: "{{ desk_appliance_keyring_dir }}/default"
+    owner: "{{ desk_appliance_user }}"
+    group: "{{ desk_appliance_user }}"
+    mode: "0600"
+    backup: true
+  when: desk_appliance_user_present | bool

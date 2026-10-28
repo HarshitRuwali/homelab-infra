@@ -21,13 +21,14 @@ itself three weeks ago"**.
 | | Module | What it does | Docs |
 |---|---|---|---|
 | 🤖 | [**`ansible/`**](ansible/README.md) | Fleet control plane. Installs collectors, applies patches, updates containers, onboards hosts, provisions alerting. | [site](https://harshitruwali.github.io/homelab-infra/ansible/) |
-| 📊 | [**`monitoring/`**](monitoring/README.md) | Central Grafana, Prometheus, Loki and Alloy. Dashboards, 47 alert rules, Matrix notifications. | [site](https://harshitruwali.github.io/homelab-infra/monitoring/) |
+| 📊 | [**`monitoring/`**](monitoring/README.md) | Central Grafana, Prometheus, Loki and Alloy. Dashboards, alert rules, Matrix notifications. | [site](https://harshitruwali.github.io/homelab-infra/monitoring/) |
 | 🧠 | [**`memory/`**](memory/README.md) | Self-hosted semantic memory for AI agents. PostgreSQL and Qdrant behind FastAPI, with an MCP server. | [site](https://harshitruwali.github.io/homelab-infra/memory/) |
 | 💾 | [**`s3-backup/`**](s3-backup/README.md) | Nightly off-site backup of Immich and Nextcloud to Amazon S3, with restores drilled monthly. | [site](https://harshitruwali.github.io/homelab-infra/s3-backup/) |
 | 🤖 | [**`aibox-model-queue/`**](aibox-model-queue/README.md) | Serializing proxy so one GPU's LM Studio host is shared without model-swap races. | [README](aibox-model-queue/README.md) |
 | 🖥️ | [**`proxmox/`**](proxmox/README.md) | Builds a VM template and creates VMs and containers from the images already on the hypervisor, plus firewalled VMs leased to other people. Dry run by default. | [README](proxmox/README.md) |
-| 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, Suricata, AdGuard Home, Authelia, OpenBao, ntopng and Greenbone across six small guests. All free and open source. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
+| 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, AdGuard Home and Greenbone on four small guests, with Suricata and ntopng on the firewall. Open source throughout. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
 | 📓 | [**`vault-viewer/`**](vault-viewer/README.md) | Read-only web viewer for an Obsidian vault on a Tailscale address, with search, live reload and PDF export. Treats vault content as untrusted. | [site](https://harshitruwali.github.io/homelab-infra/vault-viewer/) |
+| 🎬 | [**`media/`**](media/README.md) | Plex, and qBittorrent behind a ProtonVPN WireGuard tunnel with port forwarding, as one Docker Compose stack. Remote Plex access through a Cloudflare tunnel, the WebUI on the tailnet only. | [site](https://harshitruwali.github.io/homelab-infra/media/) |
 | 🌐 | [**`ingress/`**](ingress/README.md) | HTTPS `.lan` names for web UIs on the LAN and the tailnet. One small LXC runs Caddy with its own CA and two dnsmasq instances. | [site](https://harshitruwali.github.io/homelab-infra/ingress/) |
 
 Each module stands alone. Nothing here requires you to run the others, and
@@ -78,7 +79,8 @@ ansible-playbook playbooks/site.yml         # everything, idempotent
 
 `site.yml` **configures** the machinery; it does not itself install packages or
 pull images. Those apply on a schedule: 03:00 for packages, 04:00 for
-containers. Nothing ever reboots a machine.
+containers. Nothing ever reboots a machine, except hosts in the opt-in
+`desk_appliances` group (`ansible/roles/desk_appliance`).
 
 </details>
 
@@ -143,6 +145,21 @@ answers. Open `http://100.64.0.10:7777` from your own tailnet devices. Add
 </details>
 
 <details>
+<summary><b>🎬 Run Plex and qBittorrent behind a VPN</b></summary>
+
+```bash
+cd media
+./install.sh                                # dry run: prints every action
+./install.sh --apply                        # deploys to /opt/media
+```
+
+Needs the media share mounted, `/dev/net/tun`, and two root-only secret files
+in `/opt/media/secrets` (a Cloudflare tunnel token and a ProtonVPN WireGuard
+key). Plex starts without them; the tunnel and the VPN wait for their secret.
+
+</details>
+
+<details>
 <summary><b>🌐 Give web UIs HTTPS names under .lan</b></summary>
 
 ```bash
@@ -178,6 +195,7 @@ s3-backup/      restic and rclone automation, installer, restore drills
 aibox-model-queue/
                 Serializing proxy for a shared LM Studio host
 vault-viewer/   artifacts.py: read-only Obsidian vault viewer, installer, tests
+media/          compose.yaml: Plex and qBittorrent behind gluetun, installer, tests
 ingress/        render.sh, install.sh: Caddy and dnsmasq for https://<name>.lan
 proxmox/        pve-guest.sh: VM template, new VMs and containers
 docs-landing/   The static index page of the published docs site
@@ -202,10 +220,11 @@ One MkDocs Material site per documented module plus a landing page, on one GitHu
 | [`/aibox-model-queue/`](https://harshitruwali.github.io/homelab-infra/aibox-model-queue/) | `aibox-model-queue/mkdocs.yml` |
 | [`/security/`](https://harshitruwali.github.io/homelab-infra/security/) | `security/mkdocs.yml` |
 | [`/vault-viewer/`](https://harshitruwali.github.io/homelab-infra/vault-viewer/) | `vault-viewer/mkdocs.yml` |
+| [`/media/`](https://harshitruwali.github.io/homelab-infra/media/) | `media/mkdocs.yml` |
 | [`/ingress/`](https://harshitruwali.github.io/homelab-infra/ingress/) | `ingress/mkdocs.yml` |
 
 ```bash
-cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security, vault-viewer, ingress
+cd ansible                                  # or monitoring, memory, s3-backup, aibox-model-queue, security, vault-viewer, media, ingress
 python3 -m venv .venv
 .venv/bin/pip install -r docs/requirements.txt
 .venv/bin/mkdocs serve                      # live preview on :8000
@@ -253,18 +272,3 @@ blind the monitoring.
 > password, without which every S3 snapshot is permanently unreadable. Losing
 > the AWS account loses that one *and* the backups together. Keep offline
 > copies of both. See [Secrets](s3-backup/docs/secrets.md).
-
-## History
-
-| Directory | Origin repo |
-|---|---|
-| `memory/` | `HarshitRuwali/open-memory-stack` |
-| `s3-backup/` | `HarshitRuwali/s3-backup-automation` |
-| `monitoring/`, `ansible/` | `HarshitRuwali/monitorting-stack` |
-
-All three repositories were merged in with `git subtree`, so every original
-commit, author and date is preserved and the original SHAs still match the
-archived upstreams. Commits from before the merge refer to paths as they were
-in the standalone repos, so use `git log --follow <path>` to trace a file
-across the boundary. `ansible/` was later promoted out of `monitoring/ansible/`
-to the root, meaning its history crosses two path moves.

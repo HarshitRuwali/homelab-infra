@@ -1,0 +1,85 @@
+apiVersion: 1
+
+# Security alerts. Everything here carries `route: security`, which
+# policies.yaml sends to the matrix-security room and never to the fleet room.
+#
+# Suricata runs on the firewall and ships EVE alerts as syslog into Loki as
+# host="opnsense"; see security/docs/wiring/index.md, section 2. The Suricata
+# Alerts dashboard shows every alert. This rule decides which ones are worth a
+# message, which is a different and much smaller set.
+groups:
+  - orgId: 1
+    name: security
+    folder: Security
+    interval: 1m
+    rules:
+
+      # ---------------------------------------------------------------
+      # One alert instance per signature and flow pair, over the last five
+      # minutes. Severity 1 and 2 only: ET's severity 3 is mostly protocol
+      # trivia that belongs on the dashboard, not in a room.
+      #
+      # EXCLUDED SIDS are known noise in THIS network, still visible on the
+      # dashboard, just never messaged:
+      #   2019102  SSDP amplification: ordinary UPnP discovery from guests
+      #            to the firewall, 50+ a day
+      #   2012811  .tk lookups   } the torrent client resolving trackers
+      #   2027757  .to lookups   }
+      # Pure noise with no investigative value is better disabled in
+      # OPNsense (Rules tab, by SID). Exclude here only what should stay on
+      # the dashboard. The list is a regex; add to it with `|`.
+      #
+      # for: 0m because an IDS alert is an event, not a condition that needs
+      # to persist. The five-minute window is what keeps one burst to one
+      # message rather than one per evaluation.
+      - uid: security-suricata-alert
+        title: Suricata Alert
+        condition: C
+        for: 0m
+        labels:
+          route: security
+          # .Labels, not $labels. Grafana expands environment variables in
+          # provisioned LABEL values (not annotations), so `$labels` became an
+          # empty string, the template broke, and the raw text shipped as the
+          # label. Caught by the first live alert on 2026-09-21.
+          severity: '{{ if eq .Labels.alert_severity "1" }}critical{{ else }}warning{{ end }}'
+        annotations:
+          summary: 'Suricata: {{ $labels.alert_signature }}, {{ $labels.src_ip }} to {{ $labels.dest_ip }}'
+          runbook: "Suricata Alerts dashboard, Search = the SID; disable noise in OPNsense by SID"
+          __dashboardUid__: suricata-alerts
+          __panelId__: "10"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum by (alert_signature_id, alert_signature, alert_severity, src_ip, dest_ip) (
+                  count_over_time({host="opnsense"} |= "event_type" | json
+                    | event_type="alert"
+                    | alert_severity=~"1|2"
+                    | alert_signature_id!~"2019102|2012811|2027757"
+                    | __error__="" [5m])
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              refId: B
+              type: reduce
+              expression: A
+              reducer: last
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]

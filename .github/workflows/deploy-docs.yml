@@ -11,6 +11,7 @@ name: Deploy docs
 #   /homelab-infra/aibox-model-queue/ built from aibox-model-queue/mkdocs.yml
 #   /homelab-infra/security/    built from security/mkdocs.yml
 #   /homelab-infra/vault-viewer/ built from vault-viewer/mkdocs.yml
+#   /homelab-infra/media/       built from media/mkdocs.yml
 #   /homelab-infra/ingress/     built from ingress/mkdocs.yml
 #
 # Every module has its own dedicated site; none is folded into another. Adding
@@ -52,6 +53,8 @@ on:
       - security/mkdocs.yml
       - vault-viewer/docs/**
       - vault-viewer/mkdocs.yml
+      - media/docs/**
+      - media/mkdocs.yml
       - ingress/docs/**
       - ingress/mkdocs.yml
       - docs-landing/**
@@ -74,6 +77,8 @@ on:
       - security/mkdocs.yml
       - vault-viewer/docs/**
       - vault-viewer/mkdocs.yml
+      - media/docs/**
+      - media/mkdocs.yml
       - ingress/docs/**
       - ingress/mkdocs.yml
       - docs-landing/**
@@ -110,6 +115,7 @@ jobs:
             aibox-model-queue/docs/requirements.txt
             security/docs/requirements.txt
             vault-viewer/docs/requirements.txt
+            media/docs/requirements.txt
             ingress/docs/requirements.txt
 
       # Every requirements file pins the identical set (mkdocs 1.6.1,
@@ -127,6 +133,7 @@ jobs:
                                 -r aibox-model-queue/docs/requirements.txt \
                                 -r security/docs/requirements.txt \
                                 -r vault-viewer/docs/requirements.txt \
+                                -r media/docs/requirements.txt
                                 -r ingress/docs/requirements.txt
 
       # --strict turns broken internal links and pages missing from the nav
@@ -154,6 +161,9 @@ jobs:
 
       - name: Build the vault viewer docs
         run: mkdocs build --strict -f vault-viewer/mkdocs.yml -d ../site/vault-viewer
+
+      - name: Build the media stack docs
+        run: mkdocs build --strict -f media/mkdocs.yml -d ../site/media
 
       - name: Build the ingress docs
         run: mkdocs build --strict -f ingress/mkdocs.yml -d ../site/ingress

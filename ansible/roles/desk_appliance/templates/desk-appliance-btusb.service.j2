@@ -1,0 +1,23 @@
+# Managed by ansible/roles/desk_appliance. Do not edit by hand.
+#
+# Builds the patched btusb (DKMS module {{ desk_appliance_btusb_dkms_name }}) for the kernel
+# that just booted if it is not installed for it, which happens when a kernel
+# upgrade configured the kernel before its linux-source was unpacked, and then
+# reloads btusb so the patched one is in use. When the build is skipped again
+# (btusb-prepare.sh says why in the journal), the in-tree btusb stays. When the
+# new module does not load (Secure Boot without an enrolled DKMS key), its build
+# for this kernel is removed so the in-tree btusb loads now and on later boots.
+[Unit]
+Description=Patched btusb for this kernel (desk_appliance)
+ConditionPathExists={{ desk_appliance_btusb_dkms_src }}/dkms.conf
+After=local-fs.target
+Before=bluetooth.service
+
+[Service]
+Type=oneshot
+Nice=19
+IOSchedulingClass=idle
+ExecStart=/bin/sh -c 'dkms status -m {{ desk_appliance_btusb_dkms_name }} -v {{ desk_appliance_btusb_dkms_version }} -k %v | grep -q ": installed" && exit 0; dkms install -m {{ desk_appliance_btusb_dkms_name }} -v {{ desk_appliance_btusb_dkms_version }} -k %v || exit 0; modprobe -r btusb; modprobe btusb && exit 0; dkms remove -m {{ desk_appliance_btusb_dkms_name }} -v {{ desk_appliance_btusb_dkms_version }} -k %v; modprobe btusb; exit 1'
+
+[Install]
+WantedBy=multi-user.target

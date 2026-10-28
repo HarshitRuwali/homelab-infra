@@ -54,6 +54,8 @@
 - name: Install the collector on a new host and prove it reaches central
   hosts: monitored
   become: true
+  vars:
+    onboard_ingest_ca_tmp: /tmp/onboard-ingest-ca.crt
 
   pre_tasks:
     - name: Confirm the host carries the inventory vars the collector needs
@@ -78,6 +80,20 @@
         update_cache: true
         cache_valid_time: 3600
 
+    # A private ingest address (monitoring_ingest_base_url on the LAN) is
+    # signed by the homelab CA, which the role installs only later, as
+    # alloy_ingest_ca_path, and which is deliberately not trusted system-wide.
+    # Without staging it for the check below, every LAN host fails there with
+    # a TLS verification error that the uri module reports as "HTTP -1",
+    # indistinguishable from a dead endpoint. Public-URL hosts skip this.
+    - name: Stage the private ingest CA for the reachability check
+      ansible.builtin.copy:
+        src: "{{ collector_ingest_ca_file | trim }}"
+        dest: "{{ onboard_ingest_ca_tmp }}"
+        mode: "0644"
+      changed_when: false
+      when: collector_ingest_ca_file | trim | length > 0
+
     # THE check for a new host. Everything else can be fixed later; a host
     # that cannot reach the ingest endpoint will install cleanly, run
     # cleanly, and ship nothing.
@@ -91,6 +107,10 @@
     # Loki has no equivalent check: `/loki/ready` is a 404 through nginx
     # because Loki's readiness path is `/ready` and the proxy preserves the
     # `/loki` prefix. See docs/fleet/verification.md.
+    #
+    # check_mode: false because it is a GET and changes nothing. uri skips
+    # itself under --check, which left the assert below failing every dry run
+    # with "connection failed" whatever the network was doing.
     - name: Confirm this host can reach the central ingest endpoint
       ansible.builtin.uri:
         url: "{{ prometheus_remote_write_url | regex_replace('/api/v1/write$', '/-/ready') }}"
@@ -99,9 +119,18 @@
         url_username: "{{ collector_basic_auth_user if collector_basic_auth_required | bool else omit }}"
         url_password: "{{ collector_basic_auth_password if collector_basic_auth_required | bool else omit }}"
         force_basic_auth: "{{ collector_basic_auth_required | bool }}"
+        ca_path: "{{ onboard_ingest_ca_tmp if collector_ingest_ca_file | trim | length > 0 else omit }}"
       register: onboard_ingest
       failed_when: false
       no_log: true
+      check_mode: false
+
+    - name: Remove the staged ingest CA
+      ansible.builtin.file:
+        path: "{{ onboard_ingest_ca_tmp }}"
+        state: absent
+      changed_when: false
+      when: collector_ingest_ca_file | trim | length > 0
 
     - name: Explain an unreachable ingest endpoint
       ansible.builtin.assert:
@@ -113,7 +142,9 @@
           Alloy would install and run here without ever shipping a sample.
           401 means the collector password is wrong for this host; a
           connection or DNS failure means egress or resolution is broken;
-          502 means the central stack is down. Fix this before continuing.
+          502 means the central stack is down; HTTP -1 on a private https
+          address usually means monitoring_ingest_ca_file is not the CA that
+          signed the central certificate. Fix this before continuing.
         quiet: true
 
     # Prometheus rejects samples whose timestamps fall outside its accepted
@@ -127,6 +158,7 @@
       register: onboard_ntp
       changed_when: false
       failed_when: false
+      check_mode: false
 
     - name: Warn about an undisciplined clock
       ansible.builtin.debug:
@@ -163,6 +195,16 @@
     # rather than on the target. And always keyed on monitor_hostname, not
     # inventory_hostname: monitor-lxc pushes as `main-server`, so keying on
     # the inventory name would look for a host that never reports.
+    #
+    # All skipped under --check: a dry run installs nothing, so there is no
+    # data to find, and the asserts would fail on that rather than on a fault.
+    - name: Say what a dry run cannot prove
+      ansible.builtin.debug:
+        msg: >-
+          Dry run: nothing was installed, so the metrics and logs arrival
+          checks are skipped. Run without --check to install and prove them.
+      when: ansible_check_mode
+
     - name: Wait for this host's metrics to land in central Prometheus
       ansible.builtin.uri:
         url: "https://{{ monitoring_domain }}/prometheus/api/v1/query"
@@ -185,6 +227,7 @@
       retries: 20
       delay: 15
       until: onboard_metrics.json.data.result | default([]) | length > 0
+      when: not ansible_check_mode
 
     - name: Confirm metrics arrived
       ansible.builtin.assert:
@@ -197,6 +240,7 @@
           Check the clock warning above, and see
           docs/fleet/troubleshooting.md.
         quiet: true
+      when: not ansible_check_mode
 
     - name: Wait for this host's logs to land in central Loki
       ansible.builtin.uri:
@@ -214,6 +258,7 @@
       retries: 10
       delay: 15
       until: monitor_hostname in (onboard_logs.json.data | default([]))
+      when: not ansible_check_mode
 
     - name: Confirm logs arrived
       ansible.builtin.assert:
@@ -225,6 +270,7 @@
           volatile-only journal there may genuinely be nothing to ship yet.
           Check `journalctl -u alloy | grep -i loki` on the host.
         quiet: true
+      when: not ansible_check_mode
 
     - name: Report
       ansible.builtin.debug:
@@ -235,3 +281,4 @@
           `ansible-playbook playbooks/site.yml --limit {{ inventory_hostname }}`
           applies the patching and container-update policy for whichever
           groups this host is in.
+      when: not ansible_check_mode
