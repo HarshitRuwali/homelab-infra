@@ -4,26 +4,34 @@ Commands below run on the host. `docker compose -p media` addresses the stack
 from any directory; add `sudo` if your user cannot reach the Docker socket.
 State and the installed compose file live in `MEDIA_DIR` (default `/opt/media`).
 
-## Update an image
+## Update the images
 
-Every image is pinned to a specific tag in `compose.yaml`, never `latest`, so an
-update is a reviewed change:
+Every image in `compose.yaml` follows `:latest`. The fleet's nightly container
+updater (the Ansible role `docker_updates`, `fleet-docker-update.timer` on
+cloud-services) pulls them and runs `docker compose up -d` on the project, which
+recreates every service whose image changed. Nothing here needs a commit for a
+new release.
 
-1. Edit the tag of the service in `compose.yaml` (for example the `plex` image).
-2. Commit it, then on the host run `./install.sh` to preview and
-   `./install.sh --apply` to apply. The installer copies the new
-   `compose.yaml` to `MEDIA_DIR`, validates it, pulls the new image and
-   recreates the services whose definition changed.
-3. Check [the VPN](#check-the-vpn) and the logs.
+To update at once instead of waiting for the timer:
 
-`./install.sh --apply` does not touch `MEDIA_DIR/.env` or the secrets.
+```bash
+docker compose -p media pull
+docker compose -p media up -d
+```
 
-The fleet's nightly container updater does not update this stack. The Ansible
-role `docker_updates` runs `docker compose up -d` on every project without a
-service list, which would try to start gluetun without its secret, and every
-image here is pinned, so `ansible/inventory/host_vars/cloud-services.yml` lists
-`media` in `docker_update_skip_projects`. Updates happen only by bumping the pin
-and re-running `./install.sh --apply`, as above.
+Then check [the VPN](#check-the-vpn) and the logs. `./install.sh --apply` pulls
+and recreates the same way, and is still the way to apply a change to
+`compose.yaml` itself. It does not touch `MEDIA_DIR/.env` or the secrets.
+
+The updater starts every service of the project, so both [secret
+files](secrets.md) must stay in place on the host: without the WireGuard key
+gluetun cannot start. To take a secret away for a while, first add `media` to
+`docker_update_skip_projects` in `ansible/inventory/host_vars/cloud-services.yml`
+and re-run `playbooks/docker-updates.yml`.
+
+A new Plex or qBittorrent can migrate its own database on the first start, so
+[rolling back](#roll-back) to an older image may need the copy of the
+state directories described there.
 
 ## Check the VPN
 
@@ -74,12 +82,15 @@ qBittorrent shares gluetun's network namespace, so restart them together. The
 
 ## Roll back
 
-Set the tag in `compose.yaml` back to the previous value (`git revert` of the
-update works) and run `./install.sh --apply` again. Images that are not pulled
-yet are fetched, and the service is recreated on the old tag. Configuration is
-not changed by an image update, but a newer Plex or qBittorrent can migrate its
-own database on the first start, so take a copy of the state directories
-listed below before a major update if you may need to go back.
+A bad release reaches the host with the next nightly run. To go back, set that
+service's image in `compose.yaml` to the last good version tag (the one
+`docker image ls` shows for the previous image, or the registry's tag list),
+add `media` to `docker_update_skip_projects` on cloud-services so the next
+nightly run leaves it alone, and run `./install.sh --apply`. Return to `:latest`
+and drop the skip once a fixed release is out. Configuration is not changed by
+an image update, but a newer Plex or qBittorrent can migrate its own database on
+the first start, so going back may also need a copy of the state directories
+listed below.
 
 ## Where state lives
 

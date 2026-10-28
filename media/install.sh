@@ -2,7 +2,7 @@
 # Install or update the media stack (Plex, qBittorrent behind gluetun) on the
 # host it runs on. Dry run by default: prints every action and changes nothing.
 #
-# Idempotent. Re-run it after editing compose.yaml or bumping an image. It
+# Idempotent. Re-run it after editing compose.yaml. It
 # never overwrites MEDIA_DIR/.env or anything under MEDIA_DIR/secrets, and it
 # only starts a service whose secret is in place, so Plex can go live before
 # the VPN key exists. See usage() below.

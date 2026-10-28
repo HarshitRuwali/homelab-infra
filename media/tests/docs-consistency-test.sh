@@ -3,7 +3,7 @@
 # docs-consistency-test.sh - catch drift between the docs, the installer and
 # the compose file. Every command shown to a user must exist, accept the flags
 # shown, and be referred to by a path that is really there; the settings and
-# images named in compose.yaml must match .env.example and be pinned.
+# images named in compose.yaml must match .env.example and follow :latest.
 #
 #   ./tests/docs-consistency-test.sh
 #
@@ -160,16 +160,15 @@ done <<<"$env_keys"
 (( envfail )) || ok "compose.yaml, .env.example and the docs agree on every setting and default"
 
 echo
-echo "== every image is pinned to a specific tag =="
+echo "== every image follows :latest (the nightly updater keeps it current) =="
 imgfail=0
 while read -r image; do
   tag="${image##*:}"
   if [[ "$image" != *:* || "$tag" == */* ]]; then no "image has no tag: $image"; imgfail=1
-  elif [[ "$tag" == latest ]]; then no "image uses :latest: $image"; imgfail=1
-  elif [[ ! "$tag" =~ [0-9] ]]; then no "image tag is not a version: $image"; imgfail=1; fi
+  elif [[ "$tag" != latest ]]; then no "image is pinned to $tag, not :latest: $image"; imgfail=1; fi
 done < <(sed -nE 's/^[[:space:]]*image:[[:space:]]*([^[:space:]#]+).*/\1/p' compose.yaml)
 grep -qE '^[[:space:]]*image:' compose.yaml || { no "no image found in compose.yaml"; imgfail=1; }
-(( imgfail )) || ok "every image in compose.yaml has a pinned version tag"
+(( imgfail )) || ok "every image in compose.yaml follows :latest"
 
 echo
 echo "== services and secrets in compose.yaml are documented =="

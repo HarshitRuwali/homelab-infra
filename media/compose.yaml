@@ -5,6 +5,9 @@
 # file is copied as is. Secrets live in MEDIA_DIR/secrets, root-only, and are
 # never part of this repository.
 #
+# Every image follows :latest. The fleet's nightly container updater
+# (ansible/roles/docker_updates) pulls them and recreates what changed.
+#
 # Exposure, by design:
 #   plex           host network, :32400. Remote access goes through the
 #                  plex-tunnel container (Cloudflare), not a router port.
@@ -17,7 +20,7 @@ name: media
 
 services:
   plex:
-    image: plexinc/pms-docker:1.43.5.11029-6bf8af3f0
+    image: plexinc/pms-docker:latest
     container_name: plex
     network_mode: host
     restart: unless-stopped
@@ -33,7 +36,7 @@ services:
       - ${MEDIA_ROOT}:/data/share:ro
 
   plex-tunnel:
-    image: cloudflare/cloudflared:2026.10.3
+    image: cloudflare/cloudflared:latest
     container_name: plex-tunnel
     # Host network so the tunnel's remote-managed ingress
     # (http://localhost:32400) reaches Plex unchanged.
@@ -44,7 +47,7 @@ services:
       - ${MEDIA_DIR}/secrets/plex-tunnel.env   # TUNNEL_TOKEN=...
 
   gluetun:
-    image: qmcgaw/gluetun:v3.41.3
+    image: qmcgaw/gluetun:latest
     container_name: gluetun
     restart: unless-stopped
     cap_add: [NET_ADMIN]
@@ -79,7 +82,7 @@ services:
       - "127.0.0.1:${QBT_WEBUI_PORT}:${QBT_WEBUI_PORT}"
 
   qbittorrent:
-    image: lscr.io/linuxserver/qbittorrent:5.3.0_v2.1.2-ls484
+    image: lscr.io/linuxserver/qbittorrent:latest
     container_name: qbittorrent
     # No network of its own: every packet goes through gluetun.
     network_mode: service:gluetun
