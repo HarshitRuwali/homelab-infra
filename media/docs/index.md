@@ -14,8 +14,8 @@ The stack lives in `compose.yaml`; `install.sh` copies it to `MEDIA_DIR`
 | `gluetun` | `qmcgaw/gluetun` | its own, published on `127.0.0.1` only | ProtonVPN WireGuard client with NAT-PMP port forwarding, and the firewall for everything behind it |
 | `qbittorrent` | `lscr.io/linuxserver/qbittorrent` | `service:gluetun` | The torrent client. It has no network of its own |
 
-Image tags are pinned in `compose.yaml`. See [Operations](operations.md) for
-how to bump one.
+Every image follows `:latest`, and the fleet's nightly container updater keeps
+them current. See [Operations](operations.md#update-the-images).
 
 ## Architecture
 
