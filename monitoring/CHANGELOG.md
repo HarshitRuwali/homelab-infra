@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0](https://github.com/HarshitRuwali/homelab-infra/compare/monitoring-v0.2.0...monitoring-v0.3.0) (2026-10-29)
+
+
+### Features
+
+* **ansible:** desk_appliance role, X11 autologin appliance baseline for the Iris box ([#9](https://github.com/HarshitRuwali/homelab-infra/issues/9)) ([d29b619](https://github.com/HarshitRuwali/homelab-infra/commit/d29b619270a6c0c82aff82573f43de1d728914bd))
+* **media:** add Plex and qBittorrent behind ProtonVPN as a module ([#20](https://github.com/HarshitRuwali/homelab-infra/issues/20)) ([bfdc530](https://github.com/HarshitRuwali/homelab-infra/commit/bfdc530dd547600d9c2706561be9705f0640e35c))
+* **monitoring:** add the skullsaints dashboard and fix the host's spelling ([#24](https://github.com/HarshitRuwali/homelab-infra/issues/24)) ([425e324](https://github.com/HarshitRuwali/homelab-infra/commit/425e3242a3b1f4df88225b07f5a0af7b310eac2f))
+* **monitoring:** onboard ingress and fix the private-ingest check in onboard.yml ([#26](https://github.com/HarshitRuwali/homelab-infra/issues/26)) ([aa5e508](https://github.com/HarshitRuwali/homelab-infra/commit/aa5e5083e3755664d468d57d9d93b9cec3e12cc1))
+* **security:** add the security stack with Wazuh, CrowdSec, AdGuard Home and Greenbone ([#3](https://github.com/HarshitRuwali/homelab-infra/issues/3)) ([058beb0](https://github.com/HarshitRuwali/homelab-infra/commit/058beb0371eb178e1899d552b001c48129f66031))
+
+
+### Bug Fixes
+
+* **monitoring:** bring committed alert rules in line with the deployed ones ([#23](https://github.com/HarshitRuwali/homelab-infra/issues/23)) ([96b638e](https://github.com/HarshitRuwali/homelab-infra/commit/96b638e743ab7d9448fe83cb08cd7a47a22b0cbd))
+
 ## [0.2.0](https://github.com/HarshitRuwali/homelab-infra/compare/monitoring-v0.1.0...monitoring-v0.2.0) (2026-10-20)
 
 

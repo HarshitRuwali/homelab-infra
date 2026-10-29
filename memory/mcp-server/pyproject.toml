@@ -1,6 +1,6 @@
 [project]
 name = "open-memory-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP server exposing the Open Memory Stack API as native agent tools."
 requires-python = ">=3.10"
 dependencies = [
