@@ -69,6 +69,10 @@
         "mcp-server/open_memory_mcp/server.py"
       ]
     },
+    "ingress": {
+      "component": "ingress",
+      "initial-version": "0.1.0"
+    },
     "monitoring": {
       "component": "monitoring",
       "initial-version": "0.1.0"

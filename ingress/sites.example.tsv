@@ -1,0 +1,24 @@
+# Web UIs served as https://<name>.lan by Caddy on the ingress host.
+# Copy to /etc/ingress/sites.tsv on the host and fill in real addresses; the
+# real file is site data and never committed. Addresses below are from the
+# documentation ranges (RFC 5737, and 100.64.0.0/10 for the tailnet).
+#
+# name     the label before .lan
+# access   lan      reachable from the LAN and the tailnet
+#          tailnet  reachable from tailnet devices only: the name resolves to
+#                   the ingress tailnet address, and Caddy refuses any client
+#                   that is not on the tailnet
+# upstream where Caddy sends the request (http:// or https://)
+# tls      for https upstreams: ca=<pem in /etc/ingress/cas>, optionally
+#          ,sni=<name the upstream certificate carries>; "-" for http
+#
+# name          access   upstream                       tls
+proxmox         lan      https://192.0.2.9:8006         ca=pve-root-ca.pem,sni=pve-host
+immich          lan      http://100.64.0.10:2283        -
+nextcloud       lan      http://100.64.0.10:8080        -
+plex            lan      http://100.64.0.10:32400       -
+grafana         lan      http://192.0.2.29:80           -
+wazuh           lan      https://192.0.2.8:443          ca=wazuh-root-ca.pem,sni=wazuh-dashboard
+adguard         lan      http://192.0.2.24:3000         -
+qbittorrent     tailnet  http://100.64.0.10:8081        -
+lmstudio        tailnet  http://100.64.0.22:8080        -
