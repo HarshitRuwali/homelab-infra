@@ -18,6 +18,8 @@ A reference list. For what a playbook or a role *is*, see
 | `docker-updates.yml` | `autoupdate` | containers, only with `run_now` | container update schedule |
 | `rotate-collector-password.yml` | `central` | `nginx`, central `alloy` | rotating collector auth |
 | `desk-appliance.yml` | `desk_appliances` | `docker` (started on first install, reloaded for `live-restore`); udev rules reloaded; `systemd-logind` told to re-read its config; `btusb` reloaded when its DKMS build changes (Bluetooth connections drop and return); never a running session | an always-on X11 desk appliance; not part of `site.yml` |
+| `tailscale-node.yml` | `tailscale_nodes` | nothing: `tailscaled` is never restarted by this role unless `tailscale_node_manage_upgrades` is true | a host on the tailnet under a tag, with services published by `tailscale serve`; not part of `site.yml` |
+| `image-registry.yml` | `image_registries` | the registry container, only when its configuration changed; during a garbage collection | the private container image registry; not part of `site.yml` |
 | `force-updates.yml` | `monitored`, except `desk_appliances` | **services, via apt** | installing pending updates NOW; never reboots |
 
 ### Common invocations
@@ -105,6 +107,36 @@ at the start.
 
 Variables and behaviour are documented in the role itself:
 `roles/desk_appliance/README.md`.
+
+### `tailscale_node`
+
+Applied by membership of `tailscale_nodes` only: Tailscale from its own apt
+repository (key pinned by checksum), `tailscaled` enabled, a join under a tag
+with an auth key from the vault (only while the node is not on the tailnet),
+and `tailscale serve --bg --https=...` for each entry in
+`tailscale_node_serve`. Tagged per concern: `install`, `join`, `serve`. Never
+enables Funnel, and fails if any Funnel is on.
+
+!!! danger "Never put the tailnet router in `tailscale_nodes`"
+    The exit node and subnet router carries the estate's traffic, and
+    restarting `tailscaled` there drops it. The join step refuses a node that
+    already routes, but group membership is the control.
+
+Variables, the steps only the owner can do (tags, auth keys, LXC TUN
+passthrough) and behaviour are documented in the role itself:
+`roles/tailscale_node/README.md`.
+
+### `image_registry`
+
+Applied by membership of `image_registries` only: Docker CE if the host has
+none, a Compose project running `registry:3` on `127.0.0.1`, one htpasswd
+credential from the vault, and a weekly garbage collection timer that stops the
+registry for its run. Tagged per concern: `docker`, `config`, `gc`, `service`.
+Reached from the tailnet through `tailscale_node` on the same host, which
+supplies the HTTPS listener and certificate.
+
+Variables and behaviour are documented in the role itself:
+`roles/image_registry/README.md`.
 
 ### `grafana_alerting`
 

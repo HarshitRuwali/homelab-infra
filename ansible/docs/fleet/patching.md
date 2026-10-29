@@ -77,6 +77,21 @@ them with a reboot flag waiting for its window. The role also sets
 `Automatic-Reboot-Time` on purpose, the setting the box above warns about:
 there it is the reboot schedule rather than an accident.
 
+### Tailscale and Docker upgrades restart services
+
+`o=*` above includes the Tailscale and Docker apt repositories on hosts that
+have them. The nightly run therefore upgrades `tailscale` (which restarts
+`tailscaled` and drops the node off the tailnet for a few seconds) and
+`docker-ce` and `containerd.io` (which restart `dockerd` and every container
+without `live-restore`). The
+[`tailscale_node`](https://github.com/HarshitRuwali/homelab-infra/blob/master/ansible/roles/tailscale_node/README.md)
+and
+[`image_registry`](https://github.com/HarshitRuwali/homelab-infra/blob/master/ansible/roles/image_registry/README.md)
+roles do not change this policy; they document the effect. To keep a package
+out of the nightly run on one host, put it in `uu_package_blacklist` in that
+host's `host_vars` and upgrade it deliberately. The tailnet router
+(`tailscale-router`) must never be in `tailscale_nodes`.
+
 ### `MinimalSteps` and `AutoFixInterruptedDpkg`
 
 `MinimalSteps` upgrades in smaller transactions so an interruption resumes

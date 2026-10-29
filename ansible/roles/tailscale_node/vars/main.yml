@@ -1,0 +1,10 @@
+---
+# Internal values, derived. Not settings: override the variables in
+# defaults/main.yml instead.
+tailscale_node_distro: "{{ ansible_facts['distribution'] | lower }}"
+tailscale_node_repo_url: >-
+  {{ tailscale_node_apt_base }}/{{ tailscale_node_distro }}
+tailscale_node_key_url: >-
+  {{ tailscale_node_repo_url }}/{{ ansible_facts['distribution_release'] }}.noarmor.gpg
+tailscale_node_authkey_set: "{{ tailscale_node_authkey | trim not in ['', 'REPLACE_ME'] }}"
+tailscale_node_authkey_file: /run/tailscale-node-authkey

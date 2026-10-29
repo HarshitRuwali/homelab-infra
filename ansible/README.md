@@ -88,6 +88,8 @@ tests/                         consistency checks, run by hand; see the header o
 | `central-alerting.yml` | the Matrix relay and Grafana unified alerting |
 | `rotate-collector-password.yml` | rotate the shared collector basic-auth password |
 | `desk-appliance.yml` | the `desk_appliances` baseline: X11 autologin desktop, audio, serial, Bluetooth adapter quirks, Docker, security updates; not part of `site.yml` |
+| `tailscale-node.yml` | the `tailscale_nodes` baseline: Tailscale installed, the host joined under a tag, local services published with `tailscale serve`; not part of `site.yml` |
+| `image-registry.yml` | the `image_registries` baseline: Docker, the private container image registry on loopback, weekly garbage collection; not part of `site.yml` |
 
 Full reference: [Playbooks](docs/reference/playbooks.md).
 
@@ -106,6 +108,8 @@ Full reference: [Playbooks](docs/reference/playbooks.md).
 | `grafana_alerting` | provisioned alert rules and contact points |
 | `matrix_webhook` | the local Grafana-to-Matrix relay |
 | `desk_appliance` | an always-on X11 desk appliance; see `roles/desk_appliance/README.md` |
+| `tailscale_node` | Tailscale on a host, joined under a tag, with `tailscale serve` publishing; see `roles/tailscale_node/README.md` |
+| `image_registry` | the private container image registry; see `roles/image_registry/README.md` |
 
 ## Inventory
 
@@ -113,7 +117,7 @@ Two axes, kept deliberately separate. **Platform then distro family**
 (`lxc` → `lxc_debian`, `vm` → `vm_debian`, `pi` → `pi_debian`,
 `metal` → `metal_debian`); every monitored host sits in exactly one leaf.
 **Overlay groups** cut across that tree: `monitored`, `central`, `lan_guests`,
-`autoupdate`, `no_autoupdate`.
+`autoupdate`, `no_autoupdate`, `tailscale_nodes`, `image_registries`.
 
 `hosts.example.yml` documents the whole scheme inline, including which level a
 given variable belongs to and why. Start there.

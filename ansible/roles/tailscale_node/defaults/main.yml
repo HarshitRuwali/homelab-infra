@@ -1,0 +1,66 @@
+---
+# Put a host on the tailnet and, optionally, publish local services to it over
+# HTTPS with `tailscale serve`. Applied by GROUP MEMBERSHIP (`tailscale_nodes`),
+# never by an in-role `when:`. See playbooks/tailscale-node.yml.
+#
+# THIS ROLE MUST NEVER RUN ON THE TAILNET ROUTER. The exit node and subnet
+# router carries the whole estate's traffic, and restarting tailscaled there
+# drops it. Keep that host out of `tailscale_nodes`; the join step also refuses
+# a node that already advertises routes or an exit node.
+
+# --- Install (tag: install) ---------------------------------------------------
+# Tailscale's own apt repository, per distribution and release. The signing key
+# is fetched from the same place as the repository and verified by apt through
+# signed-by, so a different key cannot be substituted by a mirror.
+tailscale_node_apt_base: https://pkgs.tailscale.com/stable
+tailscale_node_apt_keyring: /usr/share/keyrings/tailscale-archive-keyring.gpg
+# SHA-256 of the unarmoured signing key. The same file is served for every
+# Debian and Ubuntu release (checked 2026-10-10). A mismatch fails the run, so a
+# swapped or rotated key is noticed. If Tailscale rotates it, compare the new
+# fingerprint with Tailscale's documentation before changing this. The key's
+# fingerprint is 2596 A99E AAB3 3821 893C 0A79 458C A832 957F 5868.
+tailscale_node_apt_key_sha256: 3e03dacf222698c60b8e2f990b809ca1b3e104de127767864284e6c228f1fb39
+
+# `present` by default, never `latest`: an apt upgrade of the tailscale package
+# restarts tailscaled and drops the tailnet for a moment. Set this to true to
+# make the role take upgrades when you run it (state `latest`), which is the
+# supervised way. On a host in `autoupdate` the nightly unattended run will
+# still upgrade the package (that policy applies every origin); see the role
+# README, Patching.
+tailscale_node_manage_upgrades: false
+
+# --- Join (tag: join) ----------------------------------------------------------
+# `false` leaves tailnet state alone: the package and service are installed and
+# nothing else. This is what the container tests use.
+tailscale_node_join: true
+
+# A tagged, ideally single-use auth key from the admin console. It lives in the
+# vault, never in a file in this repository. The placeholder is detected and
+# refused, but only when a join is actually needed.
+tailscale_node_authkey: "{{ vault_tailscale_authkey | default('REPLACE_ME') }}"
+
+# Tags to advertise at join. Required: an untagged server would be owned by
+# whoever created the key and would carry that person's access. Each tag must
+# exist in the tailnet policy and be allowed for the auth key. Proposals for
+# this fleet are tag:matrix and tag:registry; the names are Harshit's decision.
+tailscale_node_tags: []
+
+# The machine name on the tailnet. This becomes the first label of the
+# MagicDNS name, and so of the certificate name.
+tailscale_node_hostname: "{{ inventory_hostname }}"
+
+# Servers keep their own resolver. Tailnet DNS rewriting resolv.conf on a
+# guest is a surprise nobody asked for.
+tailscale_node_accept_dns: false
+
+# --- Serve (tag: serve) ---------------------------------------------------------
+# Services to publish on the tailnet, over HTTPS with a Tailscale-issued
+# certificate. Tailnet only: the role never enables Funnel, and fails if any
+# Funnel is on. Each entry:
+#
+#   - https_port: 443
+#     target: http://127.0.0.1:8008
+#
+# Needs HTTPS certificates enabled for the tailnet in the admin console, and
+# MagicDNS. Empty by default.
+tailscale_node_serve: []

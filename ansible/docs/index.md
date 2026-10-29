@@ -26,6 +26,13 @@ provisioned Grafana dashboards and alert rules.
     From "it exists in the inventory" to "its metrics and logs are visible in
     Grafana", with the verification built into the same playbook.
 
+- :material-lan-connect: **Puts services on the tailnet**
+
+    The `tailscale_node` role joins a host under a tag and publishes local
+    services over HTTPS with `tailscale serve`; the `image_registry` role runs
+    the private container image registry behind it. Both run from their own
+    playbooks, outside `site.yml`.
+
 - :material-file-lock: **Keeps the estate map out of git**
 
     The inventory is the one file that describes your real addressing, so it

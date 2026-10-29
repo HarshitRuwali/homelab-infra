@@ -13,6 +13,8 @@ gantt
     unattended-upgrades (+0-60m jitter)  :a1, 03:00, 60m
     section Containers
     docker compose pull + up -d (+0-30m jitter) :a2, 04:00, 30m
+    section Registry (Sundays, hosts in image_registries only)
+    fleet-registry-gc (+0-15m jitter), registry stopped :a3, 05:00, 15m
     section Always
     update metrics (every 15m)  :done, 00:00, 1440m
 ```
@@ -21,6 +23,7 @@ gantt
 |---|---|---|---|---|
 | Package updates | `apt-daily-upgrade.timer` | `03:00` daily | up to +60 min | **never** |
 | Container updates | `fleet-docker-update.timer` | `04:00` daily | up to +30 min | no, restarts containers |
+| Image registry garbage collection | `fleet-registry-gc.timer` | `Sun 05:00`, hosts in `image_registries` only | up to +15 min | no, **stops the registry** for the length of the run |
 | apt / reboot metrics | `fleet-update-metrics.timer` | every 15 min, and at boot | +5 min (+10 on Pis) | no |
 | Alert evaluation | Grafana scheduler | every 1 min | none | no |
 
