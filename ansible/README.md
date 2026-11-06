@@ -81,6 +81,7 @@ tests/                         consistency checks, run by hand; see the header o
 | `onboard.yml` | one new host, from "it is in the inventory" to "visible in Grafana" |
 | `collectors.yml` | the Alloy collector on every monitored host |
 | `update-metrics.yml` | apt and reboot-required textfile exporter |
+| `dell-fan-boost.yml` | runs the Dell CPU fan at full speed while its package is hot, where `host_vars` enables it |
 | `unattended-upgrades.yml` | package patching policy |
 | `docker-updates.yml` | container image update script, unit and timer |
 | `force-updates.yml` | install every pending package **now**; still never reboots |
@@ -102,6 +103,7 @@ Full reference: [Playbooks](docs/reference/playbooks.md).
 | `smart_metrics` | SMART disk health, bare metal only |
 | `pve_guest_metrics` | names each Proxmox guest's NIC counters, PVE hosts only |
 | `gpu_exporter` | NVIDIA GPU telemetry, autodetected off the host |
+| `dell_fan_boost` | a fan boost controller for a Dell workstation's CPU fan, per host only |
 | `unattended_upgrades` | apt patching policy, applied by group membership only |
 | `docker_updates` | container image update timer |
 | `grafana_dashboards` | the committed dashboard JSON |

@@ -14,7 +14,8 @@
 # ORDER IS LOAD-BEARING:
 #   1. collectors first, so telemetry exists before anything starts changing
 #      packages. If an update breaks a host, you want the metrics that show it.
-#   2. update-metrics next, so apt and reboot state is visible.
+#   2. update-metrics next, so apt and reboot state is visible, then the
+#      Dell fan boost, which is inert except where host_vars enables it.
 #   3. dashboards before alerting. Both touch the central stack, and
 #      central-alerting.yml restarts Grafana; running dashboards first means
 #      that single restart also picks up any provider change, instead of
@@ -28,6 +29,9 @@
 
 - name: Deploy the apt and reboot metrics exporter
   ansible.builtin.import_playbook: update-metrics.yml
+
+- name: Deploy the Dell fan boost
+  ansible.builtin.import_playbook: dell-fan-boost.yml
 
 - name: Deploy the Grafana dashboards
   ansible.builtin.import_playbook: dashboards.yml

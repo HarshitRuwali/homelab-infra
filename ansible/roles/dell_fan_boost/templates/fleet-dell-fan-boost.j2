@@ -1,0 +1,280 @@
+#!/usr/bin/env python3
+# Managed by ansible/roles/dell_fan_boost. Do not edit by hand.
+#
+# Runs one Dell chassis fan at full speed while a CPU package is hot, and hands
+# every fan back to the firmware's curve once that package has cooled.
+#
+# WHY: the firmware's automatic curve holds the CPU fans near 1000 RPM until the
+# package is very hot. On t7920 that left CPU1 at 65 to 71 C idle; at full
+# speed (about 4400 RPM) the same package sat at 44 to 48 C. The BIOS fan
+# setting cannot be changed from Linux on this machine (dell-smbios refuses
+# the Fan Speed tokens), so this drives dell_smm_hwmon directly.
+#
+# HOW, AND THE ONE HAZARD:
+#   * dell_smm_hwmon has one manual switch for every fan: writing 1 to any
+#     pwmN_enable puts all of them in manual, and the firmware stops raising
+#     the fans this script does not touch. So manual mode is held only while
+#     needed, and given back early if another package gets hot (the guard).
+#   * pwmN accepts 0, 128 or 255. 128 is SLOWER than automatic on this
+#     firmware (about 600 RPM), so the only useful manual speed is 255.
+#   * Every exit path writes 2 (automatic) to every pwmN_enable: normal stop,
+#     SIGTERM, an exception, and ExecStopPost in the unit (which also covers
+#     SIGKILL and the systemd watchdog firing on a hung loop).
+#   * Package temperatures come from coretemp, which is MSR-backed and costs
+#     no SMI. Fan writes are SMIs (a brief stall of every core), so they happen
+#     only on a change and every REASSERT seconds while boosting.
+
+import argparse
+import glob
+import os
+import signal
+import socket
+import sys
+import tempfile
+import time
+
+CHANNEL = {{ dell_fan_boost_channel }}
+PACKAGE = {{ dell_fan_boost_package }}
+ON_C = {{ dell_fan_boost_on_celsius }}
+OFF_C = {{ dell_fan_boost_off_celsius }}
+MIN_HOLD = {{ dell_fan_boost_min_hold_seconds }}
+GUARD_C = {{ dell_fan_boost_guard_celsius }}
+# The guard releases this many degrees below where it tripped, so a package
+# sitting on the guard line does not flip manual mode on every poll.
+GUARD_RELEASE_C = 5
+POLL = {{ dell_fan_boost_poll_seconds }}
+REASSERT = {{ dell_fan_boost_reassert_seconds }}
+METRICS_DIR = "{{ dell_fan_boost_metrics_dir }}"
+METRICS_FILE = "{{ dell_fan_boost_metrics_file }}"
+
+AUTO = "2"
+MANUAL = "1"
+FULL = "255"
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def read(path):
+    with open(path) as fh:
+        return fh.read().strip()
+
+
+def write(path, value):
+    with open(path, "w") as fh:
+        fh.write(value)
+
+
+def hwmon_dirs(root, name):
+    out = []
+    for d in sorted(glob.glob(os.path.join(root, "hwmon*"))):
+        try:
+            if read(os.path.join(d, "name")) == name:
+                out.append(d)
+        except OSError:
+            continue
+    return out
+
+
+def package_temps(root):
+    """Return the package temperatures as a dict of package id to Celsius."""
+    temps = dict()
+    for d in hwmon_dirs(root, "coretemp"):
+        for label in glob.glob(os.path.join(d, "temp*_label")):
+            try:
+                text = read(label)
+                if not text.startswith("Package id "):
+                    continue
+                pkg = int(text.split()[-1])
+                temps[pkg] = int(read(label[: -len("_label")] + "_input")) / 1000.0
+            except (OSError, ValueError):
+                continue
+    return temps
+
+
+class Fans:
+    """The dell_smm_hwmon fan control files."""
+
+    def __init__(self, root, channel):
+        dirs = hwmon_dirs(root, "dell_smm")
+        if not dirs:
+            raise SystemExit("no dell_smm hwmon device under " + root)
+        self.dir = dirs[0]
+        self.pwm = os.path.join(self.dir, "pwm" + str(channel))
+        self.enable = self.pwm + "_enable"
+        if not os.path.exists(self.enable):
+            raise SystemExit(self.enable + " does not exist: this firmware has no manual fan control")
+
+    def boost(self):
+        write(self.enable, MANUAL)
+        write(self.pwm, FULL)
+
+    def restore(self):
+        """Every channel back to automatic. Returns the paths that failed."""
+        failed = []
+        for path in sorted(glob.glob(os.path.join(self.dir, "pwm*_enable"))):
+            try:
+                write(path, AUTO)
+            except OSError:
+                failed.append(path)
+        return failed
+
+
+class Controller:
+    """Decides whether the fan should be boosted. No I/O, so it can be tested."""
+
+    def __init__(self, package=PACKAGE, on_c=ON_C, off_c=OFF_C, min_hold=MIN_HOLD, guard_c=GUARD_C):
+        self.package = package
+        self.on_c = on_c
+        self.off_c = off_c
+        self.min_hold = min_hold
+        self.guard_c = guard_c
+        self.boosting = False
+        self.since = 0.0
+        self.guarded = False
+
+    def decide(self, temps, now):
+        """Return (boost, reason) for these package temperatures."""
+        mine = temps.get(self.package)
+        others = [t for p, t in temps.items() if p != self.package]
+        hottest_other = max(others) if others else None
+
+        if hottest_other is not None:
+            if hottest_other >= self.guard_c:
+                self.guarded = True
+            elif hottest_other <= self.guard_c - GUARD_RELEASE_C:
+                self.guarded = False
+
+        if mine is None:
+            want, reason = False, "package " + str(self.package) + " unreadable"
+        elif self.guarded:
+            want, reason = False, "guard: another package at " + str(hottest_other) + " C"
+        elif not self.boosting:
+            want, reason = mine >= self.on_c, "package at " + str(mine) + " C"
+        elif now - self.since < self.min_hold:
+            want, reason = True, "minimum hold"
+        else:
+            want, reason = mine > self.off_c, "package at " + str(mine) + " C"
+
+        if want and not self.boosting:
+            self.since = now
+        self.boosting = want
+        return want, reason
+
+
+def write_metrics(metrics_dir, active, guarded, transitions, temp):
+    lines = [
+        "# HELP fleet_dell_fan_boost_active 1 while roles/dell_fan_boost holds a fan at full speed in manual mode.",
+        "# TYPE fleet_dell_fan_boost_active gauge",
+        "fleet_dell_fan_boost_active " + str(int(active)),
+        "# HELP fleet_dell_fan_boost_guard_active 1 while another package is too hot to allow manual mode.",
+        "# TYPE fleet_dell_fan_boost_guard_active gauge",
+        "fleet_dell_fan_boost_guard_active " + str(int(guarded)),
+        "# HELP fleet_dell_fan_boost_transitions_total Boost starts and ends since the service started.",
+        "# TYPE fleet_dell_fan_boost_transitions_total counter",
+        "fleet_dell_fan_boost_transitions_total " + str(transitions),
+        "# HELP fleet_dell_fan_boost_package_celsius The package temperature the boost follows.",
+        "# TYPE fleet_dell_fan_boost_package_celsius gauge",
+        "fleet_dell_fan_boost_package_celsius " + ("NaN" if temp is None else str(temp)),
+        "# HELP fleet_dell_fan_boost_timestamp_seconds When the controller last ran.",
+        "# TYPE fleet_dell_fan_boost_timestamp_seconds gauge",
+        "fleet_dell_fan_boost_timestamp_seconds " + str(int(time.time())),
+    ]
+    try:
+        os.makedirs(metrics_dir, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=metrics_dir, prefix=".fleet-dell-fan-boost.")
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, os.path.join(metrics_dir, METRICS_FILE))
+    except OSError as exc:
+        log("could not write metrics: " + str(exc))
+
+
+def sd_notify(msg):
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+        s.connect(addr)
+        s.sendall(msg.encode())
+
+
+def on_signal(signum, frame):
+    raise SystemExit(0)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Boost one Dell fan while a CPU package is hot.")
+    ap.add_argument("--restore", action="store_true", help="put every fan back on automatic and exit")
+    ap.add_argument("--hwmon-root", default="/sys/class/hwmon", help=argparse.SUPPRESS)
+    ap.add_argument("--metrics-dir", default=METRICS_DIR, help=argparse.SUPPRESS)
+    ap.add_argument("--poll", type=float, default=POLL, help=argparse.SUPPRESS)
+    ap.add_argument("--min-hold", type=float, default=MIN_HOLD, help=argparse.SUPPRESS)
+    args = ap.parse_args(argv)
+
+    fans = Fans(args.hwmon_root, CHANNEL)
+    if args.restore:
+        failed = fans.restore()
+        for path in failed:
+            log("could not restore " + path)
+        return 1 if failed else 0
+
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGINT, on_signal)
+
+    ctl = Controller(min_hold=args.min_hold)
+    transitions = 0
+    last_write = 0.0
+    temp = None
+    # A previous run killed mid-boost would have left manual mode on.
+    fans.restore()
+    log(
+        "fan " + str(CHANNEL) + " follows package " + str(PACKAGE) + ": boost at " + str(ON_C)
+        + " C, release at " + str(OFF_C) + " C after " + str(int(args.min_hold)) + " s, guard "
+        + str(GUARD_C) + " C on any other package"
+    )
+    sd_notify("READY=1")
+    try:
+        while True:
+            now = time.monotonic()
+            temps = package_temps(args.hwmon_root)
+            temp = temps.get(PACKAGE)
+            was = ctl.boosting
+            want, reason = ctl.decide(temps, now)
+            if want and not was:
+                try:
+                    fans.boost()
+                    last_write = now
+                    transitions += 1
+                    log("boost on: " + reason)
+                except OSError as exc:
+                    log("boost failed, staying on automatic: " + str(exc))
+                    fans.restore()
+                    ctl.boosting = False
+            elif was and not want:
+                failed = fans.restore()
+                transitions += 1
+                log("boost off, fans on automatic: " + reason + ("; FAILED " + ", ".join(failed) if failed else ""))
+            elif want and now - last_write >= REASSERT:
+                try:
+                    fans.boost()
+                    last_write = now
+                except OSError as exc:
+                    log("re-assert failed, handing back: " + str(exc))
+                    fans.restore()
+                    ctl.boosting = False
+            write_metrics(args.metrics_dir, ctl.boosting, ctl.guarded, transitions, temp)
+            sd_notify("WATCHDOG=1")
+            time.sleep(args.poll)
+    finally:
+        failed = fans.restore()
+        write_metrics(args.metrics_dir, False, ctl.guarded, transitions, temp)
+        log("stopped, fans on automatic" + ("; FAILED " + ", ".join(failed) if failed else ""))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

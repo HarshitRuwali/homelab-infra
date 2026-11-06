@@ -12,6 +12,7 @@ A reference list. For what a playbook or a role *is*, see
 | `onboard.yml` | one host, `--limit` required | `alloy` | adding a new host; installs the collector and proves data landed centrally |
 | `collectors.yml` | `monitored` | `alloy`, `systemd-journald` | Alloy config, container metrics, journal caps |
 | `update-metrics.yml` | `monitored` | nothing meaningful | the apt/reboot exporter, plus SMART and Proxmox guest names where `group_vars/metal` enables them |
+| `dell-fan-boost.yml` | `metal` | `fleet-dell-fan-boost`, if its script or unit changed; stopping it puts the fans back on automatic | a CPU fan the firmware runs too slowly; inert except where `dell_fan_boost_enabled` is set |
 | `dashboards.yml` | `central` | only if the provider config changed | Grafana dashboards; prunes ones deleted from git |
 | `central-alerting.yml` | `central` | **`grafana-server`** | alert rules, Matrix relay |
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
@@ -66,6 +67,24 @@ which would hang an unattended run indefinitely.
 
 The service carries `[Install] WantedBy=multi-user.target` so a reboot
 refreshes metrics immediately rather than waiting out the timer jitter.
+
+### `dell_fan_boost`
+
+A small controller on a Dell workstation, `fleet-dell-fan-boost.service`, that
+runs one fan at full speed while a CPU package is hot and hands every fan back
+to the firmware once it cools. On t7920 it drives the CPU1 fan from CPU1's
+package temperature.
+
+| Does | Note |
+|---|---|
+| Boosts at `dell_fan_boost_on_celsius`, releases at `dell_fan_boost_off_celsius` | after at least `dell_fan_boost_min_hold_seconds`, so it does not cycle |
+| Writes `pwmN_enable=1` and `pwmN=255` through `dell_smm_hwmon` | `128` is slower than automatic on this firmware, so full speed is the only useful manual setting |
+| Hands back early if another package reaches `dell_fan_boost_guard_celsius` | manual mode is one switch for every fan, and the firmware stops raising the others while it is on |
+| Puts every fan back on automatic on any exit | in the script, and in `ExecStopPost`, which also runs after SIGKILL and the 60 s watchdog |
+| Writes `fleet-dell-fan-boost.prom` | the `fleet_dell_fan_boost_*` metrics |
+
+Stop it with `systemctl stop fleet-dell-fan-boost`; the fans go back to the
+firmware's curve at once.
 
 ### `unattended_upgrades`
 

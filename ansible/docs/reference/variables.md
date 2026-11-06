@@ -90,6 +90,25 @@ For how variable precedence works at all, see
 Per host rather than per group: it is true of one Dell workstation, not of
 bare metal in general. The role fails loudly if the host has no `/proc/i8k`.
 
+## Dell fan boost
+
+`roles/dell_fan_boost/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `dell_fan_boost_enabled` | `false` | **the only switch**; set `true` in `host_vars/t7920.yml` |
+| `dell_fan_boost_channel` | `2` | the `dell_smm_hwmon` fan channel; 2 is CPU1 on a Precision 7920 |
+| `dell_fan_boost_package` | `1` | the coretemp package that drives it |
+| `dell_fan_boost_on_celsius` | `72` | boost at or above |
+| `dell_fan_boost_off_celsius` | `60` | release at or below, once the hold is over |
+| `dell_fan_boost_min_hold_seconds` | `120` | shortest boost |
+| `dell_fan_boost_guard_celsius` | `80` | any other package this hot hands every fan back to the firmware |
+| `dell_fan_boost_poll_seconds` | `5` | temperature reads are MSR-backed, no SMI |
+| `dell_fan_boost_reassert_seconds` | `30` | fan writes are SMIs, so only this often while boosting |
+
+The role refuses to install unless off < on < guard, and fails loudly if the
+host has no `/proc/i8k` or no manual control on the chosen channel.
+
 ## Proxmox guest NIC names
 
 `roles/pve_guest_metrics/defaults/main.yml`
