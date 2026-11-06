@@ -1,0 +1,128 @@
+---
+# Boost one Dell fan while a CPU package is hot. See defaults/main.yml for why
+# this is gated per host, and the script template for the control loop.
+
+- name: Report the resolved Dell fan boost shape
+  ansible.builtin.debug:
+    msg: >-
+      {{ inventory_hostname }}: dell_fan_boost_enabled={{ dell_fan_boost_enabled }}
+      {{ ('fan ' ~ dell_fan_boost_channel ~ ' follows package ' ~ dell_fan_boost_package
+          ~ ', ' ~ dell_fan_boost_on_celsius ~ ' C on, ' ~ dell_fan_boost_off_celsius ~ ' C off')
+         if dell_fan_boost_enabled | bool else '' }}
+
+- name: Install the Dell fan boost
+  when: dell_fan_boost_enabled | bool
+  block:
+    - name: Refuse release thresholds that are not below the boost threshold
+      ansible.builtin.assert:
+        that:
+          - dell_fan_boost_off_celsius | int < dell_fan_boost_on_celsius | int
+          - dell_fan_boost_on_celsius | int < dell_fan_boost_guard_celsius | int
+        fail_msg: >-
+          Need off ({{ dell_fan_boost_off_celsius }}) < on ({{ dell_fan_boost_on_celsius }})
+          < guard ({{ dell_fan_boost_guard_celsius }}).
+        quiet: true
+
+    # Same reasoning as dell_fan_metrics: a host with this on but no
+    # dell_smm_hwmon is a configuration mistake. Say so, rather than install a
+    # unit that ConditionPathExists would skip quietly forever.
+    - name: Check for the Dell SMM interface
+      ansible.builtin.stat:
+        path: /proc/i8k
+      register: dell_fan_boost_i8k
+
+    - name: Fail if the Dell SMM interface is missing
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} has dell_fan_boost_enabled but no /proc/i8k.
+          Check: lsmod | grep dell_smm; modprobe dell_smm_hwmon; dmesg | grep -i dell_smm
+      when: not dell_fan_boost_i8k.stat.exists
+
+    - name: Find the fan control file for the boosted channel
+      ansible.builtin.shell: |
+        set -eu
+        for d in /sys/class/hwmon/hwmon*; do
+          [ "$(cat "$d/name")" = dell_smm ] && ls "$d/pwm{{ dell_fan_boost_channel }}_enable" && exit 0
+        done
+        exit 1
+      register: dell_fan_boost_pwm
+      changed_when: false
+      failed_when: false
+
+    - name: Fail if the firmware has no manual control for that channel
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }}: dell_smm_hwmon exposes no pwm{{ dell_fan_boost_channel }}_enable,
+          so this firmware does not allow manual fan control on that channel.
+      when: dell_fan_boost_pwm.rc != 0
+
+    - name: Install the Dell fan boost controller
+      ansible.builtin.template:
+        src: fleet-dell-fan-boost.j2
+        dest: "{{ dell_fan_boost_script }}"
+        owner: root
+        group: root
+        mode: "0755"
+        validate: /usr/bin/python3 -m py_compile %s
+      notify: Restart fleet-dell-fan-boost
+
+    - name: Install the Dell fan boost systemd service
+      ansible.builtin.template:
+        src: fleet-dell-fan-boost.service.j2
+        dest: /etc/systemd/system/fleet-dell-fan-boost.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart fleet-dell-fan-boost
+
+    - name: Enable and start the Dell fan boost
+      ansible.builtin.systemd:
+        name: fleet-dell-fan-boost.service
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    - name: Flush handlers so the running controller is the installed one
+      ansible.builtin.meta: flush_handlers
+
+    - name: Confirm the controller is reporting
+      ansible.builtin.stat:
+        path: "{{ dell_fan_boost_metrics_dir }}/{{ dell_fan_boost_metrics_file }}"
+      register: dell_fan_boost_out
+      retries: 10
+      delay: 3
+      until:
+        - dell_fan_boost_out.stat.exists
+        - dell_fan_boost_out.stat.size | default(0) > 0
+      when: not ansible_check_mode
+
+    - name: Read the controller state back
+      ansible.builtin.command: systemctl is-active fleet-dell-fan-boost.service
+      register: dell_fan_boost_active
+      changed_when: false
+      failed_when: dell_fan_boost_active.stdout != 'active'
+      when: not ansible_check_mode
+
+- name: Remove the Dell fan boost where it is not enabled
+  when: not (dell_fan_boost_enabled | bool)
+  block:
+    # Stopping runs ExecStopPost, which puts every fan back on automatic.
+    - name: Stop and disable the Dell fan boost
+      ansible.builtin.systemd:
+        name: fleet-dell-fan-boost.service
+        state: stopped
+        enabled: false
+      failed_when: false
+      when: not ansible_check_mode
+
+    - name: Remove the Dell fan boost unit, script and stale metrics
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/fleet-dell-fan-boost.service
+        - "{{ dell_fan_boost_script }}"
+        # Left behind, this would report a frozen boost state as current.
+        - "{{ dell_fan_boost_metrics_dir }}/{{ dell_fan_boost_metrics_file }}"
+      notify: Reload systemd

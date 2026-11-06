@@ -1,0 +1,43 @@
+---
+# Runs one fan at full speed while a CPU package is hot, and hands every fan
+# back to the firmware's own curve once it has cooled. See
+# templates/fleet-dell-fan-boost.j2 for the control loop and why it is shaped
+# this way.
+#
+# OFF BY DEFAULT, ENABLED PER HOST, same contract as dell_fan_metrics. It
+# writes fan control registers, which is true of one Dell workstation's
+# firmware and not of bare metal in general, so it is set in
+# host_vars/t7920.yml.
+dell_fan_boost_enabled: false
+
+dell_fan_boost_script: /usr/local/bin/fleet-dell-fan-boost
+
+# The dell_smm_hwmon fan channel to boost (fanN / pwmN). On a Precision 7920
+# Tower, 2 is the CPU1 fan: SMM index 1, which fleet_dell_fan_rpm names CPU1.
+dell_fan_boost_channel: 2
+# The CPU package that drives the boost, as coretemp's "Package id N".
+dell_fan_boost_package: 1
+
+# Boost at or above this package temperature, in Celsius.
+dell_fan_boost_on_celsius: 72
+# Hand back to the firmware at or below this, once the minimum hold is over.
+# The gap keeps the fan from cycling on every few degrees.
+dell_fan_boost_off_celsius: 60
+# A boost lasts at least this many seconds.
+dell_fan_boost_min_hold_seconds: 120
+
+# Manual mode is one switch for every fan: while it is on, the firmware no
+# longer raises the fans this role does not touch. So if any OTHER package
+# reaches this temperature, hand everything back to the firmware, whatever the
+# boosted package reads.
+dell_fan_boost_guard_celsius: 80
+
+# How often to read the package temperatures (no SMI: coretemp is MSR-backed).
+dell_fan_boost_poll_seconds: 5
+# While boosting, how often to write the fan speed again (each write is an SMI,
+# which briefly stalls every core).
+dell_fan_boost_reassert_seconds: 30
+
+# Status for the textfile collector Alloy already reads.
+dell_fan_boost_metrics_dir: "{{ alloy_textfile_dir }}"
+dell_fan_boost_metrics_file: fleet-dell-fan-boost.prom
