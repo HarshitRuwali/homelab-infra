@@ -53,6 +53,13 @@ markdown_extensions:
 plugins:
   - search
 
+# Click a diagram to open it in a viewer that zooms and pans. The script wraps
+# attachShadow, so it must load after Material's bundle; extra_javascript does.
+extra_css:
+  - stylesheets/diagram-zoom.css
+extra_javascript:
+  - javascripts/diagram-zoom.js
+
 extra:
   social:
     - icon: fontawesome/brands/github
