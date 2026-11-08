@@ -36,7 +36,7 @@ symlink that points out of the vault is dropped, not followed.
 ## How it is rendered
 
 `GET /pdf/<id>` renders the note as a print page and pipes it into a throwaway
-container that runs Chromium's headless shell (driven by Playwright). The PDF comes back on
+container that runs Chromium's headless shell. The PDF comes back on
 stdout and the container is removed.
 
 The container runs with:
@@ -81,14 +81,16 @@ stays at a few hundred MB on disk:
 
 - **Base:** `debian:bookworm-slim`. Debian 12's `libgbm1` does not pull in
   LLVM and the Mesa drivers, which Ubuntu 24.04's does (about 180 MB more).
-- **Browser:** Chromium's headless shell only, installed with
-  `playwright install --only-shell chromium`. There is no full Chromium,
-  Firefox or WebKit, and no `--with-deps`: the image installs only the shared
-  libraries the headless shell links against, and no X server or extra font
-  families.
-- **Driver:** the `playwright` pip package, pinned by `PDF_PLAYWRIGHT`. It is
-  installed with the browser in a builder stage and copied in, so pip itself
-  is not in the image.
+- **Browser:** Chromium's headless shell only, from Chrome for Testing
+  (`PDF_CHROME_URL`, pinned by `PDF_CHROME_VERSION` and checked against
+  `PDF_CHROME_SHA256`; the build fails on a mismatch). There is no full
+  Chromium, Firefox or WebKit: the image installs only the shared libraries
+  the headless shell links against, and no X server or extra font families.
+- **Driver:** none in the image. The render script (`PDF_RENDER`) is plain
+  Python with the standard library: it starts the headless shell with
+  `--remote-debugging-pipe` and speaks the DevTools protocol to it over that
+  pipe. It does what Playwright did here before, with the same launch
+  switches and print settings, so PDFs come out the same.
 - **Libraries:** Mermaid 11 with the ELK layout and highlight.js, cut down to
   the files the print page loads (the minified ESM builds and their chunks,
   `highlight.min.js` and the GitHub style), without source maps.
@@ -114,15 +116,18 @@ docker image rm artifacts-pdf:local
 `--build-pdf-image` runs `docker build --pull`, needs network once, and exits
 without starting the server.
 
-**Keep the versions in step.** Playwright launches the browser build that
-matches its own version, so the pip package and the headless shell are
-installed together in one build step from `PDF_PLAYWRIGHT`. Change only that
-constant to move to a newer Playwright.
+**Updating Chromium.** Set `PDF_CHROME_VERSION` to a newer Chrome for
+Testing version and `PDF_CHROME_SHA256` to the SHA-256 of that version's
+`chrome-headless-shell-linux64.zip`, then rebuild. The DevTools calls the
+render script makes (`Target`, `Fetch`, `Page.navigate`, `Runtime.evaluate`,
+`Page.printToPDF`) are stable parts of the protocol.
 
 ### Upgrading from the Playwright-based image
 
 Earlier versions built the image on Playwright's own base image, which carries
-every browser and came to about 4 GB on disk. The `--pdf-base` option and
+every browser and came to about 4 GB on disk, and printed through the
+`playwright` pip package. The render script and the image now depend on each
+other's layout, so update the program and rebuild the image together. The `--pdf-base` option and
 `ARTIFACTS_PDF_BASE` chose that base and are gone: `--pdf-base` now exits with
 status 2 and says so, both in the program and in the installer, and a leftover
 `ARTIFACTS_PDF_BASE` is ignored with a warning. To move over, rebuild the image

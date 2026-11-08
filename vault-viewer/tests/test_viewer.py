@@ -276,16 +276,18 @@ def t_pdf_build():
     check(cmd == ["docker", "build", "--pull", "-t", "img:t", "-"],
           "build command: docker build --pull, the Dockerfile on stdin")
     D = A.PDF_DOCKERFILE
-    check(D.count(A.PDF_PLAYWRIGHT) == 1 and f"ARG PLAYWRIGHT={A.PDF_PLAYWRIGHT}" in D
-          and "playwright==${PLAYWRIGHT}" in D,
-          "Dockerfile pins the playwright pip package in one place (it picks the browser build)")
-    check("playwright install --only-shell chromium" in D and "--with-deps" not in D
-          and "mcr.microsoft.com/playwright" not in D,
-          "Dockerfile installs only Chromium's headless shell, not Playwright's all-browser image")
+    check(re.fullmatch(r"[0-9a-f]{64}", A.PDF_CHROME_SHA256) is not None
+          and f"ADD --checksum=sha256:{A.PDF_CHROME_SHA256} {A.PDF_CHROME_URL} " in D
+          and A.PDF_CHROME_VERSION in A.PDF_CHROME_URL and A.PDF_CHROME_URL.endswith("/chrome-headless-shell-linux64.zip"),
+          "Dockerfile takes Chromium's headless shell from Chrome for Testing, pinned by version and checksum")
+    check("playwright" not in D.lower() and "playwright" not in A.PDF_RENDER.lower(),
+          "no Playwright in the image or the renderer (the renderer speaks DevTools over a pipe itself)")
     final = D[D.rindex("\nFROM "):]
-    check(final.startswith("\nFROM debian:bookworm-slim\n") and "python3-pip" not in final
-          and "/ms-playwright/ffmpeg" not in final,
-          "final stage: Debian 12 slim, no pip and no ffmpeg (builder stages only)")
+    check(final.startswith("\nFROM debian:bookworm-slim\n") and "pip" not in final and "unzip" not in final,
+          "final stage: Debian 12 slim, no pip and no unzip (builder stages only)")
+    check("/opt/chrome-headless-shell/chrome-headless-shell" in A.PDF_RENDER
+          and "COPY --from=fetch /opt/chrome-headless-shell /opt/chrome-headless-shell" in D,
+          "the renderer launches the headless shell where the Dockerfile puts it")
     check("find /lib-out -name '*.map' -delete" in D and "COPY --from=lib /lib-out /opt/vault-pdf/lib" in D,
           "Dockerfile copies only the pruned print libraries, without source maps")
     for want in (A.PDF_MERMAID, A.PDF_MERMAID_ELK, A.PDF_HLJS + "/highlight.min.js",
