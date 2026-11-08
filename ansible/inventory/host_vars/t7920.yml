@@ -8,3 +8,8 @@
 # Every chassis fan by name. dell_smm_hwmon only exposes four of the twelve
 # this firmware reports; see roles/dell_fan_metrics.
 dell_fan_metrics_enabled: true
+
+# Run the CPU1 fan at full speed while CPU1's package is hot, and give every
+# fan back to the firmware once it cools. The firmware's own curve holds it
+# near 1000 RPM with the package at 65 to 71 C; see roles/dell_fan_boost.
+dell_fan_boost_enabled: true

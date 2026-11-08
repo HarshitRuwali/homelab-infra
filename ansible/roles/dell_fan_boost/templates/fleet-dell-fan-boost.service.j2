@@ -1,0 +1,23 @@
+[Unit]
+Description=Boost the Dell CPU fan while its package is hot
+Documentation=file://{{ dell_fan_boost_script }}
+# /proc/i8k is created by dell_smm_hwmon. Without it there is no fan to drive.
+ConditionPathExists=/proc/i8k
+
+[Service]
+# Notify, so the watchdog below can tell a hung loop from a running one.
+Type=notify
+NotifyAccess=main
+# Root is required: the pwm files are root-writable only.
+User=root
+ExecStart={{ dell_fan_boost_script }}
+# Runs after every exit, including SIGKILL and a watchdog timeout, so manual
+# fan mode never outlives the controller.
+ExecStopPost={{ dell_fan_boost_script }} --restore
+WatchdogSec=60
+Restart=always
+RestartSec=10
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

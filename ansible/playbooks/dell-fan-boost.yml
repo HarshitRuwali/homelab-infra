@@ -1,0 +1,14 @@
+---
+# Boost the Dell CPU fan while its package is hot, on the hosts that enable it.
+#
+#   ansible-playbook playbooks/dell-fan-boost.yml --limit t7920 --check --diff
+#   ansible-playbook playbooks/dell-fan-boost.yml --limit t7920
+#
+# Inert unless dell_fan_boost_enabled is set, which only host_vars/t7920.yml
+# does; everywhere else the role removes any leftovers and moves on.
+
+- name: Deploy the Dell fan boost
+  hosts: metal
+  become: true
+  roles:
+    - dell_fan_boost

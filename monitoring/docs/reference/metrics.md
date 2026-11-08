@@ -207,7 +207,8 @@ Gold 6138) the chips are:
     return `Invalid argument` and none appear in `node_hwmon_sensor_label`.
     What is known from the data: SMM `temp1` and `temp2` track the CPU 0 and
     CPU 1 packages within a few degrees. Fan control is BIOS-automatic
-    (`pwm_enable=2`), so there is no duty-cycle figure.
+    (`pwm_enable=2`), so there is no duty-cycle figure, except while the
+    fan boost below holds manual mode.
 
 ### Named chassis fans
 
@@ -244,6 +245,20 @@ FB2 and FB3 exist on the chassis but this machine's BIOS does not list them.
     `fan1` is the empty CPU0 header, `fan2` is CPU1, and `fan3`/`fan4` are
     SYS0/SYS1. The seven mandatory fans read together at 780 to 950 RPM and
     the drive-bay fans in their own band, as the manual's fan list predicts.
+
+### CPU fan boost
+
+Written to `fleet-dell-fan-boost.prom` every 5 s by `fleet-dell-fan-boost`, from
+`ansible/roles/dell_fan_boost`, which runs the CPU1 fan at full speed while
+CPU 1's package is hot.
+
+| Metric | Meaning |
+|---|---|
+| `fleet_dell_fan_boost_active` | 1 while a fan is held at full speed in manual mode |
+| `fleet_dell_fan_boost_guard_active` | 1 while another package is too hot to allow manual mode |
+| `fleet_dell_fan_boost_transitions_total` | boost starts and ends since the service started |
+| `fleet_dell_fan_boost_package_celsius` | the package temperature the boost follows |
+| `fleet_dell_fan_boost_timestamp_seconds` | when the controller last ran; stale means it is down, and the fans are then on automatic |
 
 ## Stock metrics worth knowing
 
