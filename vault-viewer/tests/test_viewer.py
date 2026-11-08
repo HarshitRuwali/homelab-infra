@@ -144,6 +144,31 @@ def t_render(lib):
     check('<img src="" alt="x">' in inline, 'pdf: <img src="Other.md"> (a note) is not inlined, src is empty')
     check("base64" not in inline, "pdf: nothing inlined for a non-image src")
 
+    print("copy buttons")
+    check("addCopyButtons();" in viewer and viewer.index("hljs.highlightElement") < viewer.index("addCopyButtons();"),
+          "viewer: code blocks get copy buttons, after highlighting")
+    check("addCopyButtons" not in pdf and "codewrap" not in pdf, "pdf: no copy buttons")
+    check("addCopyButtons();" in A.render_text(lib.resolve("vault/code.py"), "vault/code.py"),
+          "viewer: text files get a copy button too")
+    check("type: 'vault-copy', text" in A.NOTE_JS and "'vault-copied'" in A.NOTE_JS and "e.source === parent" in A.NOTE_JS,
+          "note: falls back to asking the viewer, and only trusts the reply from its parent")
+    check('d.type === "vault-copy" && typeof d.text === "string" && d.text.length < 5e6' in A.PAGE
+          and 'e.source !== $("frame").contentWindow' in A.PAGE,
+          "viewer: copies only text, bounded, and only for its own frame")
+    check(".copy { display: none; }" in A.NOTE_CSS, "print: copy buttons hidden")
+    node = shutil.which("node") or shutil.which("nodejs")
+    if not node:
+        skip("JavaScript syntax check (needs node)")
+    else:
+        scripts = {"note page": re.findall(r"<script>(.*?)</script>", viewer, re.S),
+                   "viewer page": re.findall(r"<script>(.*?)</script>", A.PAGE, re.S)}
+        for name, parts in scripts.items():
+            with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+                f.write("\n;\n".join(parts))
+            out = subprocess.run([node, "--check", f.name], capture_output=True, text=True)
+            os.unlink(f.name)
+            check(parts and out.returncode == 0, f"{name}: inline scripts parse as JavaScript {out.stderr.strip()[:200]}")
+
     inline_fn = A.inliner(lib, {i["id"]: i for i in lib.scan()})
     check(inline_fn("vault/code.py") == "", "inline() of a text file is empty")
     check(inline_fn("vault/nope.png") == "", "inline() of an unknown id is empty")

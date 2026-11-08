@@ -324,6 +324,18 @@ pre.mermaid svg { max-width: none; }
 pre.mermaid[data-processed] { color: inherit; }
 pre.mermaid svg { cursor: zoom-in; height: auto; }
 .diagram-hint { color: var(--dim); font-size: .75em; text-align: right; margin: -0.6em 0 1em; }
+/* Copy button on code blocks: in a wrapper, so it stays in the corner while the
+   code scrolls sideways. Shown on hover or focus; always on touch screens. */
+.codewrap { position: relative; margin: 1em 0; }
+.codewrap > pre { margin: 0; }
+.copy { position: absolute; top: 6px; right: 6px; font: 600 .72em/1 system-ui, sans-serif; color: var(--dim);
+  background: #2a2a31; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; cursor: pointer;
+  opacity: 0; transition: opacity .15s; }
+.codewrap:hover .copy, .copy:focus-visible, .copy.done { opacity: 1; }
+.copy:hover { color: var(--text); }
+.copy.done { color: #7ec699; border-color: #7ec699; }
+@media (hover: none) { .copy { opacity: 1; } }
+@media print { .copy { display: none; } }
 /* Phones: tighter margins, smaller headings, and wide blocks (code, tables,
    diagrams) scroll sideways inside themselves instead of widening the page. */
 @media (max-width: 640px) {
@@ -398,6 +410,57 @@ addEventListener('load', () => {
   const y = new URLSearchParams(location.search).get('y');
   if (y && !location.hash) scrollTo(0, +y);
 });
+// Copy buttons on code blocks. The page is plain HTTP in a sandboxed frame, so
+// the async clipboard API is usually missing here: fall back to execCommand,
+// and if the frame may not copy either, ask the viewer page (which shares the
+// click's user activation) to copy it.
+function execCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+let copyPending = null;
+function copied(btn, ok) {
+  clearTimeout(btn._t);
+  if (ok) { btn.textContent = 'Copied'; btn.classList.add('done'); }
+  else {  // leave the code selected, so the keyboard shortcut works
+    const r = document.createRange(); r.selectNodeContents(btn._code);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    btn.textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Press \\u2318C' : 'Press Ctrl+C';
+  }
+  btn._t = setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1800);
+}
+addEventListener('message', (e) => {
+  if (e.source === parent && e.data && e.data.type === 'vault-copied' && copyPending) {
+    copied(copyPending, e.data.ok === true); copyPending = null;
+  }
+});
+function addCopyButtons() {
+  document.querySelectorAll('pre > code').forEach((code) => {
+    const pre = code.parentElement;
+    if (pre.parentElement.classList.contains('codewrap')) return;
+    const wrap = document.createElement('div'); wrap.className = 'codewrap';
+    pre.before(wrap); wrap.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'copy'; btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code'); btn._code = code;
+    btn.addEventListener('click', async () => {
+      const text = code.textContent.replace(/\\n$/, '');
+      if (navigator.clipboard && window.isSecureContext) {
+        try { await navigator.clipboard.writeText(text); return copied(btn, true); } catch (e) { /* fall through */ }
+      }
+      if (execCopy(text)) return copied(btn, true);
+      if (parent !== window) { copyPending = btn; parent.postMessage({type: 'vault-copy', text}, '*'); }
+      else copied(btn, false);
+    });
+    wrap.appendChild(btn);
+  });
+}
 """
 
 # Mermaid 11 with the ELK layout engine (much better subgraph and edge routing
@@ -479,6 +542,7 @@ document.querySelectorAll('pre code:not(.language-mermaid)').forEach((b) => {{ t
 <script src="{HLJS}/highlight.min.js"></script>
 <script>{NOTE_JS}
 document.querySelectorAll('pre code:not(.language-mermaid)').forEach((b) => {{ try {{ hljs.highlightElement(b); }} catch (e) {{}} }});
+addCopyButtons();
 </script></body></html>"""
 
 
@@ -1407,6 +1471,22 @@ window.addEventListener("message", (e) => {
     if (it) select(it, typeof d.anchor === "string" ? d.anchor : "");
   } else if (d.type === "vault-scroll" && current && Number.isFinite(d.y)) {
     scrolls[current.id] = d.y;
+  } else if (d.type === "vault-copy" && typeof d.text === "string" && d.text.length < 5e6) {
+    // A code block's copy button, when the sandboxed frame may not copy itself.
+    // Only text reaches the clipboard, and only during the click that sent it.
+    const reply = (ok) => e.source.postMessage({ type: "vault-copied", ok }, "*");
+    const viaTextarea = () => {
+      const ta = document.createElement("textarea");
+      ta.value = d.text; ta.setAttribute("readonly", "");
+      ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+      document.body.appendChild(ta); ta.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+      ta.remove();
+      return ok;
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(d.text).then(() => reply(true), () => reply(viaTextarea()));
+    else reply(viaTextarea());
   } else if (d.type === "vault-zoom" && typeof d.svg === "string" && d.svg.length < 20e6 && /^\s*<svg[\s>]/.test(d.svg)) {
     // Shown as an <img> data URL: an SVG in an image can't run scripts.
     openOverlay(d.svg, typeof d.title === "string" ? d.title : "");

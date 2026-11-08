@@ -17,6 +17,8 @@ HTML artifacts, SVGs and images have no PDF button.
 - Embedded images and Mermaid diagrams. Diagrams use a light theme and shrink
   to the page width but stay vector, so they zoom cleanly.
 - External links, which stay clickable.
+- Code as selectable text, so it copies from any PDF reader. There is no copy
+  button: PDF readers do not run page scripts.
 - A footer on every page: the title on the left, `page / total` on the right.
 - Selectable text that copies as written. Every font is embedded as TrueType,
   and code shows its characters as typed (no `->` arrow ligature).
