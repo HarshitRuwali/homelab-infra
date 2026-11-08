@@ -1,0 +1,4 @@
+---
+# Cap the journal: with journald's default it reached 596 MB on the 15 GB root.
+# Alloy ships every line to Loki, so 500M is plenty.
+journald_system_max_use: 500M

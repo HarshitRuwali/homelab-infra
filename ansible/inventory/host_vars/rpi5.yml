@@ -1,0 +1,4 @@
+---
+# Cap the journal: with journald's default it reached 2.2 GB on the 58 GB SD card.
+# Alloy ships every line to Loki, so 500M is plenty.
+journald_system_max_use: 500M

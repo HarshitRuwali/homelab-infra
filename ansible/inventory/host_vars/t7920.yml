@@ -13,3 +13,7 @@ dell_fan_metrics_enabled: true
 # fan back to the firmware once it cools. The firmware's own curve holds it
 # near 1000 RPM with the package at 65 to 71 C; see roles/dell_fan_boost.
 dell_fan_boost_enabled: true
+
+# Bound the journal on the hypervisor's 96 GB root. journald's default (10 %)
+# let it reach 636 MB; Alloy ships every line to Loki, so 500M is plenty.
+journald_system_max_use: 500M
