@@ -425,17 +425,20 @@ for g in $GUARD; do [ -e "$D/$g" ] && ! cmp -s "$D/$g" "$D.new/$g" && echo "$g";
     exit 1
   fi
 fi
-remote "$(assign D "$DEST_R" KEEP "$KEEP")"'
+placed="$(remote "$(assign D "$DEST_R" KEEP "$KEEP")"'
 set -e
 for k in $KEEP; do
   if [ -e "$D/$k" ]; then mkdir -p "$(dirname "$D.new/$k")"; rm -rf "${D:?}.new/$k"; cp -a "$D/$k" "$D.new/$k"; fi
 done
 if [ -d "$D" ]; then rm -rf "$D.prev"; mv "$D" "$D.prev"; echo "   previous copy: $D.prev"; fi
-mv "$D.new" "$D"'
+mv "$D.new" "$D"')"
+[ -z "$placed" ] || echo "$placed"
 echo "-- running the module's installer"
 if ! remote "$(assign D "$DEST_R" HOST "$HOST")"$'\ncd "$D"\n'"$SETARGS"$'\n'"$APPLY"; then
-  echo "FAILED: the installer failed on $HOST. The previous copy is $DEST_R.prev; the module's own"
-  echo "        rollback (if it has one) has run. Fix the cause and re-run."
+  echo "FAILED: the installer failed on $HOST; the module's own rollback (if it has one) has run."
+  if [ -n "$placed" ]; then echo "        The previous copy of the module is $DEST_R.prev."
+  else echo "        This was the first install: there is no previous copy."; fi
+  echo "        Fix the cause and re-run."
   exit 1
 fi
 if [ -n "$STATUS" ]; then

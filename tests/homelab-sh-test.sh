@@ -164,6 +164,10 @@ check "no .new directory left" test ! -e "$DEST.new"
 run STUB_INSTALL_RC=3 -- install s3-backup box --dest "$DEST" --apply
 check "failed installer exits 1" test "$RC" -eq 1
 check "failed installer names the previous copy" has "$OUT" "$DEST.prev"
+reset_host; printf '#!/bin/sh\nexit 0\n' > "$EXTRA/flock"; chmod +x "$EXTRA/flock"
+run STUB_INSTALL_RC=3 -- install s3-backup box --dest "$DEST" --apply
+check "failed first install says there is no previous copy" has "$OUT" "first install: there is no previous copy"
+check "and names no .prev" lacks "$OUT" "$DEST.prev"
 reset_host
 run -- install ingress box --dest "$DEST" --apply
 check "a by-hand prerequisite stops --apply" test "$RC" -eq 1
