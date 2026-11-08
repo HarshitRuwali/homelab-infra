@@ -16,7 +16,9 @@ usage: homelab.sh list
 
 Install or update a module of this repository on the host it runs on, over
 SSH, from this checkout. HOST is an ssh destination (alias, name or
-user@host); for a controller-side module it is an Ansible inventory host.
+user@host), or `local` for this machine without ssh (as with the one-line
+installer, get.sh); for a controller-side module it is an Ansible inventory
+host.
 
   list      every module: where it runs, as whom, its prerequisites
   check     check the host's prerequisites; changes nothing
@@ -281,7 +283,9 @@ CTL="$(mktemp -d)"
 SSH+=(-o ControlMaster=auto -o "ControlPath=$CTL/%C" -o ControlPersist=120)
 SUDO=""
 remote_cmd() { printf '%sbash -c "$(echo %s | base64 -d)"' "$SUDO" "$(printf '%s' "$1" | base64 | tr -d '\n')"; }
-remote_in() { "${SSH[@]}" "$HOST" "$(remote_cmd "$1")"; }
+# HOST "local" means this machine: the same scripts run through sh, no ssh.
+on_host() { if [ "$HOST" = local ]; then sh -c "$1"; else "${SSH[@]}" "$HOST" "$1"; fi; }
+remote_in() { on_host "$(remote_cmd "$1")"; }
 remote() { remote_in "$@" </dev/null; }
 assign() { printf '%s=%q\n' "$@"; }
 QARGS=""
@@ -295,7 +299,7 @@ cleanup() {
 trap cleanup EXIT
 
 # 1. Who are we there, and can we become root?
-who="$("${SSH[@]}" "$HOST" 'echo "uid=$(id -u)"; sudo -n true 2>/dev/null && echo sudo=yes || echo sudo=no; command -v apt-get >/dev/null 2>&1 && echo apt=yes || echo apt=no' </dev/null)" \
+who="$(on_host 'echo "uid=$(id -u)"; sudo -n true 2>/dev/null && echo sudo=yes || echo sudo=no; command -v apt-get >/dev/null 2>&1 && echo apt=yes || echo apt=no' </dev/null)" \
   || { echo "cannot reach $HOST over ssh" >&2; exit 1; }
 uid="$(sed -n 's/^uid=//p' <<<"$who")"; can_sudo="$(sed -n 's/^sudo=//p' <<<"$who")"; has_apt="$(sed -n 's/^apt=//p' <<<"$who")"
 if [ "$RUNAS" = root ] && [ "$uid" != 0 ]; then

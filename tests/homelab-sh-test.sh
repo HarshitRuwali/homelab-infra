@@ -219,6 +219,62 @@ run -- install monitoring web1 --role collector
 check "collector dry run uses --check --diff" logged "playbooks/onboard.yml --limit web1 --check --diff"
 check "controller modules use no ssh" not_logged "ssh "
 
+echo "HOST local: this machine, no ssh"
+reset_host; printf '#!/bin/sh\nexit 0\n' > "$EXTRA/flock"; chmod +x "$EXTRA/flock"
+run_local() { # like run, with the stubs first on PATH (they stand in for this machine's tools)
+  : > "$LOG"
+  OUT="$(env PATH="$STUBS:$EXTRA:$PATH" LOG="$LOG" TMP="$TMP" EXTRA="$EXTRA" bash "$FAKE/homelab.sh" \
+    install s3-backup local --dest "$DEST" --apply -- --secrets aws 2>&1)"
+  RC=$?
+}
+run_local
+check "local install exits 0" test "$RC" -eq 0
+check "local install uses no ssh" not_logged "ssh "
+check "local install placed the module" test -f "$DEST/install.sh"
+check "local install ran the installer with the args" logged "installer s3-backup/install.sh [--secrets aws] in $DEST"
+
+echo "get.sh: the one-line installer"
+mkdir -p "$TMP/net"
+cat > "$TMP/net/curl" <<'EOF'
+#!/usr/bin/env bash
+echo "curl ${*: -1}" >> "$LOG"
+[ -z "${STUB_CURL_FAIL:-}" ] || exit 22
+tar -C "$(dirname "$FAKE")" -czf - "$(basename "$FAKE")"
+EOF
+chmod +x "$TMP/net/curl"
+cp "$REPO/get.sh" "$TMP/get.sh"
+get() { # get [VAR=value...] -- args... : pipes get.sh into bash, as the one-liner does
+  local envs=()
+  while [ "$1" != -- ]; do envs+=("$1"); shift; done
+  shift
+  : > "$LOG"
+  OUT="$(env "${envs[@]+"${envs[@]}"}" PATH="$TMP/net:$TMP/local:$PATH" LOG="$LOG" TMP="$TMP" FAKE="$FAKE" \
+    bash -s -- "$@" < "$TMP/get.sh" 2>&1)"
+  RC=$?
+}
+get -- list
+check "one-liner list exits 0" test "$RC" -eq 0
+check "one-liner runs homelab.sh list" has "$OUT" "proxmox"
+check "one-liner fetches master by default" logged "curl https://codeload.github.com/HarshitRuwali/homelab-infra/tar.gz/master"
+get HOMELAB_REF=v1.2.3 -- list
+check "HOMELAB_REF picks the ref" logged "tar.gz/v1.2.3"
+get --
+check "no arguments: homelab.sh help" has "$OUT" "usage: homelab.sh list"
+get HOMELAB_DIR="$TMP/keep" -- list
+check "HOMELAB_DIR keeps the checkout" test -x "$TMP/keep/homelab.sh"
+check "HOMELAB_DIR leaves no .new" test ! -e "$TMP/keep.new"
+get HOMELAB_REF='x;rm' -- list
+check "a ref with shell characters exits 2" test "$RC" -eq 2
+check "and downloads nothing" not_logged "curl "
+get STUB_CURL_FAIL=1 -- list
+check "a failed download exits 1" test "$RC" -eq 1
+check "a failed download says so" has "$OUT" "could not download"
+get -- install nosuch box
+check "homelab.sh's exit status comes through" test "$RC" -eq 2
+mkdir -p "$TMP/gettmp"
+get TMPDIR="$TMP/gettmp" -- list
+check "the temporary checkout is removed" test -z "$(ls -A "$TMP/gettmp")"
+
 echo "unreachable host"
 run -- check media unreachable
 check "unreachable host exits 1" test "$RC" -eq 1

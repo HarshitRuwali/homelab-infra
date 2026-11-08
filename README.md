@@ -80,6 +80,15 @@ has the details.
 ./homelab.sh install memory root@db-host --role storage --dest /root/memory
 ```
 
+Without a checkout, the one-line installer fetches the repository and runs
+`homelab.sh` (HOST `local` is the machine it runs on; `HOMELAB_REF` pins a tag
+or commit):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HarshitRuwali/homelab-infra/master/get.sh | sudo bash -s -- install media local
+curl -fsSL https://raw.githubusercontent.com/HarshitRuwali/homelab-infra/master/get.sh | sudo bash -s -- install media local --apply
+```
+
 <details>
 <summary><b>🤖 Configure the fleet</b></summary>
 
@@ -207,6 +216,7 @@ root certificate your devices need to trust once.
 
 ```text
 homelab.sh      Installs or updates a module on its host over SSH, dry run first
+get.sh          One-line installer: fetches the repository and runs homelab.sh
 ansible/        Playbooks, roles, inventory. At the root, not under monitoring/,
                 because patching and onboarding apply to every machine
 monitoring/     Central stack, dashboards, alert rules, install scripts
