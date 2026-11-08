@@ -18,9 +18,10 @@ no() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 SURFACES=(README.md docs/*.md)
 
 # Flags of other tools that the docs legitimately show (docker run, docker
-# build, tailscale whois, systemctl, and argparse's built-in --help).
+# build, tailscale whois, systemctl, playwright install, and argparse's
+# built-in --help).
 OTHER_FLAGS=(--network --read-only --tmpfs --user --cap-drop --security-opt
-             --memory --pids-limit --pull --json --now --help)
+             --memory --pids-limit --pull --json --now --only-shell --with-deps --help)
 is_other_flag() { printf '%s\n' "${OTHER_FLAGS[@]}" | grep -qxF -- "$1"; }
 
 in_install_parser()   { grep -qE -e "(^|[|[:space:]])$1([|)])" install.sh; }

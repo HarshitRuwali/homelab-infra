@@ -33,7 +33,7 @@ while printing.
 Needs python3-markdown (Debian/Ubuntu package) for notes; the tailscale CLI
 for --tailnet-user; docker for PDFs.
 Usage: artifacts.py [--bind ADDR] [--port 7777] [--allow-host NAME] [--tailnet-user LOGIN]
-                    [--pdf-image IMAGE] [--build-pdf-image [--pdf-base IMAGE]] [ROOT ...]
+                    [--pdf-image IMAGE] [--build-pdf-image] [ROOT ...]
 """
 import argparse
 import base64
@@ -631,53 +631,63 @@ def search(lib, q, limit=40):
 
 # ------------------------------------------------------------------ PDF export
 
-# Headless Chromium (Playwright's image) plus the page's libraries and fonts,
-# so printing needs no network. Built with `artifacts --build-pdf-image`.
-# BASE is a Playwright image (Python or Node flavour); the pip package is pinned
-# to the version in its tag, because Playwright launches the browser build that
-# matches its own version.
-PDF_BASE = "mcr.microsoft.com/playwright/python:v1.63.0-noble"
+# Chromium's headless shell, driven by Playwright for Python, plus the page's
+# libraries and fonts, so printing needs no network. Built with
+# `artifacts --build-pdf-image`. Kept small on purpose: Debian 12 slim (whose
+# libgbm1 does not pull in LLVM, unlike Ubuntu 24.04's), only the headless shell
+# (no full Chromium, Firefox or WebKit), only the shared libraries it links, and
+# only the library files the print page loads (no source maps or other builds).
+# Playwright launches the browser build that matches its own version, so the pip
+# package and the browser are installed together from PDF_PLAYWRIGHT.
+PDF_PLAYWRIGHT = "1.63.0"
 # Inter as static TrueType, from the upstream release. Debian's fonts-inter
 # ships CFF outlines (.otf), which Chromium can only embed in a PDF as Type 3
 # glyph drawings: PDF readers then select and copy that text badly or not at all.
 PDF_INTER_URL = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
 PDF_INTER_SHA256 = "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e"
 PDF_DOCKERFILE = f"""
-ARG BASE={PDF_BASE}
 FROM node:22-slim AS lib
 RUN npm install --prefix /build --no-audit --no-fund \\
-      mermaid@11 @mermaid-js/layout-elk@0 @highlightjs/cdn-assets@11.9.0
+      mermaid@11 @mermaid-js/layout-elk@0 @highlightjs/cdn-assets@11.9.0 \\
+    && cd /build/node_modules && mkdir /lib-out \\
+    && cp --parents mermaid/dist/mermaid.esm.min.mjs @mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs \\
+         @highlightjs/cdn-assets/highlight.min.js @highlightjs/cdn-assets/styles/github.min.css /lib-out \\
+    && cp -r --parents mermaid/dist/chunks/mermaid.esm.min \\
+         @mermaid-js/layout-elk/dist/chunks/mermaid-layout-elk.esm.min /lib-out \\
+    && find /lib-out -name '*.map' -delete
 FROM node:22-slim AS fonts
 ADD --checksum=sha256:{PDF_INTER_SHA256} {PDF_INTER_URL} /inter.zip
 RUN apt-get update && apt-get install -y --no-install-recommends unzip \\
     && unzip -j /inter.zip 'extras/ttf/Inter-*.ttf' -d /inter
-FROM ${{BASE}}
-ARG PLAYWRIGHT
-# Before the apt install below, whose font package refreshes the font cache.
-COPY --from=fonts /inter /usr/share/fonts/truetype/inter
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-jetbrains-mono python3-pip \\
+FROM debian:bookworm-slim AS browser
+ARG PLAYWRIGHT={PDF_PLAYWRIGHT}
+RUN apt-get update && apt-get install -y --no-install-recommends python3-pip ca-certificates \\
+    && pip3 install --no-cache-dir --break-system-packages --target /opt/playwright playwright==${{PLAYWRIGHT}} \\
+    && PYTHONPATH=/opt/playwright PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \\
+       python3 -m playwright install --only-shell chromium \\
+    && rm -rf /ms-playwright/ffmpeg-*
+FROM debian:bookworm-slim
+ENV PYTHONPATH=/opt/playwright PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \\
+      libnss3 libnspr4 libgbm1 libdrm2 libasound2 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \\
+      libdbus-1-3 libxkbcommon0 libx11-6 libxcb1 libxext6 libxcomposite1 libxdamage1 libxfixes3 \\
+      libxi6 libxrandr2 fontconfig-config fonts-dejavu-core fonts-jetbrains-mono fonts-noto-color-emoji \\
     && rm -rf /var/lib/apt/lists/* \\
-    && python3 -m pip install --no-cache-dir --break-system-packages playwright==${{PLAYWRIGHT}}
-COPY --from=lib /build/node_modules /opt/vault-pdf/lib
+    && useradd --create-home pwuser
+COPY --from=fonts /inter /usr/share/fonts/truetype/inter
+COPY --from=browser /opt/playwright /opt/playwright
+COPY --from=browser /ms-playwright /ms-playwright
+COPY --from=lib /lib-out /opt/vault-pdf/lib
 """
 
 
-def playwright_version(image):
-    """The X.Y.Z of a Playwright image tag such as `...:v1.56.0-noble`, or None."""
-    tag = image.rsplit("/", 1)[-1].partition("@")[0].partition(":")[2]
-    m = re.match(r"v(\d+\.\d+\.\d+)(?:-|$)", tag)
-    return m.group(1) if m else None
+PDF_BASE_REMOVED = ("--pdf-base was removed: the PDF image now builds on debian:bookworm-slim with only "
+                    "Chromium's headless shell, so there is no Playwright base image to pick")
 
 
-def pdf_build_command(image, base):
-    """The `docker build` argv for the PDF image, or None if BASE's tag has no Playwright version."""
-    version = playwright_version(base)
-    if version is None:
-        return None
-    # --pull only for the default base. A custom base is meant to be a local
-    # image that is reused; re-pulling it could download GBs onto a full disk.
-    return ["docker", "build", *(["--pull"] if base == PDF_BASE else []), "-t", image,
-            "--build-arg", f"BASE={base}", "--build-arg", f"PLAYWRIGHT={version}", "-"]
+def pdf_build_command(image):
+    """The `docker build` argv for the PDF image (Dockerfile on stdin)."""
+    return ["docker", "build", "--pull", "-t", image, "-"]
 
 
 # Runs inside the container: the page arrives on stdin, the PDF leaves on
@@ -1349,18 +1359,18 @@ def main():
                     help=f"docker image that renders PDFs (default {PDF_IMAGE})")
     ap.add_argument("--build-pdf-image", action="store_true",
                     help="build --pdf-image with docker, then exit (needs network once)")
-    ap.add_argument("--pdf-base", default=os.environ.get("ARTIFACTS_PDF_BASE", PDF_BASE), metavar="IMAGE",
-                    help="Playwright image (Python or Node flavour, tag vX.Y.Z[-...]) that --build-pdf-image "
-                         f"builds the PDF image on (default {PDF_BASE})")
+    # Removed: the PDF image no longer builds on a Playwright image. Kept hidden so
+    # an old command line says what changed instead of "unrecognized arguments".
+    ap.add_argument("--pdf-base", metavar="IMAGE", help=argparse.SUPPRESS)
     ap.add_argument("roots", nargs="*", type=Path, help="vault folders to serve (default: ~/obsidian)")
     args = ap.parse_args()
+    if args.pdf_base is not None:
+        print(f"artifacts: {PDF_BASE_REMOVED}; run `artifacts --build-pdf-image` without it", file=sys.stderr)
+        sys.exit(2)
     if args.build_pdf_image:
-        cmd = pdf_build_command(args.pdf_image, args.pdf_base)
-        if cmd is None:
-            print(f"artifacts: --pdf-base {args.pdf_base}: the tag must carry the Playwright version (vX.Y.Z), "
-                  "because the playwright pip package has to match the browsers in the image", file=sys.stderr)
-            sys.exit(2)
-        sys.exit(subprocess.run(cmd, input=PDF_DOCKERFILE.encode()).returncode)
+        if os.environ.get("ARTIFACTS_PDF_BASE"):
+            print(f"artifacts: ignoring ARTIFACTS_PDF_BASE: {PDF_BASE_REMOVED}", file=sys.stderr)
+        sys.exit(subprocess.run(pdf_build_command(args.pdf_image), input=PDF_DOCKERFILE.encode()).returncode)
     names = {args.bind, *args.allow_host}
     if ipaddress.ip_address(args.bind).is_loopback:
         names |= {"127.0.0.1", "localhost"}
