@@ -86,12 +86,18 @@
     # Without staging it for the check below, every LAN host fails there with
     # a TLS verification error that the uri module reports as "HTTP -1",
     # indistinguishable from a dead endpoint. Public-URL hosts skip this.
+    #
+    # check_mode: false because the check below runs under --check too, and
+    # a copy that only pretends leaves no CA in place, so every dry run of a
+    # LAN host failed with "HTTP -1". The file is a public certificate in
+    # /tmp and is removed again two tasks later.
     - name: Stage the private ingest CA for the reachability check
       ansible.builtin.copy:
         src: "{{ collector_ingest_ca_file | trim }}"
         dest: "{{ onboard_ingest_ca_tmp }}"
         mode: "0644"
       changed_when: false
+      check_mode: false
       when: collector_ingest_ca_file | trim | length > 0
 
     # THE check for a new host. Everything else can be fixed later; a host
@@ -130,6 +136,7 @@
         path: "{{ onboard_ingest_ca_tmp }}"
         state: absent
       changed_when: false
+      check_mode: false
       when: collector_ingest_ca_file | trim | length > 0
 
     - name: Explain an unreachable ingest endpoint
