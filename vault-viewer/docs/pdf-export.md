@@ -116,6 +116,14 @@ docker image rm artifacts-pdf:local
 `--build-pdf-image` runs `docker build --pull`, needs network once, and exits
 without starting the server.
 
+**The image and the program go together.** The render script inside the
+program and the image depend on each other's layout, so the image is labelled
+`vault-viewer.pdf-rev` with a hash of both (`python3 artifacts.py --pdf-rev`
+prints it). When a render fails against an image with another revision, the
+PDF button says so instead of a bare failure. Rebuild the image after updating
+the program; [`deploy.sh`](operations.md#deploy-to-other-hosts) does both for
+other hosts.
+
 **Updating Chromium.** Set `PDF_CHROME_VERSION` to a newer Chrome for
 Testing version and `PDF_CHROME_SHA256` to the SHA-256 of that version's
 `chrome-headless-shell-linux64.zip`, then rebuild. The DevTools calls the

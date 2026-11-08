@@ -33,10 +33,11 @@ while printing.
 Needs python3-markdown (Debian/Ubuntu package) for notes; the tailscale CLI
 for --tailnet-user; docker for PDFs.
 Usage: artifacts.py [--bind ADDR] [--port 7777] [--allow-host NAME] [--tailnet-user LOGIN]
-                    [--pdf-image IMAGE] [--build-pdf-image] [ROOT ...]
+                    [--pdf-image IMAGE] [--build-pdf-image] [--pdf-rev] [ROOT ...]
 """
 import argparse
 import base64
+import hashlib
 import html
 import ipaddress
 import json
@@ -858,6 +859,27 @@ finally:
         os.kill(pid, signal.SIGKILL)
 """
 
+# The render script and the image depend on each other's layout, so the image
+# carries the revision of the pair it was built from, and a program only trusts
+# an image with its own revision. `artifacts --pdf-rev` prints it.
+PDF_REV_LABEL = "vault-viewer.pdf-rev"
+PDF_REV = hashlib.sha256((PDF_DOCKERFILE + PDF_RENDER).encode()).hexdigest()[:12]
+PDF_DOCKERFILE += f"LABEL {PDF_REV_LABEL}={PDF_REV}\n"
+
+
+def pdf_image_rev(image):
+    """The PDF_REV label of a local image: "" if it has none, None if docker can't say."""
+    try:
+        out = subprocess.run(["docker", "image", "inspect", "-f", f'{{{{ index .Config.Labels "{PDF_REV_LABEL}" }}}}',
+                              image], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    rev = out.stdout.strip()
+    return "" if rev == "<no value>" else rev
+
+
 PDF_SLOTS = threading.BoundedSemaphore(2)
 
 
@@ -886,6 +908,10 @@ def render_pdf(page_html, image):
     if out.returncode != 0 or not out.stdout.startswith(b"%PDF"):
         if "No such image" in err:
             return None, f"the PDF image {image} is missing: run `artifacts --build-pdf-image`"
+        rev = pdf_image_rev(image)
+        if rev is not None and rev != PDF_REV:
+            return None, (f"the PDF image {image} does not match this program (image revision {rev or 'none'}, "
+                          f"program {PDF_REV}): run `artifacts --build-pdf-image`")
         return None, "rendering failed (details in the service log)"
     return out.stdout, None
 
@@ -1485,11 +1511,16 @@ def main():
                     help=f"docker image that renders PDFs (default {PDF_IMAGE})")
     ap.add_argument("--build-pdf-image", action="store_true",
                     help="build --pdf-image with docker, then exit (needs network once)")
+    ap.add_argument("--pdf-rev", action="store_true",
+                    help=f"print the revision the PDF image must carry (its {PDF_REV_LABEL} label), then exit")
     # Removed: the PDF image no longer builds on a Playwright image. Kept hidden so
     # an old command line says what changed instead of "unrecognized arguments".
     ap.add_argument("--pdf-base", metavar="IMAGE", help=argparse.SUPPRESS)
     ap.add_argument("roots", nargs="*", type=Path, help="vault folders to serve (default: ~/obsidian)")
     args = ap.parse_args()
+    if args.pdf_rev:
+        print(PDF_REV)
+        sys.exit(0)
     if args.pdf_base is not None:
         print(f"artifacts: {PDF_BASE_REMOVED}; run `artifacts --build-pdf-image` without it", file=sys.stderr)
         sys.exit(2)

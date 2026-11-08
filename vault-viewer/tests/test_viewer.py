@@ -298,6 +298,13 @@ def t_pdf_build():
           and f"ADD --checksum=sha256:{A.PDF_INTER_SHA256} {A.PDF_INTER_URL} " in A.PDF_DOCKERFILE
           and "fonts-inter" not in A.PDF_DOCKERFILE,
           "Dockerfile takes Inter as TrueType from the checksummed release, not Debian's CFF fonts-inter")
+    check(re.fullmatch(r"[0-9a-f]{12}", A.PDF_REV) is not None
+          and A.PDF_DOCKERFILE.endswith(f"\nLABEL {A.PDF_REV_LABEL}={A.PDF_REV}\n"),
+          "Dockerfile labels the image with PDF_REV")
+    base = A.PDF_DOCKERFILE[:A.PDF_DOCKERFILE.rindex("LABEL ")]
+    check(A.PDF_REV == A.hashlib.sha256((base + A.PDF_RENDER).encode()).hexdigest()[:12]
+          and A.PDF_REV != A.hashlib.sha256((base + A.PDF_RENDER + " ").encode()).hexdigest()[:12],
+          "PDF_REV is a hash of the Dockerfile and the render script, so either change gives a new revision")
     code_rule = re.search(r"^code \{[^}]*\}", A.PDF_CSS, re.MULTILINE)
     check(code_rule is not None and "font-variant-ligatures: none" in code_rule.group(0)
           and "padding: .1em 0;" in code_rule.group(0),
@@ -333,6 +340,31 @@ def t_pdf_build():
             del os.environ["ARTIFACTS_PDF_BASE"]
         check(rc == 0 and len(calls) == 1 and "ignoring ARTIFACTS_PDF_BASE" in err.getvalue(),
               "main: a leftover ARTIFACTS_PDF_BASE is ignored with a warning, the build still runs")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = run_main("--pdf-rev")
+        check(rc == 0 and out.getvalue() == A.PDF_REV + "\n" and not calls,
+              "main: --pdf-rev prints PDF_REV and runs no docker")
+
+        # A failed render against an image of another revision says so.
+        def fake(label, render_rc=1):
+            def run(cmd, **kw):
+                if cmd[:3] == ["docker", "image", "inspect"]:
+                    return subprocess.CompletedProcess(cmd, 0, label + "\n", "")
+                return subprocess.CompletedProcess(cmd, render_rc, b"", b"boom")
+            return run
+        with contextlib.redirect_stderr(io.StringIO()):
+            A.subprocess.run = fake("0123456789ab")
+            _, why = A.render_pdf("<p>x</p>", "img:t")
+            check(why is not None and "does not match this program" in why and "0123456789ab" in why
+                  and "--build-pdf-image" in why, "render_pdf: an image of another revision is named as the cause")
+            A.subprocess.run = fake("<no value>")
+            _, why = A.render_pdf("<p>x</p>", "img:t")
+            check(why is not None and "image revision none" in why, "render_pdf: an unlabelled image is reported as revision none")
+            A.subprocess.run = fake(A.PDF_REV)
+            _, why = A.render_pdf("<p>x</p>", "img:t")
+            check(why == "rendering failed (details in the service log)",
+                  "render_pdf: a matching image that fails gives the plain failure")
     finally:
         A.subprocess.run, sys.argv = real_run, real_argv
 
