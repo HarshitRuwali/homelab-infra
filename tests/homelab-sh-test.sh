@@ -206,6 +206,14 @@ check "dry run hand-over" logged "deploy.sh -i $TMP/key --dry-run box -- --bind 
 run -- install vault-viewer box --apply
 check "apply hand-over has no --dry-run and no --" logged "deploy.sh box"
 check "apply hand-over passes no stray arguments" not_logged "deploy.sh box --"
+fake_module_installer vault-viewer/install.sh
+reset_host
+: > "$LOG"
+OUT="$(env PATH="$STUBS:$EXTRA:$PATH" LOG="$LOG" TMP="$TMP" EXTRA="$EXTRA" bash "$FAKE/homelab.sh" \
+  install vault-viewer local --dest "$DEST" --apply -- --bind 10.1.2.3 /v 2>&1)"; RC=$?
+check "HOST local: no hand-over to deploy.sh" not_logged "deploy.sh"
+check "HOST local: the plain installer ran with the args" logged "installer vault-viewer/install.sh [--bind 10.1.2.3 /v] in $DEST"
+check "HOST local: vault-viewer install exits 0" test "$RC" -eq 0
 
 echo "controller-side modules"
 run -- install ansible web1

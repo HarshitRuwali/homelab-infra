@@ -42,8 +42,8 @@ host.
                  that differ on the host; review the dry run first
   MODULE_ARGS    passed to the module's installer, e.g. -- --secrets aws
 
-vault-viewer is handed to vault-viewer/deploy.sh when the checkout has it.
-Exit status: 0 ok, 1 a check or step failed, 2 usage error.
+vault-viewer is handed to vault-viewer/deploy.sh when the checkout has it
+(except for HOST local). Exit status: 0 ok, 1 a check or step failed, 2 usage error.
 USAGE
 }
 die_usage() { echo "homelab.sh: $1" >&2; usage >&2; exit 2; }
@@ -251,7 +251,8 @@ fi
 for p in $SHIP; do [ -e "$ROOT/$p" ] || { echo "homelab.sh: $ROOT/$p is missing from this checkout" >&2; exit 1; }; done
 
 # --- vault-viewer: its own deploy helper, when the checkout has one ---------------
-if [ "$MODULE" = vault-viewer ] && [ "$CMD" = install ] && [ -x "$ROOT/vault-viewer/deploy.sh" ]; then
+# (Not for HOST local: deploy.sh works over ssh; the plain installer runs here.)
+if [ "$MODULE" = vault-viewer ] && [ "$CMD" = install ] && [ "$HOST" != local ] && [ -x "$ROOT/vault-viewer/deploy.sh" ]; then
   args=()
   for ((i = 1; i < ${#SSH[@]}; i++)); do [ "${SSH[i]}" = -i ] && args+=(-i "${SSH[i+1]}"); done
   [ "$APPLY_MODE" -eq 1 ] || args+=(--dry-run)
