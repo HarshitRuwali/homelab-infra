@@ -37,6 +37,16 @@ wazuh_log_sources:
 # on the same major version, and an agent that silently jumps major behind the
 # manager's back stops reporting rather than failing loudly.
 wazuh_apt_url: "https://packages.wazuh.com/4.x/apt/"
+
+# Exact package version for a NEW install, for example "4.14.9-1". Empty
+# installs the newest agent in the repository. Set it to the manager's version
+# while the manager lags the repository: an agent newer than its manager is
+# not supported, and the hold the role sets only protects hosts that have an
+# agent. On a host whose agent is already at a different version the install
+# task fails rather than moving it, so pass it per run (-e) for new hosts, or
+# set it fleet-wide only to the version every agent already runs.
+wazuh_agent_version: ""
+
 wazuh_apt_key_url: "https://packages.wazuh.com/key/GPG-KEY-WAZUH"
 wazuh_apt_keyring: /etc/apt/keyrings/wazuh.asc
 

@@ -47,7 +47,7 @@
 
 - name: Install the agent
   ansible.builtin.apt:
-    name: wazuh-agent
+    name: "wazuh-agent{{ ('=' ~ wazuh_agent_version) if wazuh_agent_version | length > 0 else '' }}"
     state: present
     update_cache: true
     cache_valid_time: 3600
