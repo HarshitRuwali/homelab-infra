@@ -33,7 +33,7 @@ while printing.
 Needs python3-markdown (Debian/Ubuntu package) for notes; the tailscale CLI
 for --tailnet-user; docker for PDFs.
 Usage: artifacts.py [--bind ADDR] [--port 7777] [--allow-host NAME] [--tailnet-user LOGIN]
-                    [--pdf-image IMAGE] [--build-pdf-image [--pdf-base IMAGE]] [ROOT ...]
+                    [--pdf-image IMAGE] [--build-pdf-image] [ROOT ...]
 """
 import argparse
 import base64
@@ -631,95 +631,231 @@ def search(lib, q, limit=40):
 
 # ------------------------------------------------------------------ PDF export
 
-# Headless Chromium (Playwright's image) plus the page's libraries and fonts,
-# so printing needs no network. Built with `artifacts --build-pdf-image`.
-# BASE is a Playwright image (Python or Node flavour); the pip package is pinned
-# to the version in its tag, because Playwright launches the browser build that
-# matches its own version.
-PDF_BASE = "mcr.microsoft.com/playwright/python:v1.63.0-noble"
+# Chromium's headless shell (driven over the DevTools protocol by PDF_RENDER,
+# standard library only) plus the page's libraries and fonts, so printing needs
+# no network. Built with `artifacts --build-pdf-image`. Kept small on purpose:
+# Debian 12 slim (whose libgbm1 does not pull in LLVM, unlike Ubuntu 24.04's),
+# only the headless shell (no full Chromium, Firefox or WebKit, no Playwright),
+# only the shared libraries it links, and only the library files the print page
+# loads (no source maps or other builds).
+# The headless shell comes from Chrome for Testing, pinned by version and
+# checksum: change PDF_CHROME_VERSION and PDF_CHROME_SHA256 together.
+PDF_CHROME_VERSION = "153.0.8010.12"
+PDF_CHROME_URL = ("https://storage.googleapis.com/chrome-for-testing-public/"
+                  f"{PDF_CHROME_VERSION}/linux64/chrome-headless-shell-linux64.zip")
+PDF_CHROME_SHA256 = "a9da028861a0cf789ff25c2fed45f5f1aaf969ed9247835b6a7821a4f7af9d1d"
 # Inter as static TrueType, from the upstream release. Debian's fonts-inter
 # ships CFF outlines (.otf), which Chromium can only embed in a PDF as Type 3
 # glyph drawings: PDF readers then select and copy that text badly or not at all.
 PDF_INTER_URL = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
 PDF_INTER_SHA256 = "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e"
 PDF_DOCKERFILE = f"""
-ARG BASE={PDF_BASE}
 FROM node:22-slim AS lib
 RUN npm install --prefix /build --no-audit --no-fund \\
-      mermaid@11 @mermaid-js/layout-elk@0 @highlightjs/cdn-assets@11.9.0
-FROM node:22-slim AS fonts
+      mermaid@11 @mermaid-js/layout-elk@0 @highlightjs/cdn-assets@11.9.0 \\
+    && cd /build/node_modules && mkdir /lib-out \\
+    && cp --parents mermaid/dist/mermaid.esm.min.mjs @mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs \\
+         @highlightjs/cdn-assets/highlight.min.js @highlightjs/cdn-assets/styles/github.min.css /lib-out \\
+    && cp -r --parents mermaid/dist/chunks/mermaid.esm.min \\
+         @mermaid-js/layout-elk/dist/chunks/mermaid-layout-elk.esm.min /lib-out \\
+    && find /lib-out -name '*.map' -delete
+FROM debian:bookworm-slim AS fetch
 ADD --checksum=sha256:{PDF_INTER_SHA256} {PDF_INTER_URL} /inter.zip
+ADD --checksum=sha256:{PDF_CHROME_SHA256} {PDF_CHROME_URL} /chrome.zip
 RUN apt-get update && apt-get install -y --no-install-recommends unzip \\
-    && unzip -j /inter.zip 'extras/ttf/Inter-*.ttf' -d /inter
-FROM ${{BASE}}
-ARG PLAYWRIGHT
-# Before the apt install below, whose font package refreshes the font cache.
-COPY --from=fonts /inter /usr/share/fonts/truetype/inter
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-jetbrains-mono python3-pip \\
+    && unzip -j /inter.zip 'extras/ttf/Inter-*.ttf' -d /inter \\
+    && unzip -q /chrome.zip -d /opt && mv /opt/chrome-headless-shell-linux64 /opt/chrome-headless-shell
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends python3 \\
+      libnss3 libnspr4 libgbm1 libdrm2 libasound2 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \\
+      libdbus-1-3 libxkbcommon0 libx11-6 libxcb1 libxext6 libxcomposite1 libxdamage1 libxfixes3 \\
+      libxi6 libxrandr2 fontconfig-config fonts-dejavu-core fonts-jetbrains-mono fonts-noto-color-emoji \\
     && rm -rf /var/lib/apt/lists/* \\
-    && python3 -m pip install --no-cache-dir --break-system-packages playwright==${{PLAYWRIGHT}}
-COPY --from=lib /build/node_modules /opt/vault-pdf/lib
+    && useradd --create-home pwuser
+COPY --from=fetch /inter /usr/share/fonts/truetype/inter
+COPY --from=fetch /opt/chrome-headless-shell /opt/chrome-headless-shell
+COPY --from=lib /lib-out /opt/vault-pdf/lib
 """
 
 
-def playwright_version(image):
-    """The X.Y.Z of a Playwright image tag such as `...:v1.56.0-noble`, or None."""
-    tag = image.rsplit("/", 1)[-1].partition("@")[0].partition(":")[2]
-    m = re.match(r"v(\d+\.\d+\.\d+)(?:-|$)", tag)
-    return m.group(1) if m else None
+PDF_BASE_REMOVED = ("--pdf-base was removed: the PDF image now builds on debian:bookworm-slim with only "
+                    "Chromium's headless shell, so there is no Playwright base image to pick")
 
 
-def pdf_build_command(image, base):
-    """The `docker build` argv for the PDF image, or None if BASE's tag has no Playwright version."""
-    version = playwright_version(base)
-    if version is None:
-        return None
-    # --pull only for the default base. A custom base is meant to be a local
-    # image that is reused; re-pulling it could download GBs onto a full disk.
-    return ["docker", "build", *(["--pull"] if base == PDF_BASE else []), "-t", image,
-            "--build-arg", f"BASE={base}", "--build-arg", f"PLAYWRIGHT={version}", "-"]
+def pdf_build_command(image):
+    """The `docker build` argv for the PDF image (Dockerfile on stdin)."""
+    return ["docker", "build", "--pull", "-t", image, "-"]
 
 
 # Runs inside the container: the page arrives on stdin, the PDF leaves on
-# stdout. The page is served at a made-up origin, with only PDF_LIB files
-# beside it; every other request is refused (and the container has no network).
+# stdout. It drives Chromium's headless shell over the DevTools protocol on a
+# pipe (fds 3 and 4, NUL-separated JSON), standard library only. The page is
+# served at a made-up origin, with only PDF_LIB files beside it; every other
+# request is refused (and the container has no network). Launch switches and
+# print parameters follow what Playwright used for this before, so the output
+# is unchanged.
 PDF_RENDER = r"""
-import sys, urllib.parse
+import base64, fcntl, json, os, select, signal, sys, tempfile, time, urllib.parse
 from pathlib import Path
-from playwright.sync_api import sync_playwright
 
+CHROME = "/opt/chrome-headless-shell/chrome-headless-shell"
 page_html = sys.stdin.buffer.read()
 lib = Path("/opt/vault-pdf/lib").resolve()
 types = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css"}
+flags = [
+    "--headless", "--no-sandbox", "--remote-debugging-pipe", "--no-startup-window",
+    "--user-data-dir=" + tempfile.mkdtemp(prefix="chrome-"),
+    "--disable-dev-shm-usage", "--enable-unsafe-swiftshader", "--force-color-profile=srgb",
+    "--hide-scrollbars", "--mute-audio", "--export-tagged-pdf",
+    "--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4",
+    "--disable-background-networking", "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows", "--disable-renderer-backgrounding",
+    "--disable-breakpad", "--disable-component-update", "--disable-default-apps", "--disable-extensions",
+    "--disable-field-trial-config", "--disable-hang-monitor", "--disable-sync", "--metrics-recording-only",
+    "--no-default-browser-check", "--no-first-run", "--no-service-autorun", "--password-store=basic",
+]
 
-def serve(route):
-    url = urllib.parse.urlsplit(route.request.url)
+def high(fd):  # move off 0-9, so the dup2 onto 3 and 4 below never maps an fd onto itself
+    moved = fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 10)
+    os.close(fd)
+    return moved
+
+cmd_r, cmd_w = map(high, os.pipe())
+out_r, out_w = map(high, os.pipe())
+null = high(os.open(os.devnull, os.O_RDWR))
+pid = os.posix_spawn(CHROME, [CHROME, *flags], os.environ, file_actions=[
+    (os.POSIX_SPAWN_DUP2, null, 0), (os.POSIX_SPAWN_DUP2, null, 1), (os.POSIX_SPAWN_DUP2, null, 2),
+    (os.POSIX_SPAWN_DUP2, cmd_r, 3), (os.POSIX_SPAWN_DUP2, out_w, 4)])
+for fd in (cmd_r, out_w, null):
+    os.close(fd)
+
+buf, scanned, last_id, seen = bytearray(), 0, 0, set()
+
+def read_msg(deadline):
+    global scanned
+    while True:
+        end = buf.find(b"\0", scanned)
+        if end >= 0:
+            msg = json.loads(buf[:end])
+            del buf[:end + 1]
+            scanned = 0
+            return msg
+        scanned = len(buf)
+        left = deadline - time.monotonic()
+        if left <= 0 or not select.select([out_r], [], [], left)[0]:
+            raise TimeoutError
+        chunk = os.read(out_r, 1 << 20)
+        if not chunk:
+            raise RuntimeError("Chromium exited")
+        buf.extend(chunk)
+
+def send(method, params=None, session=None):
+    global last_id
+    last_id += 1
+    msg = {"id": last_id, "method": method, "params": params or {}}
+    if session:
+        msg["sessionId"] = session
+    view = memoryview(json.dumps(msg).encode() + b"\0")
+    while view:
+        view = view[os.write(cmd_w, view):]
+    return last_id
+
+def serve(p, session):
+    url = urllib.parse.urlsplit(p["request"]["url"])
+    body = None
     if url.netloc == "print.invalid":
         if url.path == "/":
-            return route.fulfill(body=page_html, content_type="text/html; charset=utf-8")
-        if url.path.startswith("/lib/"):
-            p = (lib / urllib.parse.unquote(url.path[5:])).resolve()
-            if lib in p.parents and p.is_file():
-                return route.fulfill(body=p.read_bytes(), content_type=types.get(p.suffix, "application/octet-stream"))
-    route.abort()
+            body, ctype = page_html, "text/html; charset=utf-8"
+        elif url.path.startswith("/lib/"):
+            f = (lib / urllib.parse.unquote(url.path[5:])).resolve()
+            if lib in f.parents and f.is_file():
+                body, ctype = f.read_bytes(), types.get(f.suffix, "application/octet-stream")
+    if body is None:
+        send("Fetch.failRequest", {"requestId": p["requestId"], "errorReason": "Failed"}, session)
+    else:
+        send("Fetch.fulfillRequest", {"requestId": p["requestId"], "responseCode": 200,
+             "responseHeaders": [{"name": "Content-Type", "value": ctype}],
+             "body": base64.b64encode(body).decode()}, session)
 
+def handle(m):
+    method, p = m.get("method"), m.get("params", {})
+    if method == "Fetch.requestPaused":
+        serve(p, m.get("sessionId"))
+    elif method == "Target.attachedToTarget":  # frames and workers: same request filter
+        child = p["sessionId"]
+        send("Fetch.enable", {"patterns": [{"urlPattern": "*"}]}, child)
+        send("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True}, child)
+        send("Runtime.runIfWaitingForDebugger", None, child)
+    elif method:
+        seen.add((method, m.get("sessionId")))
+
+def call(method, params=None, session=None, timeout=30):
+    i, deadline = send(method, params, session), time.monotonic() + timeout
+    while True:
+        m = read_msg(deadline)
+        if m.get("id") == i:
+            if "error" in m:
+                raise RuntimeError(f"{method}: {m['error'].get('message')}")
+            return m.get("result", {})
+        handle(m)
+
+def wait_event(method, session, timeout):
+    deadline = time.monotonic() + timeout
+    while (method, session) not in seen:
+        handle(read_msg(deadline))
+
+def pump(seconds):
+    deadline = time.monotonic() + seconds
+    try:
+        while True:
+            handle(read_msg(deadline))
+    except TimeoutError:
+        pass
+
+mm = 3.78 / 96  # inches per mm: 3.78 CSS px per mm, 96 per inch (the rounding the old output used)
 footer = ('<div style="font: 7.5pt Inter, sans-serif; color: #8a8f98; width: 100%; padding: 0 14mm; '
           'display: flex; justify-content: space-between"><span class="title"></span>'
           '<span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>')
-with sync_playwright() as pw:
-    browser = pw.chromium.launch(args=["--disable-dev-shm-usage"])
-    page = browser.new_page()
-    page.route("**/*", serve)
-    page.goto("http://print.invalid/", wait_until="load", timeout=30000)
+try:
+    target = call("Target.createTarget", {"url": "about:blank"})["targetId"]
+    s = call("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
+    call("Fetch.enable", {"patterns": [{"urlPattern": "*"}]}, s)
+    call("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True}, s)
+    call("Page.enable", None, s)
+    call("Emulation.setDeviceMetricsOverride", {"width": 1280, "height": 720, "deviceScaleFactor": 1,
+         "mobile": False, "screenWidth": 1280, "screenHeight": 720,
+         "screenOrientation": {"angle": 0, "type": "landscapePrimary"}}, s)
+    started = time.monotonic()
+    nav = call("Page.navigate", {"url": "http://print.invalid/"}, s)
+    if nav.get("errorText"):
+        raise RuntimeError("navigation failed: " + nav["errorText"])
+    wait_event("Page.loadEventFired", s, 30 - (time.monotonic() - started))
+    ready_by = time.monotonic() + 20
+    while not call("Runtime.evaluate", {"expression": "document.documentElement.dataset.ready === '1'",
+                   "returnByValue": True}, s)["result"].get("value"):
+        if time.monotonic() > ready_by:
+            print("page not ready after 20 s, printing it as it is", file=sys.stderr)
+            break
+        pump(0.1)
+    pdf = call("Page.printToPDF", {
+        "landscape": False, "displayHeaderFooter": True, "headerTemplate": "<span></span>",
+        "footerTemplate": footer, "printBackground": True, "scale": 1, "paperWidth": 8.27, "paperHeight": 11.7,
+        "marginTop": 16 * mm, "marginBottom": 18 * mm, "marginLeft": 14 * mm, "marginRight": 14 * mm,
+        "pageRanges": "", "preferCSSPageSize": False, "generateTaggedPDF": False,
+        "generateDocumentOutline": False}, s, timeout=60)["data"]
+    sys.stdout.buffer.write(base64.b64decode(pdf))
+    sys.stdout.flush()
     try:
-        page.wait_for_function("document.documentElement.dataset.ready === '1'", timeout=20000)
-    except Exception:
-        print("page not ready after 20 s, printing it as it is", file=sys.stderr)
-    sys.stdout.buffer.write(page.pdf(
-        format="A4", print_background=True, display_header_footer=True,
-        header_template="<span></span>", footer_template=footer,
-        margin={"top": "16mm", "bottom": "18mm", "left": "14mm", "right": "14mm"}))
-    browser.close()
+        call("Browser.close", timeout=5)
+    except (TimeoutError, RuntimeError):
+        pass
+finally:
+    for _ in range(50):
+        if os.waitpid(pid, os.WNOHANG)[0]:
+            break
+        time.sleep(0.1)
+    else:
+        os.kill(pid, signal.SIGKILL)
 """
 
 PDF_SLOTS = threading.BoundedSemaphore(2)
@@ -1349,18 +1485,18 @@ def main():
                     help=f"docker image that renders PDFs (default {PDF_IMAGE})")
     ap.add_argument("--build-pdf-image", action="store_true",
                     help="build --pdf-image with docker, then exit (needs network once)")
-    ap.add_argument("--pdf-base", default=os.environ.get("ARTIFACTS_PDF_BASE", PDF_BASE), metavar="IMAGE",
-                    help="Playwright image (Python or Node flavour, tag vX.Y.Z[-...]) that --build-pdf-image "
-                         f"builds the PDF image on (default {PDF_BASE})")
+    # Removed: the PDF image no longer builds on a Playwright image. Kept hidden so
+    # an old command line says what changed instead of "unrecognized arguments".
+    ap.add_argument("--pdf-base", metavar="IMAGE", help=argparse.SUPPRESS)
     ap.add_argument("roots", nargs="*", type=Path, help="vault folders to serve (default: ~/obsidian)")
     args = ap.parse_args()
+    if args.pdf_base is not None:
+        print(f"artifacts: {PDF_BASE_REMOVED}; run `artifacts --build-pdf-image` without it", file=sys.stderr)
+        sys.exit(2)
     if args.build_pdf_image:
-        cmd = pdf_build_command(args.pdf_image, args.pdf_base)
-        if cmd is None:
-            print(f"artifacts: --pdf-base {args.pdf_base}: the tag must carry the Playwright version (vX.Y.Z), "
-                  "because the playwright pip package has to match the browsers in the image", file=sys.stderr)
-            sys.exit(2)
-        sys.exit(subprocess.run(cmd, input=PDF_DOCKERFILE.encode()).returncode)
+        if os.environ.get("ARTIFACTS_PDF_BASE"):
+            print(f"artifacts: ignoring ARTIFACTS_PDF_BASE: {PDF_BASE_REMOVED}", file=sys.stderr)
+        sys.exit(subprocess.run(pdf_build_command(args.pdf_image), input=PDF_DOCKERFILE.encode()).returncode)
     names = {args.bind, *args.allow_host}
     if ipaddress.ip_address(args.bind).is_loopback:
         names |= {"127.0.0.1", "localhost"}

@@ -36,7 +36,7 @@ symlink that points out of the vault is dropped, not followed.
 ## How it is rendered
 
 `GET /pdf/<id>` renders the note as a print page and pipes it into a throwaway
-container that runs headless Chromium (Playwright). The PDF comes back on
+container that runs Chromium's headless shell. The PDF comes back on
 stdout and the container is removed.
 
 The container runs with:
@@ -76,9 +76,27 @@ instead of dropping the connection.
 ## The image
 
 The image is `artifacts-pdf:local`. It is built from the Dockerfile embedded in
-`artifacts.py` (`PDF_DOCKERFILE`): the Playwright Python image, the matching
-`playwright` pip package, Mermaid 11 with the ELK layout, highlight.js, and the
-two fonts. It is large; expect several GB on disk after the build.
+`artifacts.py` (`PDF_DOCKERFILE`) and holds only what printing needs, so it
+stays at a few hundred MB on disk:
+
+- **Base:** `debian:bookworm-slim`. Debian 12's `libgbm1` does not pull in
+  LLVM and the Mesa drivers, which Ubuntu 24.04's does (about 180 MB more).
+- **Browser:** Chromium's headless shell only, from Chrome for Testing
+  (`PDF_CHROME_URL`, pinned by `PDF_CHROME_VERSION` and checked against
+  `PDF_CHROME_SHA256`; the build fails on a mismatch). There is no full
+  Chromium, Firefox or WebKit: the image installs only the shared libraries
+  the headless shell links against, and no X server or extra font families.
+- **Driver:** none in the image. The render script (`PDF_RENDER`) is plain
+  Python with the standard library: it starts the headless shell with
+  `--remote-debugging-pipe` and speaks the DevTools protocol to it over that
+  pipe. It does what Playwright did here before, with the same launch
+  switches and print settings, so PDFs come out the same.
+- **Libraries:** Mermaid 11 with the ELK layout and highlight.js, cut down to
+  the files the print page loads (the minified ESM builds and their chunks,
+  `highlight.min.js` and the GitHub style), without source maps.
+- **Fonts:** Inter and JetBrains Mono, DejaVu as the fallback, and Noto
+  Color Emoji. Scripts outside those fonts (CJK, for example) are not covered
+  and print as empty boxes.
 
 Inter comes from its upstream release as static TrueType (`PDF_INTER_URL`,
 checked against `PDF_INTER_SHA256`; the build fails on a mismatch), not from
@@ -98,42 +116,28 @@ docker image rm artifacts-pdf:local
 `--build-pdf-image` runs `docker build --pull`, needs network once, and exits
 without starting the server.
 
-**Keep the versions in step.** The `playwright` pip package must match the
-Playwright base image, because Playwright launches the browser build that
-matches its own version. You only change the tag of the `PDF_BASE` default in
-`artifacts.py`: the pip version is derived from the base image tag at build
-time (the `BASE` and `PLAYWRIGHT` build arguments of `PDF_DOCKERFILE`), so the
-two cannot drift.
+**Updating Chromium.** Set `PDF_CHROME_VERSION` to a newer Chrome for
+Testing version and `PDF_CHROME_SHA256` to the SHA-256 of that version's
+`chrome-headless-shell-linux64.zip`, then rebuild. The DevTools calls the
+render script makes (`Target`, `Fetch`, `Page.navigate`, `Runtime.evaluate`,
+`Page.printToPDF`) are stable parts of the protocol.
 
-### Building on an existing Playwright image
+### Upgrading from the Playwright-based image
 
-The default base is large. A host that already has some Playwright image
-locally, such as the Node flavour (`mcr.microsoft.com/playwright:v1.56.0-noble`),
-can build on it instead and add only the fonts, the libraries and the pip
-package. That saves the download of a second base image.
+Earlier versions built the image on Playwright's own base image, which carries
+every browser and came to about 4 GB on disk, and printed through the
+`playwright` pip package. The render script and the image now depend on each
+other's layout, so update the program and rebuild the image together. The `--pdf-base` option and
+`ARTIFACTS_PDF_BASE` chose that base and are gone: `--pdf-base` now exits with
+status 2 and says so, both in the program and in the installer, and a leftover
+`ARTIFACTS_PDF_BASE` is ignored with a warning. To move over, rebuild the image
+and remove the build cache the old one left behind:
 
 ```bash
-python3 ~/.local/bin/artifacts --build-pdf-image \
-    --pdf-base mcr.microsoft.com/playwright:v1.56.0-noble
+python3 ~/.local/bin/artifacts --build-pdf-image
+docker image prune
+docker builder prune
 ```
-
-The installer takes the same option (`install.sh ... --build-pdf-image
---pdf-base IMAGE`), and `ARTIFACTS_PDF_BASE` sets it for the program.
-
-- Either flavour works. The Node image has no pip, so the build installs
-  `python3-pip` (already present, so a no-op, on the Python image).
-- The Playwright version comes from the image tag, which must contain
-  `vX.Y.Z` followed by `-` or the end of the tag (`v1.56.0-noble`, `v1.56.0`).
-  A tag such as `latest` or `v1.56-noble`, or a digest alone, is refused by
-  the program with exit status 2 and nothing is built (the installer then
-  reports that the image build failed and installs nothing).
-- With a custom base, docker is not asked to `--pull`: the point is to reuse
-  the local image, and a re-pull could download several GB. If the image is
-  not local, docker still fetches it once, as any build does.
-- It does not always save disk during the build. With docker's containerd
-  image store, BuildKit can unpack the base image again for the build, which
-  needs free space about the size of the base image. If the build stops with
-  `no space left on device`, free that much space first.
 
 If the image is missing, the button shows:
 

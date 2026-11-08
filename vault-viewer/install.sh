@@ -15,7 +15,7 @@ PDF_IMAGE="artifacts-pdf:local"
 usage() {
   cat <<'USAGE'
 usage: install.sh --bind ADDR [--port N] [--allow-host NAME]... [--tailnet-user LOGIN]
-                  [--title NAME] [--build-pdf-image [--pdf-base IMAGE]] [--dry-run] ROOT...
+                  [--title NAME] [--build-pdf-image] [--dry-run] ROOT...
        install.sh -h | --help
 
 Install the vault viewer (artifacts.py) and run it as the systemd user unit
@@ -28,11 +28,8 @@ artifacts.service, serving the vault folders ROOT....
   --tailnet-user LOGIN  admit only this tailnet user's untagged devices
                         (needs the tailscale CLI)
   --title NAME          name shown in the sidebar
-  --build-pdf-image     build the PDF export image with docker (several minutes,
-                        about 1 GB of downloads)
-  --pdf-base IMAGE      with --build-pdf-image: build on this local Playwright image
-                        (Python or Node flavour; its tag must carry the version, such
-                        as v1.56.0-noble) instead of downloading the default base
+  --build-pdf-image     build the PDF export image with docker (a few minutes,
+                        about 500 MB of downloads)
   --dry-run             print the unit and the actions, change nothing
   -h, --help            show this help
 
@@ -74,7 +71,6 @@ PORT=7777
 ALLOW_HOSTS=()
 TAILNET_USER=""
 TITLE=""
-PDF_BASE=""
 BUILD_PDF=0
 DRY_RUN=0
 ROOTS_IN=()
@@ -82,7 +78,7 @@ ROOTS_IN=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --bind|--port|--allow-host|--tailnet-user|--title|--pdf-base)
+    --bind|--port|--allow-host|--tailnet-user|--title)
       [ "$#" -ge 2 ] || die_usage "$1 needs a value"
       no_control "$1 value" "$2"
       case "$1" in
@@ -91,10 +87,10 @@ while [ "$#" -gt 0 ]; do
         --allow-host) ALLOW_HOSTS+=("$2") ;;
         --tailnet-user) TAILNET_USER="$2" ;;
         --title) TITLE="$2" ;;
-        --pdf-base) PDF_BASE="$2"; [ -n "$2" ] || die_usage "--pdf-base needs a non-empty image name" ;;
       esac
       shift 2 ;;
     --build-pdf-image) BUILD_PDF=1; shift ;;
+    --pdf-base|--pdf-base=*) die_usage "--pdf-base was removed: the PDF image now builds on debian:bookworm-slim with only Chromium's headless shell; use --build-pdf-image alone" ;;
     --dry-run) DRY_RUN=1; shift ;;
     --) shift; ROOTS_IN+=("$@"); break ;;
     -*) die_usage "unknown option: $1" ;;
@@ -105,9 +101,6 @@ for r in "${ROOTS_IN[@]+"${ROOTS_IN[@]}"}"; do no_control "ROOT" "$r"; done
 no_control "ARTIFACTS_BIN" "$BIN"
 
 [ -n "$BIND" ] || die_usage "--bind is required"
-if [ -n "$PDF_BASE" ] && [ "$BUILD_PDF" -ne 1 ]; then
-  die_usage "--pdf-base only applies together with --build-pdf-image"
-fi
 # A dotted-quad IPv4 address, checked by the interpreter the unit runs (it rejects
 # out-of-range octets and, on current Python, leading zeros); the regex rejects
 # leading zeros on older Pythons too. Not 0.0.0.0 (all interfaces), not multicast.
@@ -157,12 +150,8 @@ TEMPLATE="$(<"$HERE/systemd/$UNIT_NAME")"
 UNIT="${TEMPLATE//__BIN__/"$(unit_quote "$BIN")"}"
 UNIT="${UNIT//__ARGS__/"$ARGS"}"
 
-# The --build-pdf-image part of a rebuild command, with --pdf-base when it was given.
-BUILD_FLAGS="--build-pdf-image"
-[ -z "$PDF_BASE" ] || BUILD_FLAGS+=" --pdf-base $(unit_quote "$PDF_BASE")"
-
 if [ "$BUILD_PDF" -eq 1 ]; then
-  PDF_PLAN="build the PDF image $PDF_IMAGE with docker (several minutes, about 1 GB of downloads)"
+  PDF_PLAN="build the PDF image $PDF_IMAGE with docker (a few minutes, about 500 MB of downloads)"
 else
   PDF_PLAN="leave the PDF image alone (not building it)"
 fi
@@ -186,13 +175,11 @@ fi
 # --- install -----------------------------------------------------------------
 # Build the PDF image first: if it fails, nothing else has been changed.
 if [ "$BUILD_PDF" -eq 1 ]; then
-  echo "building $PDF_IMAGE: this takes several minutes and downloads about 1 GB..."
-  BUILD_ARGS=(--build-pdf-image)
-  [ -z "$PDF_BASE" ] || BUILD_ARGS+=(--pdf-base "$PDF_BASE")
-  if ! "$PYTHON" "$HERE/artifacts.py" "${BUILD_ARGS[@]}"; then
+  echo "building $PDF_IMAGE: this takes a few minutes and downloads about 500 MB..."
+  if ! "$PYTHON" "$HERE/artifacts.py" --build-pdf-image; then
     echo "install.sh: building $PDF_IMAGE failed; nothing was installed or changed." >&2
     echo "            Fix docker (is the daemon running, can you reach the registry?) and re-run." >&2
-    echo "            To retry only the image: $PYTHON $HERE/artifacts.py $BUILD_FLAGS" >&2
+    echo "            To retry only the image: $PYTHON $HERE/artifacts.py --build-pdf-image" >&2
     exit 1
   fi
   PDF_STATUS="built: $PDF_IMAGE is ready, the PDF button works."
@@ -200,12 +187,12 @@ elif command -v docker >/dev/null 2>&1 && docker image inspect "$PDF_IMAGE" >/de
   PDF_STATUS="present: $PDF_IMAGE is ready, the PDF button works."
 elif command -v docker >/dev/null 2>&1; then
   PDF_STATUS="missing: the PDF button will report that $PDF_IMAGE is missing until you build it
-  (several minutes, about 1 GB of downloads):
-    $PYTHON $BIN $BUILD_FLAGS"
+  (a few minutes, about 500 MB of downloads):
+    $PYTHON $BIN --build-pdf-image"
 else
   PDF_STATUS="docker not found: the PDF button will report that it cannot run docker.
   Install docker, then build the image:
-    $PYTHON $BIN $BUILD_FLAGS"
+    $PYTHON $BIN --build-pdf-image"
 fi
 
 install -D -m 0755 "$HERE/artifacts.py" "$BIN"
