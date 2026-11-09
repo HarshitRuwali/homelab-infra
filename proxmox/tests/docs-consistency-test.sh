@@ -344,6 +344,22 @@ done < <(grep -oP '(\./)?\Ktests/[A-Za-z0-9._-]+\.sh' "$README" | sort -u)
 (( bad )) || ok "every test script is in the README, and each one it names exists"
 
 echo
+echo "== host hardening survives a reboot =="
+# A net.netfilter.* key in /etc/sysctl.d is skipped at boot unless nf_conntrack
+# is already loaded, so a README that shows one must also show the
+# modules-load.d file that loads it.
+if grep '^net\.netfilter\.' "$README" >/dev/null; then
+  if grep -F '/etc/modules-load.d/nf_conntrack.conf' "$README" >/dev/null \
+     && grep -x 'nf_conntrack' "$README" >/dev/null; then
+    ok "the README's net.netfilter sysctl comes with the modules-load.d file that makes it apply at boot"
+  else
+    no "the README sets a net.netfilter sysctl without loading nf_conntrack at boot (modules-load.d)"
+  fi
+else
+  ok "the README sets no net.netfilter sysctl, so nothing needs the module at boot"
+fi
+
+echo
 echo "== style =="
 if grep -nP '\x{2014}|&mdas[h];' "$SCRIPT" "$README" tests/*.sh tests/fake-pve/PVE/Firewall.pm; then
   no "an em dash is in the script, the README or the tests"

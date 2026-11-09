@@ -624,6 +624,16 @@ and nothing answered. Put it in `/etc/sysctl.d/91-tenant-conntrack.conf`:
 net.netfilter.nf_conntrack_tcp_timeout_syn_sent = 30
 ```
 
+That key only exists once the `nf_conntrack` module is loaded, and at boot
+systemd applies `/etc/sysctl.d` before `pve-firewall` loads it, so on its own
+the file is skipped after a reboot and the timeout is 120 s again. Load the
+module early with `/etc/modules-load.d/nf_conntrack.conf`:
+
+```ini
+# Load connection tracking before systemd applies /etc/sysctl.d at boot.
+nf_conntrack
+```
+
 ```bash
 sysctl --system
 sysctl net.netfilter.nf_conntrack_tcp_timeout_syn_sent     # after a reboot too
@@ -635,7 +645,7 @@ it is the script's own and differs, never if it is yours), each VM's firewall
 file, the packet-rate hookscript, and the `snippets` content of `local` when it
 is missing. It never rewrites a `cluster.fw` that has both groups. It does not:
 
-- install the SMT unit or the sysctl file above;
+- install the SMT unit, the sysctl file or the modules-load file above;
 - touch OPNsense: the LEASE and TENANT interfaces, their rules, the DNS
   redirect, Unbound logging, Suricata, the syslog forwarding, the SSH setup path;
 - configure Alloy or Loki, or run the `pve_guest_metrics` role: the log and
