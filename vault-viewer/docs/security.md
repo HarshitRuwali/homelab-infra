@@ -99,6 +99,16 @@ listed itself in `/api/tree`. A note cannot make the viewer open an arbitrary
 URL or a file outside the vault. A diagram's full-screen view receives the SVG
 as an image, which cannot run scripts.
 
+A code block's **Copy** button copies inside the frame when the browser allows
+it. The viewer is plain HTTP and the frame is sandboxed, so the clipboard API is
+usually unavailable there; `execCommand("copy")` is tried next, and if the frame
+may not copy either, it asks the viewer with a `vault-copy` message. The viewer
+then puts that text, and only text of at most 5 MB, on the clipboard, during the
+same click (the browser's user-activation rule), and replies whether it worked.
+A note can therefore place text on the clipboard when you click in it, which it
+could already do inside its own frame. If nothing works, the button selects the
+code and asks for the copy shortcut.
+
 ## File access
 
 - Only files under a vault root are served. Ids are resolved after following

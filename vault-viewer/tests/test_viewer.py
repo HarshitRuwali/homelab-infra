@@ -144,6 +144,31 @@ def t_render(lib):
     check('<img src="" alt="x">' in inline, 'pdf: <img src="Other.md"> (a note) is not inlined, src is empty')
     check("base64" not in inline, "pdf: nothing inlined for a non-image src")
 
+    print("copy buttons")
+    check("addCopyButtons();" in viewer and viewer.index("hljs.highlightElement") < viewer.index("addCopyButtons();"),
+          "viewer: code blocks get copy buttons, after highlighting")
+    check("addCopyButtons" not in pdf and "codewrap" not in pdf, "pdf: no copy buttons")
+    check("addCopyButtons();" in A.render_text(lib.resolve("vault/code.py"), "vault/code.py"),
+          "viewer: text files get a copy button too")
+    check("type: 'vault-copy', text" in A.NOTE_JS and "'vault-copied'" in A.NOTE_JS and "e.source === parent" in A.NOTE_JS,
+          "note: falls back to asking the viewer, and only trusts the reply from its parent")
+    check('d.type === "vault-copy" && typeof d.text === "string" && d.text.length < 5e6' in A.PAGE
+          and 'e.source !== $("frame").contentWindow' in A.PAGE,
+          "viewer: copies only text, bounded, and only for its own frame")
+    check(".copy { display: none; }" in A.NOTE_CSS, "print: copy buttons hidden")
+    node = shutil.which("node") or shutil.which("nodejs")
+    if not node:
+        skip("JavaScript syntax check (needs node)")
+    else:
+        scripts = {"note page": re.findall(r"<script>(.*?)</script>", viewer, re.S),
+                   "viewer page": re.findall(r"<script>(.*?)</script>", A.PAGE, re.S)}
+        for name, parts in scripts.items():
+            with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+                f.write("\n;\n".join(parts))
+            out = subprocess.run([node, "--check", f.name], capture_output=True, text=True)
+            os.unlink(f.name)
+            check(parts and out.returncode == 0, f"{name}: inline scripts parse as JavaScript {out.stderr.strip()[:200]}")
+
     inline_fn = A.inliner(lib, {i["id"]: i for i in lib.scan()})
     check(inline_fn("vault/code.py") == "", "inline() of a text file is empty")
     check(inline_fn("vault/nope.png") == "", "inline() of an unknown id is empty")
@@ -298,6 +323,13 @@ def t_pdf_build():
           and f"ADD --checksum=sha256:{A.PDF_INTER_SHA256} {A.PDF_INTER_URL} " in A.PDF_DOCKERFILE
           and "fonts-inter" not in A.PDF_DOCKERFILE,
           "Dockerfile takes Inter as TrueType from the checksummed release, not Debian's CFF fonts-inter")
+    check(re.fullmatch(r"[0-9a-f]{12}", A.PDF_REV) is not None
+          and A.PDF_DOCKERFILE.endswith(f"\nLABEL {A.PDF_REV_LABEL}={A.PDF_REV}\n"),
+          "Dockerfile labels the image with PDF_REV")
+    base = A.PDF_DOCKERFILE[:A.PDF_DOCKERFILE.rindex("LABEL ")]
+    check(A.PDF_REV == A.hashlib.sha256((base + A.PDF_RENDER).encode()).hexdigest()[:12]
+          and A.PDF_REV != A.hashlib.sha256((base + A.PDF_RENDER + " ").encode()).hexdigest()[:12],
+          "PDF_REV is a hash of the Dockerfile and the render script, so either change gives a new revision")
     code_rule = re.search(r"^code \{[^}]*\}", A.PDF_CSS, re.MULTILINE)
     check(code_rule is not None and "font-variant-ligatures: none" in code_rule.group(0)
           and "padding: .1em 0;" in code_rule.group(0),
@@ -333,6 +365,31 @@ def t_pdf_build():
             del os.environ["ARTIFACTS_PDF_BASE"]
         check(rc == 0 and len(calls) == 1 and "ignoring ARTIFACTS_PDF_BASE" in err.getvalue(),
               "main: a leftover ARTIFACTS_PDF_BASE is ignored with a warning, the build still runs")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = run_main("--pdf-rev")
+        check(rc == 0 and out.getvalue() == A.PDF_REV + "\n" and not calls,
+              "main: --pdf-rev prints PDF_REV and runs no docker")
+
+        # A failed render against an image of another revision says so.
+        def fake(label, render_rc=1):
+            def run(cmd, **kw):
+                if cmd[:3] == ["docker", "image", "inspect"]:
+                    return subprocess.CompletedProcess(cmd, 0, label + "\n", "")
+                return subprocess.CompletedProcess(cmd, render_rc, b"", b"boom")
+            return run
+        with contextlib.redirect_stderr(io.StringIO()):
+            A.subprocess.run = fake("0123456789ab")
+            _, why = A.render_pdf("<p>x</p>", "img:t")
+            check(why is not None and "does not match this program" in why and "0123456789ab" in why
+                  and "--build-pdf-image" in why, "render_pdf: an image of another revision is named as the cause")
+            A.subprocess.run = fake("<no value>")
+            _, why = A.render_pdf("<p>x</p>", "img:t")
+            check(why is not None and "image revision none" in why, "render_pdf: an unlabelled image is reported as revision none")
+            A.subprocess.run = fake(A.PDF_REV)
+            _, why = A.render_pdf("<p>x</p>", "img:t")
+            check(why == "rendering failed (details in the service log)",
+                  "render_pdf: a matching image that fails gives the plain failure")
     finally:
         A.subprocess.run, sys.argv = real_run, real_argv
 
