@@ -67,6 +67,28 @@ two, and it is why they are separate modules with separate docs.
 
 Pick the module you need. Every command runs from the repository root.
 
+To put a module on the host it runs on, `homelab.sh` does it over SSH: it
+checks the host's prerequisites, runs the module's own dry run there, and
+installs with `--apply` (missing apt packages included). `./homelab.sh --help`
+has the details.
+
+```bash
+./homelab.sh list                                        # modules, hosts, prerequisites
+./homelab.sh check media root@media-host                 # prerequisites only
+./homelab.sh install media root@media-host               # dry run, changes nothing
+./homelab.sh install media root@media-host --apply
+./homelab.sh install memory root@db-host --role storage --dest /root/memory
+```
+
+Without a checkout, the one-line installer fetches the repository and runs
+`homelab.sh` (HOST `local` is the machine it runs on; `HOMELAB_REF` pins a tag
+or commit):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HarshitRuwali/homelab-infra/master/get.sh | sudo bash -s -- install media local
+curl -fsSL https://raw.githubusercontent.com/HarshitRuwali/homelab-infra/master/get.sh | sudo bash -s -- install media local --apply
+```
+
 <details>
 <summary><b>🤖 Configure the fleet</b></summary>
 
@@ -193,6 +215,8 @@ root certificate your devices need to trust once.
 ## Layout
 
 ```text
+homelab.sh      Installs or updates a module on its host over SSH, dry run first
+get.sh          One-line installer: fetches the repository and runs homelab.sh
 ansible/        Playbooks, roles, inventory. At the root, not under monitoring/,
                 because patching and onboarding apply to every machine
 monitoring/     Central stack, dashboards, alert rules, install scripts
