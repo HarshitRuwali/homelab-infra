@@ -390,19 +390,21 @@ precise than scanning the whole payload.
 `fileinfo` and more. Only `alert` is an alert. The rest is the metadata that
 makes retrospective hunting possible, and is often more valuable.
 
-### Flows and ntopng packet capture
+### Flows and NetFlow
 
 A **flow** is a unidirectional conversation summary: the 5-tuple (src IP, dst
 IP, src port, dst port, protocol) plus start and end times, packet count and
 byte count. It is metadata, not content.
 
-ntopng captures packets on the firewall through the `os-ntopng` plugin. It
-builds flows from those packets and identifies applications through its nDPI
-library.
+OPNsense's NetFlow capture exports flow records from the interfaces it is set
+up on to a collector, here the firewall's own, and the Insight reports in the
+OPNsense UI are drawn from it. The firewall's filter log is a second source of
+flows: a pass rule with logging on writes one line for every new flow it lets
+through, and those lines reach Loki.
 
 **Which interface matters.** On OPNsense's WAN, every vmbr1 host has already
-been rewritten to OPNsense's own address by NAT. Capture on LAN to see who is
-really talking.
+been rewritten to OPNsense's own address by NAT. Capture on an inside
+interface, the work and lease interfaces here, to see who is really talking.
 
 ### Greenbone: why authenticated scanning changes everything
 
@@ -462,12 +464,13 @@ firewall. If a security guest seems to need a second NIC, the routing needs
 fixing instead. The scanner is the proof: the answer to "it needs both
 segments" was a better placement, not a second NIC.
 
-### ntopng on the firewall
+### NetFlow and the filter log on the firewall
 
-The firewall sees every packet crossing between its interfaces, and ntopng
-captures there directly. ntopng and Redis share its RAM and CPU with Suricata,
-and ntopng adds another parser of hostile traffic to the firewall. Budget for
-that resource use and keep its management UI closed to WAN.
+The firewall sees every packet crossing between its interfaces. It exports
+NetFlow records from the work and lease interfaces to its own collector, and it
+logs the new flows their pass rules let through, and Loki keeps most of those
+lines. Both see only what crosses the firewall, and a tunnel inside a guest is
+one flow. Keep the firewall's management UI closed to WAN.
 
 ### Provisioned from files, not the UI
 
@@ -489,8 +492,8 @@ is the only thing that mutates. The reason is that the expensive failure is not
    `default via 10.10.0.1` and `10.10.0.0/24` on vmbr0.
 2. **Wazuh agents on 10.10.50.x show OPNsense's address** in `agent_control -l`,
    because of NAT. Not a bug; agents key on ID, not IP.
-3. **An empty ntopng is not evidence of no lateral traffic.** It cannot see
-   intra-segment conversations at all.
+3. **An empty flow report is not evidence of no lateral traffic.** The firewall
+   cannot see intra-segment conversations at all.
 4. **An empty Greenbone report usually means no route or an unsynced feed**, not
    a clean estate.
 5. **A CrowdSec LAPI with zero parsed lines reports perfectly healthy.** Check
@@ -499,8 +502,7 @@ is the only thing that mutates. The reason is that the expensive failure is not
    retention policy before you have data.
 7. **Greenbone is not in Debian.** `gvm` is in sid only, absent from bookworm,
    trixie and forky. It runs from Greenbone's containers.
-8. **Greenbone and ntopng both start as `admin` / `admin`.** ntopng forces a
-   change; Greenbone does not.
+8. **Greenbone starts as `admin` / `admin`.** It does not force a change.
 
 ---
 

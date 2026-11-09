@@ -15,9 +15,9 @@ Wazuh's installer prints its admin password at the end, and also writes every
 internal password and the TLS certificates to `wazuh-install-files.tar` in
 `WAZUH_WORKDIR` (default `/root/wazuh-install`). Put the password in a password manager, and move the tar off the guest.
 
-Two services start with a **known default login**, `admin` / `admin`: Greenbone
-and ntopng. ntopng forces a change at first login; Greenbone does not, so change
-it before anything else. AdGuard Home has no default, but whoever reaches its
+One service starts with a **known default login**, `admin` / `admin`:
+Greenbone, which does not force a change, so change it before anything else.
+AdGuard Home has no default, but whoever reaches its
 setup wizard first chooses the admin login, so finish the wizard straight after
 install.
 
@@ -62,8 +62,8 @@ Keep management interfaces bound to loopback or the LAN and reach them over
 SSH tunnels. If you need remote
 access, use a VPN or an authenticated tunnel, never a bare port forward.
 
-ntopng's UI deserves a specific note: it runs on the firewall and listens on
-**every** firewall interface. The WAN is closed by default. Keep it closed.
+The firewall's own web UI, which hosts the Insight flow reports, follows the
+same rule: keep it closed to the WAN.
 
 ## What the monitoring itself discloses
 

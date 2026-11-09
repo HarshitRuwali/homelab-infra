@@ -12,8 +12,8 @@
 Totals: **8 vCPU, 15.5 GB RAM, 81 GB disk**, of which 41 GB on SSD and 40 GB on
 bulk storage.
 
-ntopng runs [on the firewall](../components/index.md#ntopng). Budget an
-additional 2 GB RAM and 2 vCPU for the firewall VM, then measure.
+Suricata and the NetFlow capture run [on the firewall](../components/index.md#netflow-and-insight),
+so no guest is provisioned for them.
 
 ### Why each guest is sized as it is
 
@@ -27,9 +27,6 @@ additional 2 GB RAM and 2 vCPU for the firewall VM, then measure.
 - **`sec-scan` 40 GB, 6 GB RAM**: dominated by feeds, not results. SCAP and CVE
   data in PostgreSQL runs 10 to 20 GB, plus 1 to 2 GB of NVTs. RAM peaks during
   a scan, not at idle.
-- **ntopng on the firewall**: Community Edition keeps timeseries in RRD, which
-  is **fixed size by design**. The ClickHouse flow export that would grow
-  without bound is an Enterprise feature.
 
 Right-size down further if you like, with one caution: `sec-scan` failing a
 feed sync because the disk filled is a confusing failure to diagnose. Leave it
@@ -48,7 +45,7 @@ for anything wanting kernel tunables, raw sockets or its own memory locking.
   `NET_RAW`. Possible in a privileged LXC, but a scanner is exactly the
   workload you do not want running privileged beside everything else.
 - **`sec-crowdsec` and `sec-dns` use unprivileged LXC.** Their services do not
-  need their own kernel. ntopng captures directly on the firewall.
+  need their own kernel.
 - **Both LXCs get `nesting=1`**, the default the Proxmox UI applies to every
   unprivileged container. The Debian 13 template's systemd cannot mount `/tmp`
   or `/run/lock` without it, and the guest boots with failed units.
@@ -64,8 +61,7 @@ for anything wanting kernel tunables, raw sockets or its own memory locking.
 | every monitored host | `sec-crowdsec` | 8080/tcp | CrowdSec LAPI |
 | LAN clients | `sec-dns` | 53/tcp, 53/udp | DNS |
 | admin | `sec-dns` | 3000/tcp | AdGuard UI |
-| admin | the firewall | 3000/tcp | ntopng UI. Listens on **every** firewall interface; keep WAN closed |
-| the firewall | the central stack | 5514/tcp | Suricata EVE syslog into Loki. Not 1514, which is Wazuh's |
+| the firewall | the central stack | 5514/tcp | Syslog into Loki: Suricata EVE alerts, the filter log, the resolver log and `pfstats`. Not 1514, which is Wazuh's |
 | admin | `sec-scan` | 9392/tcp, 443/tcp | Greenbone UI, **bound to loopback**; reach it over an SSH tunnel through your jump host |
 | `sec-scan` | everything it scans | any | Scans, originated from the sandbox bridge. Trusted-side targets see the firewall's address |
 
@@ -107,8 +103,10 @@ own the dashboard.
 
 Wazuh alerts reach Grafana by tailing `/var/ossec/logs/alerts/alerts.json` with
 the Alloy collector that monitored hosts already run, labelled `job="wazuh"`.
-Suricata's EVE output goes to Loki as `job="suricata"`. Neither needs new
-collector software.
+Suricata's EVE alerts go to Loki as `job="suricata"`, and the firewall's filter
+log, resolver log and per-minute state table line as `job="filterlog"`,
+`job="unbound"` and `job="pfstats"` ([Wiring](../wiring/index.md#3-firewall-streams-and-flow-visibility)).
+None needs new collector software.
 
 ## Licences
 
@@ -121,13 +119,10 @@ space have changed licence recently.
 | CrowdSec | MIT | Engine has no paywalled features; console tier optional |
 | Wazuh | GPLv2 | Indexer and dashboard on Apache-2.0 OpenSearch. No feature paywall |
 | AdGuard Home | GPLv3 | |
-| ntopng Community | GPLv3 | Runs on the firewall via `os-ntopng`. Pro and Enterprise add retention, LDAP, SNMP |
 | Greenbone GVM | GPLv2 | Community Feed is delayed relative to Enterprise Feed. Runs from Greenbone's containers |
 
 ### Operational limitations
 
-- **ntopng Community** is enough to verify segmentation. Long-term flow history,
-  graphical reports, LDAP and SNMP are paid features.
 - **Greenbone Community Feed** is free but delayed and reduced relative to the
   Enterprise Feed. Fine for drift detection; not parity with a commercial
   scanner.
