@@ -1,0 +1,125 @@
+/*
+ * Styles for javascripts/diagram-zoom.js: the corner badge that marks a diagram
+ * as clickable, and the full-screen viewer it opens. Colours come from
+ * Material's custom properties, so the viewer follows the light and dark schemes.
+ */
+
+/* A diagram the viewer can open. The badge is ::after on the host element,
+ * which renders even though the diagram itself lives in a closed shadow root. */
+.mermaid.diagram-zoomable {
+  position: relative;
+  cursor: zoom-in;
+}
+
+.mermaid.diagram-zoomable:focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 4px;
+}
+
+.mermaid.diagram-zoomable::after {
+  content: "";
+  position: absolute;
+  top: 0.2rem;
+  right: 0.2rem;
+  width: 1.4rem;
+  height: 1.4rem;
+  background-color: var(--md-default-fg-color--light);
+  opacity: 0.55;
+  transition: opacity 0.15s;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 3h7v2H5v5H3V3zm11 0h7v7h-2V5h-5V3zM3 14h2v5h5v2H3v-7zm16 0h2v7h-7v-2h5v-5z'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 3h7v2H5v5H3V3zm11 0h7v7h-2V5h-5V3zM3 14h2v5h5v2H3v-7zm16 0h2v7h-7v-2h5v-5z'/%3E%3C/svg%3E") center / contain no-repeat;
+  pointer-events: none;
+}
+
+.mermaid.diagram-zoomable:hover::after,
+.mermaid.diagram-zoomable:focus-visible::after {
+  opacity: 1;
+}
+
+/* The viewer. Above Material's header (4) and drawer (5). */
+.diagram-zoom {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--md-default-bg-color);
+  color: var(--md-default-fg-color);
+}
+
+.diagram-zoom__surface {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none; /* the page must not scroll or zoom under a pinch */
+  user-select: none;
+}
+
+.diagram-zoom__surface.is-dragging {
+  cursor: grabbing;
+}
+
+.diagram-zoom__stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+.diagram-zoom__bar {
+  position: absolute;
+  top: 0.8rem;
+  right: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.2rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.2rem;
+  background: var(--md-code-bg-color);
+  box-shadow: var(--md-shadow-z1);
+}
+
+.diagram-zoom__button {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.6rem;
+  border: 0;
+  border-radius: 0.1rem;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.diagram-zoom__button:hover,
+.diagram-zoom__button:focus-visible {
+  background: var(--md-accent-fg-color--transparent);
+  color: var(--md-accent-fg-color);
+}
+
+.diagram-zoom__level {
+  min-width: 3.2rem;
+  font-size: 0.7rem;
+  text-align: center;
+  color: var(--md-default-fg-color--light);
+}
+
+.diagram-zoom__hint {
+  position: absolute;
+  bottom: 0.8rem;
+  left: 0;
+  right: 0;
+  margin: 0;
+  font-size: 0.7rem;
+  text-align: center;
+  color: var(--md-default-fg-color--light);
+  pointer-events: none;
+}
+
+@media print {
+  .mermaid.diagram-zoomable::after,
+  .diagram-zoom {
+    display: none;
+  }
+}
