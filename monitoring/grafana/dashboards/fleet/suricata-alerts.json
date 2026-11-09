@@ -56,7 +56,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "sum(count_over_time({host=\"opnsense\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range]))",
+          "expr": "sum(count_over_time({job=\"suricata\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range]))",
           "refId": "A",
           "queryType": "instant"
         }
@@ -118,7 +118,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "sum(count_over_time({host=\"opnsense\"} |= \"event_type\" | json | event_type=\"alert\" | alert_severity=\"1\" | __error__=\"\" [$__range]))",
+          "expr": "sum(count_over_time({job=\"suricata\"} |= \"event_type\" | json | event_type=\"alert\" | alert_severity=\"1\" | __error__=\"\" [$__range]))",
           "refId": "A",
           "queryType": "instant"
         }
@@ -176,7 +176,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "count(sum by (alert_signature_id) (count_over_time({host=\"opnsense\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
+          "expr": "count(sum by (alert_signature_id) (count_over_time({job=\"suricata\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
           "refId": "A",
           "queryType": "instant"
         }
@@ -234,7 +234,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "count(sum by (src_ip) (count_over_time({host=\"opnsense\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
+          "expr": "count(sum by (src_ip) (count_over_time({job=\"suricata\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
           "refId": "A",
           "queryType": "instant"
         }
@@ -248,7 +248,7 @@
         "type": "loki",
         "uid": "loki"
       },
-      "description": "Everything the firewall sent, alerts or not, including rule reload messages. Zero across a range that includes a daily rule update means the syslog path is broken, not that the network is quiet.",
+      "description": "Everything Suricata sent (job=suricata), alerts or not, including rule reload messages. The firewall's other streams (filter log, resolver log, pfstats) are not counted. Zero across a range that includes a daily rule update means the syslog path is broken, not that the network is quiet.",
       "fieldConfig": {
         "defaults": {
           "noValue": "0",
@@ -296,7 +296,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "sum(count_over_time({host=\"opnsense\"} [$__range]))",
+          "expr": "sum(count_over_time({job=\"suricata\"} [$__range]))",
           "refId": "A",
           "queryType": "instant"
         }
@@ -407,7 +407,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "sum by (alert_severity) (count_over_time({host=\"opnsense\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__auto]))",
+          "expr": "sum by (alert_severity) (count_over_time({job=\"suricata\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__auto]))",
           "refId": "A",
           "queryType": "range",
           "legendFormat": "severity {{alert_severity}}"
@@ -544,7 +544,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "topk(20, sum by (alert_severity, alert_signature, alert_category, alert_signature_id) (count_over_time({host=\"opnsense\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
+          "expr": "topk(20, sum by (alert_severity, alert_signature, alert_category, alert_signature_id) (count_over_time({job=\"suricata\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
           "refId": "A",
           "queryType": "instant"
         }
@@ -635,7 +635,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "topk(10, sum by (src_ip) (count_over_time({host=\"opnsense\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
+          "expr": "topk(10, sum by (src_ip) (count_over_time({job=\"suricata\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
           "refId": "A",
           "queryType": "instant"
         }
@@ -747,7 +747,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "topk(10, sum by (dest_ip, dest_port, proto) (count_over_time({host=\"opnsense\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
+          "expr": "topk(10, sum by (dest_ip, dest_port, proto) (count_over_time({job=\"suricata\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" [$__range])))",
           "refId": "A",
           "queryType": "instant"
         }
@@ -814,7 +814,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "{host=\"opnsense\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" | line_format \"sev {{.alert_severity}}  {{.alert_signature}}  {{.src_ip}}:{{.src_port}} -> {{.dest_ip}}:{{.dest_port}} {{.proto}}  sid {{.alert_signature_id}}\"",
+          "expr": "{job=\"suricata\"} |= \"event_type\" |~ \"(?i)$search\" | json | event_type=\"alert\" | alert_severity=~\"$severity\" | __error__=\"\" | line_format \"sev {{.alert_severity}}  {{.alert_signature}}  {{.src_ip}}:{{.src_port}} -> {{.dest_ip}}:{{.dest_port}} {{.proto}}  sid {{.alert_signature_id}}\"",
           "refId": "A",
           "queryType": "range"
         }
@@ -852,7 +852,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "{host=\"opnsense\"} != \"event_type\"",
+          "expr": "{job=\"suricata\"} != \"event_type\"",
           "refId": "A",
           "queryType": "range"
         }

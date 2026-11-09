@@ -1,0 +1,1050 @@
+apiVersion: 1
+
+# Tenant and lease VM monitoring. The in-house work VMs (segment tenant,
+# 10.10.60.0/24, firewall interface vtnet2) and the leased VMs (segment LEASE,
+# 10.10.90.0/24, vtnet5) are logged on the firewall and on the hypervisor,
+# with limits listed in security/docs/wiring/index.md under "What is not
+# covered". These rules watch that data for abuse, floods and a firewall under
+# strain. The Tenant Activity dashboard (uid tenant-activity) charts the
+# same data, and each rule's __panelId__ opens the panel behind it.
+#
+# WHERE THE DATA COMES FROM (security/docs/wiring/index.md):
+#   job="pfstats"       one logfmt line a minute from the firewall: pf state
+#                       table, limit hits, banned sources, interface counters
+#   job="filterlog"     pf's filter log: a line per new flow a logging pass rule
+#                       lets through, and per block
+#   job="unbound"       the resolver's query and reply log
+#   job="suricata"      EVE alerts; in_iface says which interface saw it
+#   job="pve-firewall"  what the Proxmox firewall dropped, per chain and VMID
+#   fleet_pve_*         Prometheus series written by roles/pve_guest_metrics
+#
+# NOT route: security. The matrix-security contact point and its template are
+# written for Suricata signatures (alert_signature, alert_signature_id), which
+# none of these rules carry, so a message through it would arrive with an empty
+# title. These go by severity instead: critical to the fleet room on the fast
+# route, warning on the default route (policies.yaml). The static `host` label
+# on the Loki rules is what makes the fleet message read "... on opnsense";
+# an aggregated Loki result has no labels of its own.
+#
+# NO DATA. noDataState: OK throughout, except tenant-pf-stats-stopped. A
+# stream with no lines in the window, no SMTP attempt, no probing, no alert, is
+# the healthy case and returns nothing. The dead-man rule is the exception
+# because an empty window is exactly what it exists to catch.
+#
+# LOKI QUERIES USE A SINGLE-CAPTURE REGEXP, NOT `| logfmt`. On a pfstats line
+# logfmt turns every field into a label, an aggregation then sees dozens of
+# series and the rule stops returning one number. The regexp pulls out the one
+# value wanted as `v`. Edit one of these expressions and run it in Explore
+# first: a LogQL typo fails at evaluation time, not at provisioning time.
+#
+# Escaping: every expression is in a block scalar, so backslashes reach LogQL
+# unchanged. LogQL then reads "\\b" in a double-quoted string as a regexp \b.
+groups:
+  - orgId: 1
+    name: tenant
+    folder: Security
+    interval: 1m
+    rules:
+      # ---------------------------------------------------------------
+      # Protects the firewall's state table. pf keeps one state per
+      # connection, the table has a fixed size (states_max), and a full table
+      # refuses new connections for EVERY segment, not just the one that
+      # filled it. A leased VM opening connections in a loop is the usual
+      # cause. This is the early warning and fires above 50%; the rule below
+      # is the page and fires above 80%. The thresholds nest, so a table above
+      # 80% is also above 50% and shows both, as the disk rules in rules-
+      # resources.yaml do.
+      - uid: tenant-pf-state-table-high
+        title: Firewall State Table Over 50%
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+          host: opnsense
+        annotations:
+          summary: "The firewall's pf state table is over 50% full."
+          runbook: "Tenant Activity, Flows by VM, names the source. On the firewall: pfctl -si shows current entries; pfctl -ss | grep <vm-ip> | wc -l counts one VM's states. Rate-limit or stop that VM. Raising the table size is the last resort."
+          __dashboardUid__: tenant-activity
+          __panelId__: "5"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                max(max_over_time({job="pfstats"} | regexp "\\bstates=(?P<v>[0-9]+)" | unwrap v [5m])) / max(max_over_time({job="pfstats"} | regexp "\\bstates_max=(?P<v>[0-9]+)" | unwrap v [5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.5]}
+
+      # ---------------------------------------------------------------
+      # Same query as above, the page threshold. At 100% new connections fail
+      # for the whole estate while established ones keep working, so it
+      # presents as "the network is fine but nothing new connects".
+      - uid: tenant-pf-state-table-critical
+        title: Firewall State Table Over 80%
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+          host: opnsense
+        annotations:
+          summary: "The firewall's pf state table is over 80% full. At 100% new connections fail on every segment."
+          runbook: "Act now. Find the source (Tenant Activity, Flows by VM; pfctl -ss | grep <vm-ip> | wc -l on the firewall) and stop that guest from the Proxmox host: qm stop <vmid>."
+          __dashboardUid__: tenant-activity
+          __panelId__: "5"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                max(max_over_time({job="pfstats"} | regexp "\\bstates=(?P<v>[0-9]+)" | unwrap v [5m])) / max(max_over_time({job="pfstats"} | regexp "\\bstates_max=(?P<v>[0-9]+)" | unwrap v [5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0.8]}
+
+      # ---------------------------------------------------------------
+      # Protects the other segments from one noisy source. pf can cap the
+      # states and the connection rate of a single source address, and
+      # src_limit_hits counts the times that cap refused something. The
+      # counter is cumulative, so the rule compares the highest and the lowest
+      # value in the last ten minutes: any difference is a hit in the window.
+      # A firewall reboot resets the counter, which reads as one false hit
+      # right after it. for: 0m because a hit is an event; the ten-minute
+      # window is what makes it resolve by itself.
+      - uid: tenant-pf-src-limit-hit
+        title: Firewall Per-Source Limit Hit
+        condition: C
+        for: 0m
+        labels:
+          severity: warning
+          host: opnsense
+        annotations:
+          summary: "A source address hit the firewall's per-source state or connection limit in the last 10 minutes."
+          runbook: "Tenant Activity, Flows by VM, names the source and Top Destinations shows what it is hammering. A leased VM doing this is scanning or flooding; a work VM is usually a runaway client. Stop it from the Proxmox host if it continues: qm stop <vmid>. Right after a firewall reboot a single hit is a counter reset, not a real hit."
+          __dashboardUid__: tenant-activity
+          __panelId__: "6"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                max(max_over_time({job="pfstats"} | regexp "\\bsrc_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) - min(min_over_time({job="pfstats"} | regexp "\\bsrc_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # The other pf limit counter, state_limit_hits: a state could not be
+      # created because a limit was reached. Same cumulative-counter handling
+      # as the per-source rule, same reboot caveat. If the state table rules
+      # above are quiet this points at a limit set on a single firewall rule
+      # rather than at the table as a whole.
+      - uid: tenant-pf-state-limit-hit
+        title: Firewall State Limit Hit
+        condition: C
+        for: 0m
+        labels:
+          severity: warning
+          host: opnsense
+        annotations:
+          summary: "The firewall refused to create new states because a state limit was reached in the last 10 minutes."
+          runbook: "Check the State Table Usage panel on Tenant Activity first. If the table is not full, a per-rule limit was reached: Tenant Activity, Flows by VM, shows who. Firewall > Rules in the OPNsense UI shows which rule carries the limit."
+          __dashboardUid__: tenant-activity
+          __panelId__: "6"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                max(max_over_time({job="pfstats"} | regexp "\\bstate_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) - min(min_over_time({job="pfstats"} | regexp "\\bstate_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # A source that exceeds its connection-rate limit lands in the virusprot
+      # table and is cut off for up to an hour. `banned` is the size of that
+      # table, so any value above zero means a leased or work VM was blocked
+      # for flooding, and its owner has lost connectivity. Critical because
+      # someone is affected right now and the VM is probably compromised or
+      # abusing the link.
+      - uid: tenant-pf-source-banned
+        title: Firewall Banned a Source
+        condition: C
+        for: 0m
+        labels:
+          severity: critical
+          host: opnsense
+        annotations:
+          summary: "The firewall banned a source for exceeding its connection-rate limit. That VM is cut off for up to an hour."
+          runbook: "On the firewall: pfctl -t virusprot -T show lists the banned addresses. Tenant Activity, Flows by VM, shows what the VM was doing. Once it is dealt with, pfctl -t virusprot -T delete <ip> lifts the ban early."
+          __dashboardUid__: tenant-activity
+          __panelId__: "6"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                max(max_over_time({job="pfstats"} | regexp "\\bbanned=(?P<v>[0-9]+)" | unwrap v [5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # The dead-man switch for everything above. The firewall writes one
+      # pfstats line a minute, so ten minutes should hold about ten. Fewer
+      # than five means the sender, the syslog path or Loki is down, and every
+      # pfstats rule in this file is blind: with no data they would all report
+      # healthy. noDataState: Alerting is the point of this rule, an empty
+      # window is exactly the failure it exists to catch, which is the
+      # opposite of every other rule in the file.
+      - uid: tenant-pf-stats-stopped
+        title: Firewall Stats Stopped
+        condition: C
+        for: 5m
+        labels:
+          severity: critical
+          host: opnsense
+        annotations:
+          summary: "Fewer than 5 firewall stats lines arrived in the last 10 minutes. The state table, limit and ban alerts cannot see anything."
+          runbook: "Check the firewall (the pfstats cron job, then syslog > Remote in the OPNsense UI), then the listener on the central LXC: journalctl -u alloy -n 50. Port 5514/tcp is the syslog listener; see the security module's wiring page."
+          __dashboardUid__: tenant-activity
+          __panelId__: "1"
+        noDataState: Alerting
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                count_over_time({job="pfstats"} [10m])
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [5]}
+
+      # ---------------------------------------------------------------
+      # Protects the firewall and the uplink from a flood sent by leased VMs.
+      # vtnet5 is the lease interface, and ipkts counted on it is what the
+      # lease VMs send in, summed over every lease. Each lease is policed to
+      # 20000 packets a second on its own tap device (LEASE_PPS), so one VM
+      # can never push this sum past 20000 for long, and a threshold at 20000
+      # would never fire for a single lease. 15000 is 75% of that ceiling: one
+      # lease living near its ceiling, or several together, for five minutes
+      # is far above a normal workload and typical of a DoS source or a scan.
+      # Lease Packet Limit Reached below is the exact per-guest counter.
+      # rate_counter reads the cumulative counter, so a firewall reboot reads
+      # as one low sample, not a spike.
+      - uid: tenant-lease-packet-rate-high
+        title: Lease Segment Packet Rate High
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+          host: opnsense
+        annotations:
+          summary: "Leased VMs are sending more than 15000 packets/s into the firewall, 75% of one lease's 20000 packets/s ceiling."
+          runbook: "Tenant Activity, Interface Packet Rates, then Flows by VM and Top Destinations to find the VM and its target. A flood or scan from a lease VM is a breach of the hosting terms: stop the guest from the Proxmox host (qm stop <vmid>) and look at the Suricata and Blocked panels."
+          __dashboardUid__: tenant-activity
+          __panelId__: "8"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum(rate_counter({job="pfstats"} | regexp "vtnet5_ipkts=(?P<v>[0-9]+)" | unwrap v [5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [15000]}
+
+      # ---------------------------------------------------------------
+      # The work-VM counterpart, on vtnet2. The threshold is higher because
+      # these are in-house machines and a big transfer or a build pulling
+      # dependencies is normal there; 50000 packets a second for five minutes
+      # is still well past that.
+      - uid: tenant-work-packet-rate-high
+        title: Work Segment Packet Rate High
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+          host: opnsense
+        annotations:
+          summary: "Work VMs are sending more than 50000 packets/s into the firewall."
+          runbook: "Tenant Activity, Interface Packet Rates, then Flows by VM. If the VM is doing something deliberate, ignore it; otherwise suspect a runaway process or a compromised guest and check the Suricata panel."
+          __dashboardUid__: tenant-activity
+          __panelId__: "8"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum(rate_counter({job="pfstats"} | regexp "vtnet2_ipkts=(?P<v>[0-9]+)" | unwrap v [5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [50000]}
+
+      # ---------------------------------------------------------------
+      # The exact per-guest view of the same thing. The hypervisor polices
+      # each lease to a packets-per-second ceiling on its tap device and
+      # counts the packets that exceeded it, per guest
+      # (fleet_pve_tenant_policed_packets_total). More than 100 a second
+      # dropped, averaged over fifteen minutes, for five minutes means one
+      # guest is being held at its ceiling, which a normal workload never
+      # reaches. The window is fifteen minutes because the exporter writes a
+      # new value only every five minutes, with up to a minute of jitter, so a
+      # shorter window can hold no update and read 0. The segment packet rate
+      # rule cannot name the guest, and is blind to a single lease at the
+      # ceiling unless its threshold sits below it. The counter resets when
+      # the VM restarts; rate() handles that. No data is normal: no leases, or
+      # a lease without the filter, has no series.
+      - uid: tenant-lease-packet-limit-reached
+        title: Lease Packet Limit Reached
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A leased VM has averaged more than 100 packets/s dropped by its packet-rate ceiling over the last 15 minutes."
+          runbook: "Tenant Activity, Packets Dropped by the Lease Limit, names the guest by vmid. It is sending more than the ceiling allows, usually a flood or a scan: Flows by VM and Top Destinations show where, and qm stop <vmid> on the Proxmox host stops it."
+          __dashboardUid__: tenant-activity
+          __panelId__: "21"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                sum by (host, vmid, guest) (rate(fleet_pve_tenant_policed_packets_total[15m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [100]}
+
+      # ---------------------------------------------------------------
+      # Protects against a lease running with no packet-rate ceiling at all. A
+      # running lease must carry its police filter (preference 5) on the
+      # ingress of its tap device. Proxmox's hot NIC update deletes it, and
+      # until it is applied again nothing limits that VM, so the other rules
+      # in this file would be the only defence. The gauge
+      # fleet_pve_tenant_packet_limit_active is 1 while a running lease has
+      # the filter and 0 when it lost it. noDataState: OK because no series is
+      # normal: no running leases, or the exporter not deployed. A silent
+      # exporter is Proxmox Guest Exporter Stale.
+      - uid: tenant-lease-packet-limit-missing
+        title: Lease Packet Limit Missing
+        condition: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A running leased VM has lost its packet-rate ceiling, so nothing limits its packet rate."
+          runbook: "On the Proxmox host re-apply the filter: /var/lib/vz/snippets/lease-limits.pl <vmid> post-start, or restart the VM. The vmid is in the alert labels and on the Lease Packet Limit Active panel of Tenant Activity."
+          __dashboardUid__: tenant-activity
+          __panelId__: "22"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                min by (host, vmid, guest) (fleet_pve_tenant_packet_limit_active)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+
+      # ---------------------------------------------------------------
+      # Protects against a tenant or lease VM running with no hypervisor
+      # firewall at all. Every protection on the host side (ipfilter, which
+      # pins the VM to its address, macfilter, and the tenant and lease group
+      # rules that drop SMTP and private ranges) is applied by the Proxmox
+      # firewall, so a VM it is not filtering is unchecked and the rules about
+      # drops in this file go quiet for it. The gauge
+      # fleet_pve_tenant_firewall_active is 1 only when the datacenter
+      # firewall is on, the VM has firewall=1 on net0, its .fw file has
+      # enable: 1 and the right GROUP, and its tap chain exists; any of those
+      # failing reads 0. noDataState: OK: no tenant VM running, or the
+      # exporter not deployed, has no series; a silent exporter is Proxmox
+      # Guest Exporter Stale.
+      - uid: tenant-firewall-not-filtering
+        title: Tenant Firewall Not Filtering
+        condition: C
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The Proxmox firewall is not filtering a tenant or lease VM, so ipfilter, macfilter and the tenant and lease group rules do not apply to it."
+          runbook: "The hypervisor firewall is not filtering this VM. Check pve-firewall status; systemctl list-timers | grep pve-fw-undo; the VM's net0 for firewall=1; and /etc/pve/firewall/<vmid>.fw for enable: 1 and the right group. Stop the VM (qm stop <vmid>) if it cannot be restored quickly."
+          __dashboardUid__: tenant-activity
+          __panelId__: "24"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                min by (host, vmid, guest, segment) (fleet_pve_tenant_firewall_active)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+
+      # ---------------------------------------------------------------
+      # A severity 1 Suricata alert on vtnet5, the lease interface. Nothing a
+      # leased VM does should look like a high-severity signature, so one is
+      # worth a page. Lower severities are the next rule: the known false
+      # positive here (ET SCAN Potential SSH Scan OUTBOUND, raised by git over
+      # SSH) is not severity 1, and a page for it would teach the room to
+      # ignore this rule. security-suricata-alert in rules-security.yaml
+      # covers severity 1 and 2 across the whole firewall and drops known-
+      # noise SIDs; this one is scoped to the lease interface and has no
+      # exclusions. It counts alerts by EVE's own in_iface and alert_severity
+      # fields, parsed with | json as rules-security.yaml does. for: 0m, the
+      # ten-minute window makes it resolve by itself.
+      - uid: tenant-lease-suricata-alert
+        title: Suricata Alert on Lease Segment
+        condition: C
+        for: 0m
+        labels:
+          severity: critical
+          host: opnsense
+        annotations:
+          summary: "Suricata raised a severity 1 alert on the lease interface (vtnet5) in the last 10 minutes."
+          runbook: "Tenant Activity, Suricata Alerts by Interface and Signature, then the Suricata Alerts dashboard with Search set to the lease VM's address (10.10.90.x). If it is genuine, stop the guest from the Proxmox host: qm stop <vmid>."
+          __dashboardUid__: tenant-activity
+          __panelId__: "13"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum(count_over_time({job="suricata"} |= "\"event_type\":\"alert\"" |~ "\"in_iface\":\"vtnet5\"" | json | alert_severity="1" [10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # Suricata alerts of any severity on vtnet5. Three or more in ten
+      # minutes, because the lower severities include the known false positive
+      # (ET SCAN Potential SSH Scan OUTBOUND, raised by git over SSH), and one
+      # or two stray alerts are not worth a message. A burst is worth a look.
+      # Severity 1 alerts are counted here too and have their own critical
+      # rule above.
+      - uid: tenant-lease-suricata-alerts
+        title: Suricata Alerts on Lease Segment (lower severity)
+        condition: C
+        for: 0m
+        labels:
+          severity: warning
+          host: opnsense
+        annotations:
+          summary: "Suricata raised 3 or more alerts of any severity on the lease interface (vtnet5) in the last 10 minutes."
+          runbook: "Tenant Activity, Suricata Alerts by Interface and Signature. If only ET SCAN Potential SSH Scan OUTBOUND is firing, the lease VM is probably running git over SSH: confirm with the tenant before disabling that SID in OPNsense under Services > Intrusion Detection > Rules. Anything else needs a look at the VM."
+          __dashboardUid__: tenant-activity
+          __panelId__: "13"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum(count_over_time({job="suricata"} |= "\"event_type\":\"alert\"" |~ "\"in_iface\":\"vtnet5\"" [10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gte, params: [3]}
+
+      # ---------------------------------------------------------------
+      # Suricata on vtnet2, the work interface. Five or more in ten minutes,
+      # not any: a known false positive already exists here (ET SCAN Potential
+      # SSH Scan OUTBOUND, raised by git over SSH), and one stray alert on in-
+      # house VMs is not worth a message. If that one signature is the only
+      # thing firing, disable it by SID in OPNsense instead of raising this
+      # threshold.
+      - uid: tenant-work-suricata-alerts
+        title: Suricata Alerts on Work Segment
+        condition: C
+        for: 0m
+        labels:
+          severity: warning
+          host: opnsense
+        annotations:
+          summary: "Suricata raised 5 or more alerts on the work interface (vtnet2) in the last 10 minutes."
+          runbook: "Tenant Activity, Suricata Alerts by Interface and Signature. If it is only ET SCAN Potential SSH Scan OUTBOUND (git over SSH), disable that SID in OPNsense under Services > Intrusion Detection > Rules; anything else needs a look at the VM."
+          __dashboardUid__: tenant-activity
+          __panelId__: "13"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum(count_over_time({job="suricata"} |= "\"event_type\":\"alert\"" |~ "\"in_iface\":\"vtnet2\"" [10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gte, params: [5]}
+
+      # ---------------------------------------------------------------
+      # Protects the home connection's IP reputation. The Proxmox firewall
+      # drops and logs outbound port 25 from tenant and lease VMs; a VM that
+      # tries is sending spam or has been taken over to. The chain says which
+      # segment, the vmid label says which guest. PVE rate-limits each log
+      # rule to one line a second, so the count understates the attempts; zero
+      # versus non-zero is the signal. The Prometheus counter version at the
+      # end of this file is the exact count.
+      - uid: tenant-smtp-attempt
+        title: Tenant VM Attempted SMTP
+        condition: C
+        for: 0m
+        labels:
+          severity: critical
+          host: t7920
+        annotations:
+          summary: "A tenant or lease VM tried to open an SMTP connection (port 25) in the last 10 minutes. The Proxmox firewall dropped it."
+          runbook: "Tenant Activity, Blocked Attempts by Chain and VM, gives the vmid. Stop the guest from the Proxmox host (qm stop <vmid>) and check the VM before it is started again. For a lease VM this is a breach of the hosting terms."
+          __dashboardUid__: tenant-activity
+          __panelId__: "18"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum(count_over_time({job="pve-firewall", chain=~"GROUP-(tenant|lease)-OUT"} |= "DPT=25 " [10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # Protects the rest of the LAN from a tenant. The Proxmox firewall drops
+      # tenant and lease traffic to private addresses, so a VM scanning the
+      # LAN or looking for the router fills this log. Only the OUTBOUND chains
+      # (GROUP-tenant-OUT and GROUP-lease-OUT) count: a packet dropped in an
+      # IN chain is traffic TO a VM, labelled with the receiving VM, and can
+      # be caused by another guest (multicast, for one), so counting it would
+      # name an innocent guest. The work VM's Tailscale client probes LAN
+      # peers on UDP 41641 about every five seconds, which is benign and would
+      # trip any threshold, so those lines are excluded (the trailing space in
+      # "DPT=41641 " ends the match at the end of the field). More than twenty
+      # outbound drops in ten minutes is a deliberate probe, not a stray
+      # packet. PVE rate-limits each log rule to a line a second, so this
+      # understates the packets.
+      - uid: tenant-private-address-probing
+        title: Tenant VM Probing Private Addresses
+        condition: C
+        for: 0m
+        labels:
+          severity: warning
+          host: t7920
+        annotations:
+          summary: "Tenant or lease VMs had more than 20 outbound packets to private addresses dropped in the last 10 minutes (Tailscale excluded)."
+          runbook: "Tenant Activity, Blocked Attempts by Chain and VM, gives the vmid of the guest that sent them; the pve-firewall log lines carry DST= and DPT= for where it was aiming. Stop the guest if it keeps going: qm stop <vmid>."
+          __dashboardUid__: tenant-activity
+          __panelId__: "17"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum(count_over_time({job="pve-firewall", chain=~"GROUP-(tenant|lease)-OUT"} != "DPT=41641 " [10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [20]}
+
+      # ---------------------------------------------------------------
+      # Protects against malware phoning home through a domain-generation
+      # algorithm, which tries hundreds of random names and gets NXDOMAIN for
+      # nearly all of them, and against a misconfigured client in a retry
+      # loop. Counts reply lines from Unbound with NXDOMAIN for the work
+      # (10.10.60.x) and lease (10.10.90.x) clients. Only plain DNS on port 53
+      # reaches Unbound (a lease VM that asks another resolver is redirected
+      # to it). DNS over TLS (TCP 853) is blocked on the lease segment only,
+      # DNS over QUIC (UDP 853) is being blocked there, and DNS over HTTPS, or
+      # DNS inside a tenant's own Tailscale tunnel, is not visible at all. A
+      # storm here is real; a quiet count is not proof that nothing was
+      # resolved.
+      - uid: tenant-dns-nxdomain-storm
+        title: Tenant DNS NXDOMAIN Storm
+        condition: C
+        for: 0m
+        labels:
+          severity: warning
+          host: opnsense
+        annotations:
+          summary: "Tenant or lease clients received more than 300 NXDOMAIN replies in 5 minutes."
+          runbook: "Tenant Activity, NXDOMAIN Replies per Client, names the client; Top DNS Names shows what it asked for. Random-looking names are malware; one name repeated is a broken client or a dead service."
+          __dashboardUid__: tenant-activity
+          __panelId__: "16"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum(count_over_time({job="unbound"} |= "NXDOMAIN" |~ " 10\\.10\\.(60|90)\\.[0-9]+ " [5m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [300]}
+
+      # ---------------------------------------------------------------
+      # Protects the state table and the logging pipeline from a connection
+      # flood before either shows it. The pass rules on vtnet2 and vtnet5 log,
+      # so a new flow they pass is one filterlog line and lines per minute
+      # tracks flows per minute. It is a floor, not a count: traffic inside a
+      # tenant's own Tailscale tunnel, or through their exit node, is one flow
+      # to a Tailscale relay or peer, not the inner flows. Above 3000 a minute
+      # for five minutes is a scan or a connection-per-request loop; normal
+      # use is a few dozen. It also measures what this logging costs Loki,
+      # which is why it is a warning and not a page.
+      - uid: tenant-new-flow-rate-high
+        title: Tenant New Flow Rate High
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+          host: opnsense
+        annotations:
+          summary: "Tenant or lease VMs opened more than 3000 new flows per minute for 5 minutes."
+          runbook: "Tenant Activity, New Flows per Minute and Flows by VM, then Top Destinations. One destination on one port is a flood or a retry loop; many destinations is a scan. Stop the guest from the Proxmox host if it is not deliberate: qm stop <vmid>."
+          __dashboardUid__: tenant-activity
+          __panelId__: "7"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 60, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum(count_over_time({job="filterlog", iface=~"vtnet(2|5)", action="pass"} [1m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [3000]}
+
+      # ---------------------------------------------------------------
+      # The hypervisor's view of the same problem as the firewall state table,
+      # per VM: fleet_pve_tenant_conntrack_entries counts the conntrack
+      # entries of each tenant or lease source address, from the series
+      # roles/pve_guest_metrics writes. 20000 entries held by one VM for ten
+      # minutes is a flood, a scan, or a client leaking connections. It is
+      # independent of the firewall VM, so it still works when pfstats is
+      # down.
+      - uid: tenant-conntrack-high
+        title: Tenant VM Conntrack Entries High
+        condition: C
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A tenant or lease VM holds more than 20000 conntrack entries on the hypervisor."
+          runbook: "Tenant Activity, Conntrack Entries per Tenant VM, names it. On the Proxmox host: conntrack -L -s <vm-ip> | head shows what the entries are. Stop the guest if it is abusing the link: qm stop <vmid>."
+          __dashboardUid__: tenant-activity
+          __panelId__: "10"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                max by (host, vmid, guest, ip, segment) (fleet_pve_tenant_conntrack_entries)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [20000]}
+
+      # ---------------------------------------------------------------
+      # Protects the uplink and the neighbours from one guest using all of it.
+      # The lease cap is 12.5 MB/s, so 10 MB/s averaged over fifteen minutes
+      # is a guest living at its cap. The guest NIC is read from the
+      # hypervisor's side of its virtual cable, so the host's RECEIVE counter
+      # is what the guest SENDS, and the name join is the one the Guest
+      # Traffic dashboard uses. The 15 minute average is the persistence, so
+      # for: 0m.
+      #
+      # Only guests on the tenant and lease bridges count: the join selects
+      # fleet_pve_guest_nic_info on its bridge label, bridge=~"vmbr(2|5)".
+      # Without that the firewall VM's own taps are included, and any large
+      # download on the LAN pages. If a bridge is renamed or a segment moves,
+      # change the matcher, and the same one on the Egress per Guest panel and
+      # the Guest picker.
+      - uid: tenant-guest-egress-high
+        title: Guest Sending Over 10 MB/s
+        condition: C
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A tenant or lease guest has averaged more than 10 MB/s sent over the last 15 minutes."
+          runbook: "Tenant Activity, Egress per Guest, shows it; Top Destinations shows where it is going. A lease VM at the cap is expected to be throttled by the cap itself, so look for abuse (a flood, a mirror) before assuming a fault."
+          __dashboardUid__: tenant-activity
+          __panelId__: "9"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                sum by (host, guest, nic) (
+                  rate(node_network_receive_bytes_total{device=~"tap[0-9]+i[0-9]+"}[15m])
+                  * on (host, device) group_left (guest, nic) fleet_pve_guest_nic_info{bridge=~"vmbr(2|5)"}
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [10000000]}
+
+      # ---------------------------------------------------------------
+      # The exact-count twin of tenant-smtp-attempt. The Loki rule reads the
+      # Proxmox firewall log, which PVE rate-limits to a line a second and
+      # which depends on log shipping; this one reads the dropped-packet
+      # counter that roles/pve_guest_metrics keeps for the smtp rule, so it
+      # still fires if the log path is broken. The counter carries a family
+      # label (ipv4 or ipv6); the sum over it is deliberate, so an IPv6 SMTP
+      # attempt counts too. They overlap on purpose and both land in the same
+      # room.
+      - uid: tenant-smtp-dropped-counter
+        title: Tenant SMTP Drops Counted
+        condition: C
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The Proxmox firewall's SMTP rule dropped packets in the last 10 minutes."
+          runbook: "The vmid is not in this counter: read it from Tenant Activity, Blocked Attempts by Chain and VM. Stop the guest from the Proxmox host (qm stop <vmid>) and check it before it runs again."
+          __dashboardUid__: tenant-activity
+          __panelId__: "19"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                sum by (host) (increase(fleet_pve_firewall_dropped_packets_total{rule="smtp"}[10m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+
+      # ---------------------------------------------------------------
+      # Every hypervisor series these rules read (guest names, conntrack
+      # entries, drops, policed packets, the limit gauge) is written by one
+      # script, fleet-pve-guests, every five minutes. When a read fails it
+      # keeps the previous file, so a broken run does not make series
+      # disappear: they sit there unchanged and the rules keep judging old
+      # values. The collection timestamp is the one value that stops moving,
+      # so its age is how a failure shows. 1200 seconds is four missed runs.
+      # Like fleet-smart-collector-stale, noDataState: OK: only a host that
+      # runs the role has the series.
+      - uid: tenant-guest-exporter-stale
+        title: Proxmox Guest Exporter Stale
+        condition: C
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The Proxmox guest exporter has not completed a run for over 20 minutes, so the guest names and every tenant series from the hypervisor are out of date."
+          runbook: "systemctl status fleet-pve-guests.timer; journalctl -u fleet-pve-guests.service -n 50. A failed pvesh read for one guest keeps the old file, and the journal names the guest."
+          __dashboardUid__: tenant-activity
+          __panelId__: "23"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 3600, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: A
+              editorMode: code
+              instant: true
+              range: false
+              expr: |
+                time() - max by (host) (fleet_pve_guests_collection_timestamp_seconds)
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions:
+                - evaluator: {type: gt, params: [1200]}

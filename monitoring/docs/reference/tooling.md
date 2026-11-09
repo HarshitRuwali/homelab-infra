@@ -190,3 +190,27 @@ an nginx location, or `python3 -m http.server` for a quick look.
 
 Nothing about these docs depends on GitHub. If any of this should not be
 public, serve `site/` behind your existing auth and delete the workflow.
+
+## Checking the tenant rules and dashboard
+
+`ansible/tests/tenant-monitoring-test.py` guards the tenant monitoring files
+against drift. It needs PyYAML, contacts no host and needs no network:
+
+```bash
+python3 -I ansible/tests/tenant-monitoring-test.py   # from the repository root
+```
+
+It parses `rules-tenant.yaml` and `tenant-activity.json`, checks that rule uids
+and titles are unique across every rules file, that each tenant rule has a
+severity and a runbook, that each dashboard panel has a datasource and that
+every rule points at a real panel. It then confirms the files are picked up by
+`grafana_alerting_static_files`, the dashboard role, the LXC installer and the
+Compose mounts, and that [Alerting](../monitoring/alerting.md#tenant-and-lease-alerts),
+[Dashboards](../monitoring/dashboards.md#tenant-activity), [Retention](../operations/retention.md#loki-retention-for-the-tenant-logs)
+and the security module's wiring page still say what the files do. It does not
+run a LogQL or PromQL query: that needs a live Loki or Prometheus, so test an
+edited expression in Grafana Explore first.
+
+`.github/workflows/checks.yml` runs only the release checks and
+`deploy-docs.yml` only builds the docs, so neither runs this test: run it by
+hand before pushing a change to these files.

@@ -154,6 +154,9 @@ except the physical NICs.
 `uid: suricata-alerts`: what the IDS on the firewall is flagging. Suricata runs
 on OPNsense in alert-only mode and ships its EVE alerts as syslog to the central
 collector, which stores them in Loki as `host="opnsense"`, `job="suricata"`.
+Every query selects `job="suricata"`: the firewall's other streams (filter log,
+resolver log, `pfstats`) share `host="opnsense"` and would be scanned for
+nothing.
 Setup and the end-to-end check are in the security module's wiring page,
 section 2.
 
@@ -162,7 +165,7 @@ section 2.
 | Alerts | every alert in range, after the pickers |
 | **High Severity** | severity 1 only, and it ignores the Severity picker so a narrowed view never hides one |
 | Signatures / Source Addresses | distinct rules that fired, and distinct sources behind them |
-| **Firewall Log Lines** | everything the firewall sent, alerts or not; red at zero |
+| **Firewall Log Lines** | everything Suricata sent, alerts or not; red at zero. Counts `job="suricata"` only: the firewall's other streams would hide a broken Suricata path |
 | Alerts Over Time | per interval, stacked by severity |
 | Top Signatures / Sources / Destinations | the rules, hosts and ports doing the talking |
 | Recent Alerts | one line per alert with its SID; expand for every field |
@@ -184,6 +187,79 @@ a signature all work.
     within minutes on a normal LAN. Disable a rule like that by SID under
     **Services > Intrusion Detection > Rules** rather than filtering it out of
     the dashboard; a filter hides it here and nowhere else.
+
+## Tenant Activity
+
+`uid: tenant-activity`: what the work VMs (`vtnet2`, 10.10.60.0/24) and the
+leased VMs (`vtnet5`, 10.10.90.0/24) are doing. From Loki it reads the
+firewall's filter log and `pfstats` line, Unbound's query log, Suricata's alerts
+and the Proxmox firewall's drops; from Prometheus, the hypervisor's view of each
+guest NIC. Each rule in `rules-tenant.yaml` opens one of its panels; the rules
+are in [Alerting](alerting.md#tenant-and-lease-alerts). It shows what the
+firewall and the hypervisor saw, which is not everything a tenant did: see
+[what is not covered](https://harshitruwali.github.io/homelab-infra/security/wiring/#what-is-not-covered).
+
+| Panel | Query intent |
+|---|---|
+| State Table Used | pf state table fill, red at 80% |
+| Banned Sources | sources in the `virusprot` table now |
+| Limit Hits, Selected Range | per-source and state limit refusals in the time range |
+| Suricata Alerts, Selected Segment | alerts on the selected interface in the range |
+| State Table Usage | fill level over time, with the 50% and 80% alert lines |
+| Limit Hits and Banned Sources | the three small counters together; all should be zero |
+| New Flows per Minute | passed and blocked new flows per interface |
+| Interface Packet Rates | packets/s in and out of the lease and work interfaces; the lease alert is at 15000, 75% of one lease's ceiling |
+| Egress per Guest | what each guest on the tenant and lease bridges (`vmbr2`, `vmbr5`) sends, from the tap device, with the 10 and 12.5 MB/s lines |
+| Conntrack Entries per Tenant VM | conntrack entries per tenant or lease address |
+| Packets Dropped by the Lease Limit | packets/s each lease's packet-rate ceiling dropped, per guest, averaged over 15 minutes, with the 100 packets/s alert line |
+| Lease Packet Limit Active | 1 while a running lease has its ceiling, 0 when it lost it |
+| Tenant Firewall Active | 1 while the Proxmox firewall is filtering a tenant or lease VM, 0 when it is not |
+| Guest Exporter Age | seconds since the Proxmox guest exporter last completed a run; yellow past 10 minutes, red past 20 |
+| Top Destinations by Flow Count | where the selected segment's new flows went |
+| Flows by VM | which VM opened them, by source address |
+| Suricata Alerts by Interface and Signature | what the IDS flagged, per interface |
+| Top DNS Names | the names the clients asked Unbound for, most asked first; plain DNS on port 53 only |
+| DNS Queries per Client | queries per client address over time; plain DNS on port 53 only |
+| NXDOMAIN Replies per Client | clients getting "no such name" replies, the sign of a generated-domain scan |
+| Blocked Attempts by Chain | what the Proxmox firewall dropped, per rule chain, Tailscale probing left out; an IN chain counts packets to a VM, so only OUT chains feed the alerts |
+| Blocked Attempts by Chain and VM | the same per chain and guest `vmid`, over the range; for an IN chain the `vmid` is the receiver |
+| Proxmox Firewall Drops by Rule | the exact counter behind those log lines (`smtp`, `private`, `private_in`, summed over IPv4 and IPv6), over the preceding 15 minutes |
+| Recent Flows | the newest filter log lines, passes and blocks |
+
+Two pickers. **Segment** (work `vtnet2`, lease `vtnet5`, or both) drives the
+firewall panels: new flows, destinations, flows by VM, Suricata and Recent
+Flows. It does not drive the DNS, Proxmox firewall, packet rate or per-guest
+panels, because those are keyed by client address, chain or guest, not by
+firewall interface. **Guest** narrows Egress per Guest.
+
+!!! info "The source address is the VM, before NAT"
+    The filter log records the address a VM used, so a row in Flows by VM
+    names a VM. Unbound logs the client address the same way. The Proxmox
+    firewall log carries a `vmid` instead; Guest Traffic or the Proxmox UI
+    turns it into a name.
+
+!!! note "Panels that need the newer logs and series"
+    Conntrack Entries per Tenant VM, Proxmox Firewall Drops by Rule, Packets
+    Dropped by the Lease Limit, Lease Packet Limit Active and Tenant Firewall
+    Active stay empty until `roles/pve_guest_metrics` writes
+    `fleet_pve_tenant_conntrack_entries`,
+    `fleet_pve_firewall_dropped_packets_total`,
+    `fleet_pve_tenant_policed_packets_total`,
+    `fleet_pve_tenant_packet_limit_active` and
+    `fleet_pve_tenant_firewall_active`; see the
+    [metrics catalogue](../reference/metrics.md#proxmox-guest-nics). The two
+    that come from a counter use a 15 minute window, because the exporter
+    writes a new value only every 5 minutes. The Blocked Attempts panels
+    need the hypervisor's Alloy to ship `/var/log/pve-firewall.log`
+    (`alloy_pve_firewall_log`). Everything else needs the firewall's syslog
+    to reach the central Alloy listener; see the security module's
+    [wiring page](https://harshitruwali.github.io/homelab-infra/security/wiring/).
+
+!!! warning "Range matters: logs are kept 30 days on the live install"
+    The new flow panels read every filter log line in the range. A range of
+    7 days or more on a busy segment is slow, and anything beyond the Loki
+    retention is simply absent. See
+    [Retention](../operations/retention.md#loki-retention-for-the-tenant-logs).
 
 ## Disk Health
 
