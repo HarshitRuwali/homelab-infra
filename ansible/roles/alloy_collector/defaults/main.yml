@@ -43,6 +43,29 @@ alloy_enable_docker: auto
 # debugging. See security/docs/wiring/index.md.
 alloy_syslog_listener_port: ""
 
+# Rule labels (field 4 of a filterlog line) whose lines are dropped on arrival
+# at the syslog listener. For volume that carries no decision, such as the
+# firewall's own outbound traffic. Empty keeps everything. Set it in
+# group_vars/central with a comment saying what each label is.
+alloy_syslog_drop_filterlog_rules: []
+
+# The interface those rules are dropped on, as written in field 5 of a
+# filterlog line: the firewall's WAN interface. Lines carrying one of the
+# labels on any other interface are kept, because a rule label does not name an
+# interface and OPNsense's default deny applies to all of them. Must not be
+# empty.
+alloy_syslog_drop_filterlog_iface: vtnet0
+
+# Rule labels whose filterlog lines are kept at no more than a few per second
+# (rate 5, burst 20) instead of dropped outright. For a rule that fires for
+# every packet of a misbehaving source. Empty keeps everything.
+alloy_syslog_ratelimit_filterlog_rules: []
+
+# Ship /var/log/pve-firewall.log to Loki as job="pve-firewall", with the rule
+# chain and the guest's VMID as labels. Only a Proxmox host wants this; set it
+# in that host's host_vars.
+alloy_pve_firewall_log: false
+
 # NOTE ON BACKSLASHES: these strings land inside double quotes in the
 # generated .alloy file, and Alloy uses Go string escaping there. A lone `\.`
 # is an "unknown escape sequence" and `alloy fmt` rejects the whole config.

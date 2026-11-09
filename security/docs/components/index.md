@@ -22,11 +22,12 @@ something drifts:
 | [`sec-crowdsec`](#sec-crowdsec) | CrowdSec Local API | Behavioural detection, shared blocklist decisions | vendor + authenticated HTTPS LAPI |
 | [`sec-dns`](#sec-dns) | AdGuard Home | Recursive resolver, filtering, query logs | vendor (UI) |
 | *the firewall* | [Suricata](#suricata) | Network IDS at the boundary | your firewall |
-| *the firewall* | [ntopng](#ntopng) | Live flow visibility across the boundary | your firewall |
+| *the firewall* | [NetFlow and Insight](#netflow-and-insight) | Flow visibility across the boundary | your firewall |
 
-Suricata and ntopng are not guests. Both run on the firewall itself: OPNsense
-bundles Suricata and offers ntopng as a plugin, so there is nothing here to
-provision. See [Wiring](../wiring/index.md).
+Suricata and the NetFlow capture are not guests. Both run on the firewall
+itself: OPNsense bundles Suricata, and NetFlow capture and the Insight reports
+are part of OPNsense, so there is nothing here to provision. See
+[Wiring](../wiring/index.md).
 
 ## Logging in
 
@@ -55,7 +56,6 @@ The services have their own logins, created at install time:
 |---|---|---|---|
 | Wazuh dashboard | `admin` | Random, printed at the end of the install | Also saved, with every internal password and the TLS certificates, in `wazuh-install-files.tar`. [Move it off the guest](#sec-wazuh). |
 | Greenbone | `admin` | **`admin`** | Change it before anything else. [How](#first-run) |
-| ntopng | `admin` | **`admin`** | ntopng forces a change at first login |
 | AdGuard Home | yours | Chosen in the setup wizard | Whoever reaches the wizard first sets it, so finish it straight after install |
 | CrowdSec | none | No UI | Credentials are issued per agent and per bouncer, [below](#enrol-an-agent) |
 
@@ -366,77 +366,63 @@ before you rely on it:
 inspecting traffic as it crosses the firewall.
 
 **There is nothing to provision.** OPNsense and pfSense both bundle it; enable
-it on the WAN interface in the firewall UI. It writes EVE JSON to
-`/var/log/suricata/eve.json`, which reaches Grafana as `job="suricata"`.
+it in the firewall UI and choose the interfaces to watch. Here it watches
+`vtnet1` to `vtnet5` (lan, tenants, DMZ, LAB and lease). It writes EVE JSON to
+`/var/log/suricata/eve.json`. The syslog copy of that output carries **alerts
+only**, and reaches Grafana as `job="suricata"`; TLS server names and HTTP
+hosts stay in `eve.json` on the firewall.
 
 See [Wiring](../wiring/index.md#2-suricata-eve-into-loki).
 
 ---
 
-## ntopng
+## NetFlow and Insight
 
-**What it does.** Answers "did that firewall rule actually do what I think?"
-It shows which hosts talk to which, over what, and how much, live. It is the
-fastest way to verify segmentation still holds after a change.
+**What it does.** Answers "did that firewall rule actually do what I think?" It
+shows which hosts talk to which, over what, and how much, as far as the
+firewall sees it: a conversation inside a tenant's own Tailscale tunnel is one
+flow to a relay or peer, not the inner destinations. It is the fastest way to
+verify segmentation still holds after a change. A flow is a conversation
+summary, not the packets.
 
-**It runs on the firewall**, from OPNsense's `os-ntopng` plugin, and captures
-packets on the firewall's own interfaces. It builds flow summaries and
-identifies applications from the captured traffic.
+**It runs on the firewall, and there is nothing to install.** OPNsense's
+NetFlow capture exports flow records from the work and lease interfaces
+(`vtnet2` and `vtnet5`) to the firewall's own local collector. The **Insight**
+reports in the OPNsense UI read from that collector. No plugin, guest or extra
+service is involved.
 
-**Installed from** the OPNsense UI, not this repo:
+The same two interfaces also log, in the firewall's filter log, each new flow
+their pass rules let through, and blocks; that log reaches Loki. Insight is the quick look in the firewall's UI; the
+filter log in Loki is the searchable record, with a source address on every
+line, and it feeds the Tenant Activity dashboard. See
+[Wiring](../wiring/index.md#3-firewall-streams-and-flow-visibility).
 
-1. **System → Firmware → Plugins**: install `os-redis`, then enable it under
-   **Services → Redis**. ntopng needs Redis running, and the plugin warns you if
-   it is missing.
-2. Install `os-ntopng`, then **Services → Ntopng**: enable it, pick the
-   interfaces, and either leave HTTP on port 3000 or set an HTTPS port with a
-   certificate.
-
-!!! tip "Capture on LAN, not WAN"
-    On the WAN interface every sandbox host appears as the firewall's own
-    address, because NAT has already rewritten it. The LAN interface sees the
+!!! tip "Capture on the inside interfaces, not WAN"
+    On the WAN interface every guest appears as the firewall's own address,
+    because NAT has already rewritten it. The work and lease interfaces see the
     real addresses, which is the whole point.
 
-### Configs (generated by the plugin)
-
-| Path | What it controls |
-|---|---|
-| `/usr/local/etc/ntopng.conf` | Generated from the UI: `-i` per interface, `-w` port, `-n` DNS mode |
-| `/etc/rc.conf.d/ntopng` | Whether the service starts |
-| `/var/db/ntopng/` | Timeseries and runtime data |
-
-Change settings in the UI, not in the file. OPNsense regenerates the file from
-its own configuration, which also means the firewall's configuration backup
-carries these settings.
-
-The UI listens on **every firewall interface**, not only LAN. The WAN is closed
-by default; keep it that way. First login is `admin` / `admin`, and ntopng
-forces a change.
+!!! info "Configuration lives in the firewall"
+    The capture settings and the Insight data belong to the firewall, so they
+    are in its own configuration backup. Change them in the OPNsense UI, not in
+    this repo.
 
 ### Verify
 
-Generate traffic from one sandbox host, then find that host under **Hosts** in
-the ntopng UI with a recent last-seen time. On the firewall's shell:
+Generate traffic from one VM, then find its address under Insight in the
+OPNsense UI, and as a source in the **Flows by VM** panel of the Tenant Activity
+dashboard in Grafana.
 
-```bash
-/usr/local/etc/rc.d/ntopng status
-```
-
-!!! warning "An empty ntopng is not evidence of no lateral traffic"
+!!! warning "An empty flow report is not evidence of no lateral traffic"
     This sees only what **crosses the firewall**. Two hosts on the same segment,
     or a multi-homed host, never appear here at all. That gap is exactly what
     the Wazuh agents cover.
 
-ntopng answers *who and what*, live. *How much*, per guest over a day or a
-week, including guest-to-guest traffic on one bridge, is on Grafana's
+The firewall's flow records answer *who and what*, within the limits under
+[what is not covered](../wiring/index.md#what-is-not-covered). *How much*, per guest over a
+day or a week, including guest-to-guest traffic on one bridge, is on Grafana's
 [Guest Traffic](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/dashboards/#guest-traffic)
 dashboard, read from the hypervisor rather than the firewall.
-
-!!! note "Budget firewall resources for it"
-    ntopng and Redis share the firewall with Suricata. As a starting point,
-    give the firewall VM an additional 2 GB of RAM and 2 vCPU, then measure. It is also a second deep packet parser on the
-    firewall beside Suricata, which is more attack surface on the one box that
-    must not fall.
 
 ---
 
@@ -455,7 +441,7 @@ flowchart LR
     INST -->|"invokes"| AUTH["configure-sec-wazuh.sh<br/>configure-sec-crowdsec.sh"]
     AUTH -->|"enrollment and TLS settings"| CFG
     VEND -->|"initialises service configuration"| BASE["vendor defaults and UI settings"]
-    FW["the firewall's UI"] -->|"Suricata and<br/>ntopng settings"| FWC["the firewall's own config.xml"]
+    FW["the firewall's UI"] -->|"Suricata and<br/>NetFlow settings"| FWC["the firewall's own config.xml"]
 ```
 
 Anything in the right-hand boxes survives only where it was written: a guest's

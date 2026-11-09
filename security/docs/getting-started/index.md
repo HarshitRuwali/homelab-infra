@@ -137,9 +137,9 @@ Each step is useful on its own, so a partial rollout still improves things.
    **not** installed by hand: add hosts to the `wazuh_agents` inventory group
    and run `ansible-playbook playbooks/wazuh-agents.yml --limit <host>`. Tune
    the alert volume after the first two hosts, before going wider.
-5. **ntopng on the firewall.** No guest required: install `os-redis` and then
-   `os-ntopng`, and capture on LAN. Give the firewall VM the extra RAM and CPU
-   first. See [ntopng](../components/index.md#ntopng).
+5. **Flow visibility on the firewall.** No guest and no plugin: OPNsense's
+   NetFlow capture and Insight reports are part of it. Capture on the inside
+   interfaces. See [NetFlow and Insight](../components/index.md#netflow-and-insight).
 6. **`sec-scan`**, weekly schedule, baseline scan first. Change the default
    `admin` password before the feed sync, not after.
 

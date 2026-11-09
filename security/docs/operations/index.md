@@ -117,8 +117,8 @@ service.
 vzdump 200 --storage <pbs-storage> --mode snapshot --compress zstd
 ```
 
-Suricata and ntopng live on the firewall, so their settings are in the
-firewall's own configuration. Back that up too: OPNsense exports it from
+Suricata and the NetFlow capture live on the firewall, so their settings are in
+the firewall's own configuration. Back that up too: OPNsense exports it from
 **System > Configuration > Backups**.
 
 Snapshot before every Wazuh major upgrade. Its index migrations are not
@@ -161,13 +161,19 @@ timeout 5 bash -c 'echo > /dev/tcp/<sec-wazuh>/1514' && echo ok || echo BLOCKED
 # the resolver clients actually get, run from a client, not from the server
 resolvectl status | grep 'DNS Servers'
 
-# ntopng capturing, on the firewall's shell; then find a sandbox host
-# with a recent last-seen time under Hosts in its UI
-/usr/local/etc/rc.d/ntopng status
-
 # CrowdSec making decisions, on sec-crowdsec
 cscli decisions list
 cscli metrics
+```
+
+The firewall's streams reach Loki. In Grafana Explore, `pfstats` arrives once a
+minute, so ten minutes should hold about ten lines (the Firewall Stats Stopped
+alert watches the same figure), and the filter log should have lines for the
+work and lease interfaces:
+
+```logql
+count_over_time({job="pfstats"} [10m])
+sum by (iface) (count_over_time({job="filterlog", iface=~"vtnet(2|5)"} [10m]))
 ```
 
 !!! tip "A check you have never seen fail proves nothing"

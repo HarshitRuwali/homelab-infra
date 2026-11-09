@@ -80,7 +80,8 @@ policy, because the runtime installs its own accept rules.
 flowchart TB
     subgraph edge["At the boundary"]
         SUR["Suricata<br/>on the firewall"]
-        NTOP["ntopng<br/>on the firewall"]
+        FLOW["NetFlow and Insight<br/>on the firewall"]
+        FWS["filter log, resolver<br/>log, pfstats"]
     end
 
     subgraph hosts["On every machine"]
@@ -96,6 +97,7 @@ flowchart TB
     WAZ -->|"1514/tcp"| MGR
     CS -->|"8080/tcp"| LAPI
     SUR -->|"EVE syslog,<br/>alerts only"| LOKI
+    FWS -->|"syslog"| LOKI
     MGR -->|"alerts.json<br/>via Alloy"| LOKI
     LOKI --> GRAF
 ```
@@ -108,9 +110,12 @@ Suricata's EVE output goes to Loki as `job="suricata"`; Wazuh's
 every monitored host already runs, as `job="wazuh"`.
 
 These are the two security streams covered by the manual setup instructions
-in [Wiring](../wiring/index.md); they are not provisioned automatically. Each
-other service keeps its own interface: ntopng on the firewall, Greenbone's reports, CrowdSec's
-decisions and AdGuard's query log. OPNsense's syslog output also carries
+in [Wiring](../wiring/index.md); they are not provisioned automatically. The
+firewall also sends its filter log, its resolver log and a per-minute state
+table line as syslog, which Loki keeps beside Suricata's alerts
+([Wiring](../wiring/index.md#3-firewall-streams-and-flow-visibility)). Each
+other service keeps its own interface: Insight on the firewall, Greenbone's
+reports, CrowdSec's decisions and AdGuard's query log. OPNsense's syslog output also carries
 Suricata's **alerts only**; its HTTP and TLS metadata stays in `eve.json` on the
 firewall.
 
@@ -135,9 +140,9 @@ The network sensors are cheap and broad. They are also structurally blind to:
 - any multi-homed host,
 - container-to-container traffic on a shared bridge.
 
-The host agents cover exactly those cases. **An empty ntopng is not evidence
-that no lateral traffic occurred.** Read the two together or you will draw a
-confident wrong conclusion.
+The host agents cover exactly those cases. **An empty flow report is not
+evidence that no lateral traffic occurred.** Read the two together or you will
+draw a confident wrong conclusion.
 
 ## Tool selection
 
@@ -151,7 +156,7 @@ gates patching. Nothing is installed on a fleet host by hand.
 | Blocking | CrowdSec | Behavioural rather than signature. MIT with no paywalled engine features, and its bouncers push decisions to a CDN edge so hostile traffic never reaches the origin. |
 | HIDS, FIM, SIEM | Wazuh | GPLv2, genuinely no feature paywall. The only tool here that covers segmentation bypasses, because it is agent-based. |
 | DNS | AdGuard Home | Single Go binary, GPLv3. Query logs are the cheapest detection data available. |
-| Flows | ntopng Community | GPLv3, on the firewall. Verifies that segmentation actually holds after you change a rule. |
+| Flows | OPNsense NetFlow and Insight, and the filter log in Loki | Part of OPNsense, so no guest. Verifies that segmentation actually holds after you change a rule. |
 | Vuln scanning | Greenbone GVM | GPLv2. Detects drift: a new unauthenticated service, another multi-homed host. |
 
 ### Suricata on the firewall
@@ -160,12 +165,12 @@ OPNsense bundles Suricata, so the network IDS runs on the firewall without a
 separate guest. Its EVE JSON output supplies the `job="suricata"` stream in
 Loki; see [Wiring](../wiring/index.md) for collector configuration.
 
-### ntopng on the firewall
+### Flows on the firewall
 
-OPNsense's `os-ntopng` plugin captures directly on the firewall's interfaces.
-Capture on LAN to retain host identity before NAT rewrites source addresses.
-
-ntopng and Redis share firewall RAM and CPU with Suricata. Budget an additional
-2 GB RAM and 2 vCPU, then measure. ntopng also adds a second deep packet parser
-beside Suricata, increasing the firewall's attack surface. Keep its management
-UI inaccessible from WAN.
+OPNsense's NetFlow capture runs on the work and lease interfaces and exports to
+the firewall's local collector, which the Insight reports read. The same
+interfaces log the new flows their pass rules let through, so the filter log in
+Loki is a second, searchable record, with the gaps listed under
+[what is not covered](../wiring/index.md#what-is-not-covered). Capture on an inside interface to retain host identity
+before NAT rewrites source addresses. Keep the firewall's management UI
+inaccessible from WAN.

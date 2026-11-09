@@ -1,7 +1,7 @@
 # Homelab Security Stack
 
-Four small guests, plus Suricata and ntopng on the firewall, that give a
-self-hosted estate intrusion detection, host integrity monitoring, DNS
+Four small guests, plus Suricata and NetFlow capture on the firewall, that give
+a self-hosted estate intrusion detection, host integrity monitoring, DNS
 filtering, flow visibility and vulnerability scanning. Open source throughout.
 
 ## The premise
@@ -18,8 +18,8 @@ So this stack deliberately pairs two kinds of sensor:
 
 - **Network, at the chokepoint**
 
-    Suricata and ntopng, both on the firewall. Cheap, broad, and structurally
-    blind to anything that does not cross the boundary.
+    Suricata and NetFlow capture, both on the firewall. Cheap, broad, and
+    structurally blind to anything that does not cross the boundary.
 
 - **Host, on every machine**
 

@@ -1,7 +1,8 @@
 site_name: Homelab Security Stack
 site_description: >-
   Free and open source security monitoring for a Proxmox homelab: Wazuh,
-  CrowdSec, Suricata, AdGuard Home, ntopng and Greenbone.
+  CrowdSec, Suricata, AdGuard Home and Greenbone, plus NetFlow capture and
+  firewall logs in Loki.
 site_author: Harshit Ruwali
 
 # Required for a correct sitemap.xml and canonical <link> tags. GitHub Pages
