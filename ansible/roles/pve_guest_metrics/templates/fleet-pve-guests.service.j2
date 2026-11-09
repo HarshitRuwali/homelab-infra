@@ -1,5 +1,5 @@
 [Unit]
-Description=Name Proxmox guest NICs for the textfile collector
+Description=Name Proxmox guest NICs and count tenant-VM firewall activity for the textfile collector
 Documentation=file://{{ pve_guest_metrics_script }}
 # pvesh reads the cluster filesystem at /etc/pve, which pve-cluster mounts.
 # Run before it is up and every call fails.
@@ -11,8 +11,9 @@ Type=oneshot
 User=root
 ExecStart={{ pve_guest_metrics_script }}
 
-# One pvesh call per guest. A wedged cluster filesystem must not hold the
-# timer forever.
+# One pvesh call per guest, plus four iptables listings, one tc listing per
+# running tenant VM and one streamed conntrack -L. A wedged cluster
+# filesystem must not hold the timer forever.
 TimeoutStartSec=120
 
 [Install]
