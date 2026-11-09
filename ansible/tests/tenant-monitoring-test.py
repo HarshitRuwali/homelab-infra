@@ -75,8 +75,8 @@ UID_LIMIT = 40
 # They must reach the YAML byte for byte: the escaping is the fragile part.
 VERBATIM = [
     r'max(max_over_time({job="pfstats"} | regexp "\\bstates=(?P<v>[0-9]+)" | unwrap v [5m])) / max(max_over_time({job="pfstats"} | regexp "\\bstates_max=(?P<v>[0-9]+)" | unwrap v [5m]))',
-    r'max(max_over_time({job="pfstats"} | regexp "\\bsrc_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) - min(min_over_time({job="pfstats"} | regexp "\\bsrc_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m]))',
-    r'max(max_over_time({job="pfstats"} | regexp "\\bstate_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) - min(min_over_time({job="pfstats"} | regexp "\\bstate_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m]))',
+    r'sum(rate_counter({job="pfstats"} | regexp "\\bsrc_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) * 600',
+    r'sum(rate_counter({job="pfstats"} | regexp "\\bstate_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) * 600',
     r'max(max_over_time({job="pfstats"} | regexp "\\bbanned=(?P<v>[0-9]+)" | unwrap v [5m]))',
     r'count_over_time({job="pfstats"} [10m])',
     r'sum(rate_counter({job="pfstats"} | regexp "vtnet5_ipkts=(?P<v>[0-9]+)" | unwrap v [5m]))',

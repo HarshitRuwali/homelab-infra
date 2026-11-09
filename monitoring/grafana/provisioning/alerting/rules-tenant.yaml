@@ -134,11 +134,11 @@ groups:
       # Protects the other segments from one noisy source. pf can cap the
       # states and the connection rate of a single source address, and
       # src_limit_hits counts the times that cap refused something. The
-      # counter is cumulative, so the rule compares the highest and the lowest
-      # value in the last ten minutes: any difference is a hit in the window.
-      # A firewall reboot resets the counter, which reads as one false hit
-      # right after it. for: 0m because a hit is an event; the ten-minute
-      # window is what makes it resolve by itself.
+      # counter is cumulative, so the rule asks how much it grew in the last
+      # ten minutes. rate_counter treats a drop as a reset, so a firewall
+      # reboot (which starts the counter at zero again) is not read as a hit.
+      # for: 0m because a hit is an event; the ten-minute window is what makes
+      # it resolve by itself.
       - uid: tenant-pf-src-limit-hit
         title: Firewall Per-Source Limit Hit
         condition: C
@@ -148,7 +148,7 @@ groups:
           host: opnsense
         annotations:
           summary: "A source address hit the firewall's per-source state or connection limit in the last 10 minutes."
-          runbook: "Tenant Activity, Flows by VM, names the source and Top Destinations shows what it is hammering. A leased VM doing this is scanning or flooding; a work VM is usually a runaway client. Stop it from the Proxmox host if it continues: qm stop <vmid>. Right after a firewall reboot a single hit is a counter reset, not a real hit."
+          runbook: "Tenant Activity, Flows by VM, names the source and Top Destinations shows what it is hammering. A leased VM doing this is scanning or flooding; a work VM is usually a runaway client. Stop it from the Proxmox host if it continues: qm stop <vmid>."
           __dashboardUid__: tenant-activity
           __panelId__: "6"
         noDataState: OK
@@ -162,7 +162,7 @@ groups:
               editorMode: code
               queryType: instant
               expr: |
-                max(max_over_time({job="pfstats"} | regexp "\\bsrc_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) - min(min_over_time({job="pfstats"} | regexp "\\bsrc_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m]))
+                sum(rate_counter({job="pfstats"} | regexp "\\bsrc_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) * 600
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}
@@ -178,7 +178,7 @@ groups:
       # ---------------------------------------------------------------
       # The other pf limit counter, state_limit_hits: a state could not be
       # created because a limit was reached. Same cumulative-counter handling
-      # as the per-source rule, same reboot caveat. If the state table rules
+      # as the per-source rule. If the state table rules
       # above are quiet this points at a limit set on a single firewall rule
       # rather than at the table as a whole.
       - uid: tenant-pf-state-limit-hit
@@ -204,7 +204,7 @@ groups:
               editorMode: code
               queryType: instant
               expr: |
-                max(max_over_time({job="pfstats"} | regexp "\\bstate_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) - min(min_over_time({job="pfstats"} | regexp "\\bstate_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m]))
+                sum(rate_counter({job="pfstats"} | regexp "\\bstate_limit_hits=(?P<v>[0-9]+)" | unwrap v [10m])) * 600
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}

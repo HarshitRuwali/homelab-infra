@@ -443,10 +443,9 @@ module's [wiring page](https://harshitruwali.github.io/homelab-infra/security/wi
     healthy.
 
 **Counters reset.** `src_limit_hits`, `state_limit_hits` and the interface
-counters are cumulative since the firewall booted. The limit rules compare the
-highest and lowest value in the window, so a firewall reboot reads as one false
-hit; the packet rate rules use `rate_counter`, so a reboot reads as one low
-sample.
+counters are cumulative since the firewall booted. Every rule that reads one
+uses `rate_counter`, which treats a drop as a reset, so a firewall reboot is not
+read as a hit and shows at most as one low sample.
 
 **Tailscale is excluded on purpose.** The work VM's Tailscale client probes
 LAN peers on UDP 41641 about every 5 seconds, which the Proxmox firewall
