@@ -1,0 +1,9 @@
+# Compiled experiment binaries. Rebuild from the .c sources with:
+#   gcc -O2 -static -o e1_test e1_test.c
+
+e1_debug
+e1_test
+e1b_xsetbv
+e1c_xcr0
+e2_attacker
+e2_victim

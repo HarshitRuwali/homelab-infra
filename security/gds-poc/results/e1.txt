@@ -1,0 +1,50 @@
+E1: Can a tenant guest execute gather instructions? (2026-11-10, canaries 395/396)
+
+Method: static C binaries using GCC _mm_i32gather_ps intrinsic (guaranteed-correct
+VEX encoding c4 e2 79 92 0c 15 00 00 00), signal handlers for SIGSEGV/SIGBUS/SIGILL,
+run under `timeout` on each canary. Binaries: experiments/e1_test.c, e1c_xcr0.c.
+
+=== VMID 395, cpu=x86-64-v2-AES (lease default model) ===
+e1c_xcr0 output:
+    cpuid: avx=0 xsave(bit26)=0
+    xgetbv: SIGILL
+    gather: SIGILL
+    rc=0
+/proc/cpuinfo flags contain neither "avx" nor "xsave".
+e1_test (xgetbv before handlers) dies with unhandled SIGILL at startup (rc=132):
+consistent - XGETBV itself is #UD on this model.
+
+=== VMID 395, cpu=x86-64-v2 (plain v2, allowed alternative in pve-guest.sh) ===
+e1c_xcr0 output:
+    cpuid: avx=0 xsave(bit26)=0
+    xgetbv: SIGILL
+    gather: SIGILL
+    rc=0
+
+=== VMID 396, cpu=x86-64-v3 (control; AVX visible) ===
+e1_test output:
+    cpuid.avx=1
+    probeA(valid-addr)   : EXECUTED-OK (sum=10)
+    probeB(unmapped-addr): SIGSEGV (executed, faulted on data)
+    xcr0=0x7 (bit4 OSXMMEXTSTATE128=0 at read time; kernel enables AVX state lazily)
+e1c_xcr0 output:
+    cpuid: avx=1 xsave(bit26)=1
+    xgetbv: OK xcr0=0x7
+    gather: EXECUTED-OK
+
+CONCLUSIONS
+1. Under x86-64-v2-AES and plain x86-64-v2 the guest CPUID exposes neither AVX nor
+   XSAVE. Gather instructions raise #UD (delivered as SIGILL); XGETBV/XSETBV are
+   unavailable, so a tenant cannot re-enable AVX state via XCR0 manipulation.
+   => A tenant on any allowed lease model CANNOT execute gathers at all.
+2. kvm64/qemu64/Nehalem/Westmere/Penryn (other allowed models) predate Sandy Bridge
+   and expose no more than v2; same conclusion by feature inclusion (not re-tested).
+3. Control confirms the harness: with AVX visible, gathers execute normally.
+
+ANOMALY (documented, not root-caused): a binary containing hand-assembled bytes
+C5 FC F5 08 (an invalid VEX prefix sequence) did NOT fault under x86-64-v2-AES;
+three such processes spun in user mode for >50 min at ~50% CPU with no kernel trap
+log entries (wchan=0, /proc/PID/syscall="running", dmesg clean). Same bytes on the
+v3 control exited cleanly via SIGILL. Practical impact: a tenant can hang its own
+VM with raw VEX bytes; no cross-VM effect observed. The exact decode path was not
+identified (local binutils 2.46 also fails to assemble/decode these sequences).

@@ -1,0 +1,103 @@
+
+=== identity ===
+t7920
+7.0.14-28-pve
+2026-11-09T23:09:35Z
+
+=== cpu summary ===
+CPU(s):                                  80
+Model name:                              Intel(R) Xeon(R) Gold 6138 CPU @ 2.00GHz
+Thread(s) per core:                      1
+Core(s) per socket:                      20
+Socket(s):                               2
+Stepping:                                4
+CPU(s) scaling MHz:                      28%
+microcode (dmesg): [   27.104672] microcode: Current revision: 0x02007006
+
+=== kernel cmdline ===
+BOOT_IMAGE=/boot/vmlinuz-7.0.14-28-pve root=/dev/mapper/pve-root ro nomodeset quiet intel_iommu=on iommu=pt
+
+=== cpu vulnerabilities (sysfs) ===
+gather_data_sampling:                  Vulnerable
+ghostwrite:                            Not affected
+indirect_target_selection:             Not affected
+itlb_multihit:                         KVM: Mitigation: Split huge pages
+l1tf:                                  Mitigation: PTE Inversion; VMX: conditional cache flushes, SMT disabled
+mds:                                   Mitigation: Clear CPU buffers; SMT disabled
+meltdown:                              Mitigation: PTI
+mmio_stale_data:                       Mitigation: Clear CPU buffers; SMT disabled
+old_microcode:                         Not affected
+reg_file_data_sampling:                Not affected
+retbleed:                              Mitigation: IBRS
+spec_rstack_overflow:                  Not affected
+spec_store_bypass:                     Mitigation: Speculative Store Bypass disabled via prctl
+spectre_v1:                            Mitigation: usercopy/swapgs barriers and __user pointer sanitization
+spectre_v2:                            Mitigation: IBRS; IBPB: conditional; RSB filling; PBRSB-eIBRS: Not affected; BHI: Not affected
+srbds:                                 Not affected
+tsa:                                   Not affected
+tsx_async_abort:                       Mitigation: Clear CPU buffers; SMT disabled
+vmscape:                               Mitigation: IBPB before exit to userspace
+
+=== cpuinfo bugs line ===
+bugs		: cpu_meltdown spectre_v1 spectre_v2 spec_store_bypass l1tf mds swapgs taa itlb_multihit mmio_stale_data retbleed gds spectre_v2_user vmscape
+
+=== SMT state ===
+control: off
+active:  0
+nproc:   40
+smt-off.service: active
+
+=== GDS kernel boot message ===
+[    1.489181] GDS: Vulnerable
+
+=== MSR_IA32_MCU_OPT_CTRL (0x123): GDS mitigation control ===
+Traceback (most recent call last):
+  File "<stdin>", line 6, in <module>
+  File "<stdin>", line 6, in <genexpr>
+IndexError: list index out of range
+(msr read failed)
+
+=== IA32_ARCH_CAPABILITIES (0xB10): read stability check ===
+reads: ['0x8f8f0f39d', '0x8f8f0f39d', '0x8f8f0f39d']
+GDS_CTRL(bit25)=0  GDS_NO(bit26)=0
+
+=== kernel config: mitigation options ===
+CONFIG_MITIGATION_RFDS=y
+CONFIG_MITIGATION_MDS=y
+CONFIG_MITIGATION_L1TF=y
+
+=== VM inventory and CPU models ===
+        VMID NAME                 STATUS     MEM(MB)    BOOTDISK(GB) PID       
+         100 OPNsense             running    4096              32.00 976063    
+         104 cloud-services       running    8192              40.00 890435    
+         105 matrix               running    4096              32.00 888517    
+         110 sec-wazuh            running    8192              40.00 886717    
+         202 ubuntu-ai            running    32768            130.00 893830    
+         203 ubuntu-dev           running    32768            100.00 898399    
+         300 optimuslabs          running    16384             80.00 20849     
+         301 win11                stopped    32768            160.00 0         
+         302 win11-ent            stopped    16384             64.00 0         
+        9001 tmpl-ubuntu-26.04    stopped    1024               3.50 0         
+  VMID 100: cpu: x86-64-v2-AES [tenant-segment(vmbr5)]
+  VMID 104: cpu: host [other]
+  VMID 105: cpu: x86-64-v2-AES [other]
+  VMID 110: cpu: host [other]
+  VMID 202: cpu: host [other]
+  VMID 203: cpu: host [other]
+  VMID 300: cpu: x86-64-v3 [other]
+  VMID 301: cpu: host [other]
+  VMID 302: cpu: host [other]
+  VMID 9001: cpu: x86-64-v3 [other]
+
+=== kernel GDS code path (reference, v7.0 upstream) ===
+bugs.c: gds_mitigation init = IS_ENABLED(CONFIG_MITIGATION_GDS) ? AUTO : OFF
+        state OFF -> sysfs "Vulnerable" and update_gds_msr() WRITES GDS_MITG_DIS=1
+        cmdline gather_data_sampling=force -> FULL when ARCH_CAP_GDS_CTRL is set
+
+=== re-verification 2026-11-10T07:22Z (read-only, post-experiment) ===
+MSR_IA32_MCU_OPT_CTRL (0x123): cpu0=0x10 DIS=1 LOCKED=0; cpu20=0x10 DIS=1 LOCKED=0
+  (the probe run's MSR section above errored before reading; this re-read succeeded)
+IA32_ARCH_CAPABILITIES (0xB10): 0xb1211f058, GDS_CTRL(bit25)=1
+pve-manager/9.2.26/41a0e2e09b9e6f9d (running kernel: 7.0.14-28-pve)
+qm list: canaries 395/396 absent, inventory back to original; smt/control=off;
+/root/.gds-canary-pw and /root/gds-ssh.sh removed

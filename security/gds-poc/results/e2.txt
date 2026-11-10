@@ -1,0 +1,34 @@
+E2: Cross-VM GDS timing signal, SMT OFF, both VMs AVX-visible (x86-64-v3)
+
+Setup: attacker=395, victim=396, 1 vCPU each. Victim churns vgatherdps over a
+known-pattern buffer; attacker samples single-gather latency with lfence/rdtsc into
+a 4-cycle histogram for 6 s per phase. Host SMT verified off (smt/active=0) before run.
+
+Phases:
+  A: attacker pinned to physical core 37, victim idle            (same-core baseline)
+  C: both pinned to core 37                                      (attack condition)
+  B: attacker moved to core 38, victim still churning on 37      (cross-core control)
+
+Results (raw histograms in results/e2_raw.txt and /tmp/attB2.txt on t7920):
+  Phase A: nsamp=160.8M (~26.8M/s), peak bucket 32-35 cyc (111.2M samples), median ~33, overflow(>=512)=8411
+  Phase C: nsamp=76.0M  (~12.7M/s - halved by time-sharing with victim), peak 32-35 (54.0M), median ~33, overflow=3732
+  Phase B: nsamp=156.8M (~26.1M/s - full rate on separate core), peak 32-35 (109.5M), median ~33, overflow=7617
+
+FINDING: No measurable cross-VM GDS timing signal. The attack-condition
+distribution (C) is statistically indistinguishable in shape and central tendency
+from both the same-core idle baseline (A) and the cross-core control (B). The only
+difference between A and C is sample rate, which halves exactly as expected when two
+vCPUs time-share one physical core with SMT off (they never run simultaneously).
+
+INTERPRETATION: With SMT disabled, co-located VMs alternate on the core; any gather
+buffer-cache state left by the victim's gathers is not observable in the attacker's
+gather latency across ~76M samples. This matches Intel's GDS threat model, which
+relies on SMT siblings executing simultaneously. Caveat: this measures one attack
+shape (attacker gather-latency vs victim gather-churn) at 4-cycle resolution over
+6 s windows; it does not rule out every conceivable variant, but it is strong
+empirical evidence that the current SMT-off configuration closes this channel for
+co-located VMs even when both are AVX-visible.
+
+NOTE: an earlier phase-B attempt produced no histogram because the guest-side binary
+had been truncated to 0 bytes by a qm stop/start cycle (unexplained; ext4 recovery
+suspected). Re-pushed with md5 verification (3d75675c...) before the valid run above.

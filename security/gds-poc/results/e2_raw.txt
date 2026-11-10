@@ -1,0 +1,134 @@
+== [prep] 395 -> x86-64-v3, restart
+update VM 395: -cpu x86-64-v3
+generating cloud-init ISO
+395 up (v3)
+== [prep] push binaries
+attacker pushed
+victim pushed
+== PHASE A: same-core baseline (victim idle), attacker on core 37, 6s
+bucket[  28-  31 cyc]: 11177275
+bucket[  32-  35 cyc]: 111187555
+bucket[  36-  39 cyc]: 30160248
+bucket[  40-  43 cyc]: 7240830
+bucket[  44-  47 cyc]: 1021832
+bucket[  48-  51 cyc]: 1314
+bucket[  52-  55 cyc]: 1035
+bucket[  56-  59 cyc]: 312
+bucket[  60-  63 cyc]: 195
+bucket[  64-  67 cyc]: 181
+bucket[  68-  71 cyc]: 149
+bucket[  72-  75 cyc]: 154
+bucket[  76-  79 cyc]: 88
+bucket[  80-  83 cyc]: 60
+bucket[  84-  87 cyc]: 42
+bucket[  88-  91 cyc]: 41
+bucket[  92-  95 cyc]: 80
+bucket[  96-  99 cyc]: 31
+bucket[ 100- 103 cyc]: 26
+bucket[ 104- 107 cyc]: 5
+bucket[ 108- 111 cyc]: 7
+bucket[ 112- 115 cyc]: 11
+bucket[ 116- 119 cyc]: 4
+bucket[ 120- 123 cyc]: 6
+bucket[ 124- 127 cyc]: 8
+bucket[ 128- 131 cyc]: 7
+bucket[ 132- 135 cyc]: 8
+bucket[ 136- 139 cyc]: 14
+bucket[ 140- 143 cyc]: 25
+bucket[ 144- 147 cyc]: 4
+bucket[ 148- 151 cyc]: 5
+bucket[ 152- 155 cyc]: 14
+bucket[ 156- 159 cyc]: 2
+bucket[ 164- 167 cyc]: 7
+bucket[ 168- 171 cyc]: 4
+bucket[ 176- 179 cyc]: 2
+bucket[ 180- 183 cyc]: 1
+bucket[ 188- 191 cyc]: 1
+bucket[ 200- 203 cyc]: 1
+bucket[ 208- 211 cyc]: 2
+bucket[ 212- 215 cyc]: 1
+bucket[ 216- 219 cyc]: 1
+bucket[ 240- 243 cyc]: 1
+bucket[ 512- 515 cyc]: 8411
+attacker: nsamp=160800000 mean~16 acc=67108864.000
+rc=0
+== PHASE C: attack (both pinned to core 37)
+bucket[  28-  31 cyc]: 7562440
+bucket[  32-  35 cyc]: 54048910
+bucket[  36-  39 cyc]: 11996759
+bucket[  40-  43 cyc]: 2156175
+bucket[  44-  47 cyc]: 230018
+bucket[  48-  51 cyc]: 777
+bucket[  52-  55 cyc]: 506
+bucket[  56-  59 cyc]: 125
+bucket[  60-  63 cyc]: 70
+bucket[  64-  67 cyc]: 68
+bucket[  68-  71 cyc]: 71
+bucket[  72-  75 cyc]: 75
+bucket[  76-  79 cyc]: 48
+bucket[  80-  83 cyc]: 31
+bucket[  84-  87 cyc]: 31
+bucket[  88-  91 cyc]: 40
+bucket[  92-  95 cyc]: 61
+bucket[  96-  99 cyc]: 23
+bucket[ 100- 103 cyc]: 10
+bucket[ 104- 107 cyc]: 10
+bucket[ 108- 111 cyc]: 1
+bucket[ 112- 115 cyc]: 3
+bucket[ 116- 119 cyc]: 3
+bucket[ 120- 123 cyc]: 1
+bucket[ 124- 127 cyc]: 1
+bucket[ 128- 131 cyc]: 2
+bucket[ 136- 139 cyc]: 2
+bucket[ 140- 143 cyc]: 4
+bucket[ 144- 147 cyc]: 1
+bucket[ 152- 155 cyc]: 2
+bucket[ 512- 515 cyc]: 3732
+attacker: nsamp=76000000 mean~16 acc=67108864.000
+rc=0
+victim: done iters=1312000 sink=1020.500
+== PHASE B: cross-core control (attacker -> core 38, victim still on 37)
+update VM 395: -affinity 38
+generating cloud-init ISO
+395 up (core 38)
+rc=0
+victim: done iters=1970000 sink=1020.500
+== DONE
+== PHASE B (valid re-run, attacker on core 38, victim churning on 37):
+== PHASE B (valid re-run, attacker on core 38, victim churning on 37):
+bucket[  28-  31 cyc]: 4962566
+bucket[  32-  35 cyc]: 109504057
+bucket[  36-  39 cyc]: 29225341
+bucket[  40-  43 cyc]: 11632168
+bucket[  44-  47 cyc]: 1464876
+bucket[  48-  51 cyc]: 1005
+bucket[  52-  55 cyc]: 1053
+bucket[  56-  59 cyc]: 266
+bucket[  60-  63 cyc]: 303
+bucket[  64-  67 cyc]: 226
+bucket[  68-  71 cyc]: 153
+bucket[  72-  75 cyc]: 103
+bucket[  76-  79 cyc]: 25
+bucket[  80-  83 cyc]: 22
+bucket[  84-  87 cyc]: 13
+bucket[  88-  91 cyc]: 18
+bucket[  92-  95 cyc]: 73
+bucket[  96-  99 cyc]: 33
+bucket[ 100- 103 cyc]: 22
+bucket[ 104- 107 cyc]: 1
+bucket[ 108- 111 cyc]: 3
+bucket[ 112- 115 cyc]: 11
+bucket[ 116- 119 cyc]: 4
+bucket[ 120- 123 cyc]: 6
+bucket[ 124- 127 cyc]: 4
+bucket[ 128- 131 cyc]: 3
+bucket[ 132- 135 cyc]: 3
+bucket[ 136- 139 cyc]: 4
+bucket[ 140- 143 cyc]: 11
+bucket[ 144- 147 cyc]: 2
+bucket[ 148- 151 cyc]: 1
+bucket[ 152- 155 cyc]: 3
+bucket[ 168- 171 cyc]: 3
+bucket[ 252- 255 cyc]: 1
+bucket[ 512- 515 cyc]: 7617
+attacker: nsamp=156800000 mean~16 acc=67108864.000
