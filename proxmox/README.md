@@ -341,29 +341,16 @@ the same arithmetic `vm`, `lxc` and `tenant` use for their capacity check.
 
 ## Backups
 
-Guests are covered by two `vzdump` jobs on the host (Datacenter, Backup;
-stored in `/etc/pve/jobs.cfg`). This script does not create or change them.
+No `vzdump` job is configured on the host: guests are not backed up by
+Proxmox, and this script does not create a backup job. Off-site data backups
+for Immich and Nextcloud are the job of the `s3-backup` module.
 
-| Setting | `nightly-infra` | `weekly-ubuntu-dev` |
-|---|---|---|
-| Schedule | daily at 03:00 (host time) | Sundays at 04:00 |
-| Storage | `hdd-primary` | `hdd-primary` |
-| Mode | `snapshot`, compressed with `zstd` | `snapshot`, compressed with `zstd` |
-| Retention | `keep-last=3` | `keep-last=2` |
-| Guests | 100 OPNsense, 101 tailscale-router, 102 ingress, 103 grafana, 104 cloud-services, 105 matrix, 110 sec-wazuh, 111 sec-dns, 200 memory, 201 memory-api | 203 ubuntu-dev |
-
-Not covered: ubuntu-ai (202, about 120 GiB of models, images and build trees
-that can be rebuilt), optimuslabs (300) and the other work VMs, leased and
-tenant VMs, `win11` and `win11-ent`, and the template.
-
-The jobs list VMIDs instead of using `--all`, so a new tenant VM is never
-backed up by default; add a guest to a job on purpose. `hdd-primary` is the
-only storage with room, and one round of every guest does not fit three times
-over: the guests' thin volumes held about 370 GiB of written data on
-2026-11-13 against about 390 GiB free. Check `pvesm status` and the written
-size (`lvs -o lv_name,lv_size,data_percent pve`) before adding a large guest.
-Restore with `qmrestore` (VMs) or `pct restore` (containers) from a file under
-`/mnt/hdd_primary/dump/`.
+To add a job later, list guests by VMID (never `--all`, so a tenant VM is not
+backed up by default) and check that it fits `hdd-primary` first: one round of
+every guest's written data was about 370 GiB on 2026-11-13 against about
+390 GiB free (`pvesm status`; written size per guest from
+`lvs -o lv_name,lv_size,data_percent pve`). Restore with `qmrestore` (VMs) or
+`pct restore` (containers) from a file under `/mnt/hdd_primary/dump/`.
 
 ## Right-sizing
 
