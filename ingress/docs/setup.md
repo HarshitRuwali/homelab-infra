@@ -11,12 +11,17 @@ home LAN bridge with `proxmox/pve-guest.sh` (see [its README](https://github.com
 It is a dry run until `--apply` is added:
 
 ```bash
-./pve-guest.sh lxc --name ingress --cores 1 --memory 256 --disk 4 --bridge vmbr0
-./pve-guest.sh lxc --name ingress --cores 1 --memory 256 --disk 4 --bridge vmbr0 --apply
+./pve-guest.sh lxc --name ingress --cores 1 --memory 512 --disk 4 --bridge vmbr0
+./pve-guest.sh lxc --name ingress --cores 1 --memory 512 --disk 4 --bridge vmbr0 --apply
 ```
 
-One core, 256 MB of memory and 4 GB of disk are enough: Caddy and two dnsmasq
-instances are small. The script creates an unprivileged container from the
+One core, 512 MB of memory and 4 GB of disk are enough. Caddy and the two
+dnsmasq instances need little (about 13 MiB and 2 MiB each), but the container
+also runs Alloy (the monitoring collector, about 114 MiB resident), Tailscale
+(about 21 MiB) and the Wazuh agent (about 13 MiB). Measured on a 256 MB
+container after six days: 253 MiB in use at the limit and 159 MiB of its 512 MiB
+swap occupied, so it swapped constantly. At 512 MB the working set fits in
+memory. The script creates an unprivileged container from the
 `debian-13-standard` template by default, takes its address from DHCP, and
 downloads nothing, so fetch that template with `pveam` first.
 
