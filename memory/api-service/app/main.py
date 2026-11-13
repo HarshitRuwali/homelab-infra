@@ -9,6 +9,8 @@ from fastapi import FastAPI
 from fastapi import Request
 
 from app.config import get_settings
+from app.http_client import close_http_client, init_http_client
+from app.logging_filters import HEALTH_PATH, HealthAccessFilter
 from app.qdrant_store import ensure_collection, VectorDimensionMismatch
 from app.routers import router
 
@@ -45,6 +47,10 @@ def configure_logging() -> None:
     root_logger.addHandler(file_handler)
     root_logger.addHandler(stream_handler)
 
+    # uvicorn logs one access line per request; successful /health probes
+    # (Docker polls every 30 s) are noise. Other lines are kept.
+    logging.getLogger("uvicorn.access").addFilter(HealthAccessFilter())
+
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -66,9 +72,13 @@ async def lifespan(app: FastAPI):
         # note in .env.example).
         logger.critical("Qdrant collection validation FAILED", exc_info=True)
         raise
+    init_http_client()
     logger.info("FastAPI ready")
-    yield
-    logger.info("FastAPI shutting down")
+    try:
+        yield
+    finally:
+        logger.info("FastAPI shutting down")
+        await close_http_client()
 
 
 app = FastAPI(
@@ -87,13 +97,17 @@ async def log_requests_and_responses(request: Request, call_next):
     start_time = time.perf_counter()
     client_host = request.client.host if request.client else "unknown"
 
-    logger.info(
-        "Request started | client=%s | method=%s | path=%s | query=%s",
-        client_host,
-        request.method,
-        request.url.path,
-        str(request.url.query),
-    )
+    # Successful /health probes are not logged (failures still are, below).
+    quiet = request.url.path == HEALTH_PATH
+
+    if not quiet:
+        logger.info(
+            "Request started | client=%s | method=%s | path=%s | query=%s",
+            client_host,
+            request.method,
+            request.url.path,
+            str(request.url.query),
+        )
 
     try:
         response = await call_next(request)
@@ -107,6 +121,9 @@ async def log_requests_and_responses(request: Request, call_next):
             duration_ms,
         )
         raise
+
+    if quiet and response.status_code < 400:
+        return response
 
     duration_ms = (time.perf_counter() - start_time) * 1000
     logger.info(

@@ -20,8 +20,14 @@ Client ── POST /memory/store ──▶ FastAPI
                                        │
                                        ├─ 4. Upsert Qdrant point (id=chunk_id, vector, payload)
                                        │
-                                       └─ 5. Upsert PostgreSQL row (chunk_id PK, payload columns)
+                                       └─ 5. Upsert PostgreSQL rows (chunk_id PK, payload columns)
+                                              and the per-file memory_files row (chunk_count
+                                              computed in the same statement)
 ```
+
+`POST /memory/store/batch` runs the same steps for a list of chunks, with one
+embedding call per 25 chunks, one Qdrant upsert and one chunk upsert for the
+whole list.
 
 If step 3 fails (embedding model unreachable), the request returns **502** and
 neither step 4 nor 5 executes. Steps 4 and 5 run in the same async context; a
@@ -57,7 +63,7 @@ Client ── POST /memory/update ──▶ FastAPI
                                       │
                                       ├─ 2. Merge: omitted fields keep stored values
                                       │
-                                      └─ 3. Delegate to store_memory() (re-embeds, upserts both stores)
+                                      └─ 3. Delegate to the shared store path (re-embeds, upserts both stores)
 ```
 
 If the chunk does not exist and `chunk_text` is omitted, the endpoint returns **404**.
