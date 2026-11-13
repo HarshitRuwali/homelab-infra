@@ -88,6 +88,8 @@ stays at a few hundred MB on disk:
   `PDF_CHROME_SHA256`; the build fails on a mismatch). There is no full
   Chromium, Firefox or WebKit: the image installs only the shared libraries
   the headless shell links against, and no X server or extra font families.
+  Only its `en-US.pak` locale pack is kept (about 47 MiB less); the print
+  page is English-only, so other UI locales are never loaded.
 - **Driver:** none in the image. The render script (`PDF_RENDER`) is plain
   Python with the standard library: it starts the headless shell with
   `--remote-debugging-pipe` and speaks the DevTools protocol to it over that

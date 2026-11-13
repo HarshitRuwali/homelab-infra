@@ -121,6 +121,11 @@ code and asks for the copy shortcut.
   `application/zip` with `Content-Disposition: attachment` and is never
   unpacked or rendered by the viewer.
 - The server answers `GET` and `HEAD` only. Nothing writes to the vault.
+- Responses stay `private`: the file list and vault files are sent with
+  `Cache-Control: private, no-cache` and an `ETag` (files also `Last-Modified`),
+  so a browser may store them but must revalidate before reuse and a shared
+  cache must not. The Host, tailnet and `Sec-Fetch-Site` checks run before any
+  `304` is considered. Notes, search and PDFs stay `no-store`.
 
 ## What it does not do
 

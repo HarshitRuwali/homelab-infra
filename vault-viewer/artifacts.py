@@ -37,6 +37,8 @@ Usage: artifacts.py [--bind ADDR] [--port 7777] [--allow-host NAME] [--tailnet-u
 """
 import argparse
 import base64
+import collections
+import email.utils
 import hashlib
 import html
 import ipaddress
@@ -109,6 +111,7 @@ def raw_url(ident):
     return "/raw/" + "/".join(urllib.parse.quote(p) for p in ident.split("/"))
 
 
+FILE_CHUNK = 256 << 10  # bytes per write when streaming a vault file
 PDF_INLINE_BUDGET = 40 << 20  # bytes of images one PDF page may inline
 
 
@@ -139,30 +142,98 @@ def inliner(lib, items_by_id):
 # ------------------------------------------------------------------ the vault
 
 class Library:
-    def __init__(self, roots):
+    SCAN_TTL = 2.0  # seconds a vault scan is reused
+    TEXT_CACHE_CHARS = 48 << 20  # bound on cached search text (text plus its lowercase copy)
+
+    def __init__(self, roots, ttl=SCAN_TTL):
         self.roots = [r.expanduser().resolve() for r in roots]
+        self.ttl = ttl
         self._links = {}  # path -> (mtime, [targets])
         self.lock = threading.Lock()
+        self._scan_lock = threading.Lock()
+        self._snap, self._snap_at = None, 0.0
+        self._texts = collections.OrderedDict()  # id -> (mtime, size, text, lowered), for search
+        self._texts_chars = 0
+        self._texts_lock = threading.Lock()
+
+    def search_text(self, it):
+        """(text, lowered) of a note/text/html item for search, cached by (id, mtime, size);
+        None if it cannot be read. Oldest entries are dropped past TEXT_CACHE_CHARS."""
+        key = (it["mtime"], it["size"])
+        with self._texts_lock:
+            hit = self._texts.get(it["id"])
+            if hit and hit[:2] == key:
+                self._texts.move_to_end(it["id"])
+                return hit[2], hit[3]
+        p = self.resolve(it["id"])
+        try:
+            text = p.read_text(errors="replace")
+        except (OSError, AttributeError):
+            return None
+        if it["kind"] == "html":
+            text = re.sub(r"<[^>]+>", " ", text)
+        low = text.lower()
+        cost = len(text) + len(low)
+        if cost <= self.TEXT_CACHE_CHARS // 4:
+            with self._texts_lock:
+                old = self._texts.pop(it["id"], None)
+                if old:
+                    self._texts_chars -= len(old[2]) + len(old[3])
+                self._texts[it["id"]] = (*key, text, low)
+                self._texts_chars += cost
+                while self._texts_chars > self.TEXT_CACHE_CHARS:
+                    _, (_, _, t, lo) = self._texts.popitem(last=False)
+                    self._texts_chars -= len(t) + len(lo)
+        return text, low
 
     def scan(self):
+        """The vault's items, sorted by id. Cached for SCAN_TTL seconds across every
+        caller (tabs, search, note renders); the list is shared, so do not mutate it."""
+        return self.snapshot()[0]
+
+    def snapshot(self):
+        """(items, JSON text of the items, strong ETag) from one cached scan.
+        Edits, new files and deletions show up after at most the TTL."""
+        with self._scan_lock:
+            now = time.monotonic()
+            if self._snap is None or now - self._snap_at >= self.ttl:
+                items = self._walk()
+                body = json.dumps(items, separators=(",", ":"))
+                etag = '"' + hashlib.sha256(body.encode()).hexdigest()[:24] + '"'
+                self._snap, self._snap_at = (items, body, etag), now
+            return self._snap
+
+    def _walk(self):
         items = []
         for root in self.roots:
             if not root.is_dir():
                 continue
-            for dirpath, dirnames, filenames in os.walk(root):
-                dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
-                for name in filenames:
-                    p = Path(dirpath) / name
-                    kind = KINDS.get(p.suffix.lower())
-                    if name.startswith(".") or kind in (None, "asset"):
-                        continue
-                    try:
-                        st = p.stat()
-                    except OSError:
-                        continue
-                    rel = p.relative_to(root).as_posix()
-                    items.append({"id": f"{root.name}/{rel}", "name": p.name, "kind": kind,
-                                  "mtime": st.st_mtime, "size": st.st_size})
+            prefix = root.name + "/"
+            stack = [(str(root), "")]
+            while stack:
+                path, rel = stack.pop()
+                try:
+                    it = os.scandir(path)
+                except OSError:
+                    continue
+                with it:
+                    for e in it:
+                        name = e.name
+                        if name.startswith("."):
+                            continue
+                        try:
+                            if e.is_dir():  # follows symlinks, like os.walk's dirnames
+                                if not e.is_symlink():
+                                    stack.append((e.path, rel + name + "/"))
+                                continue
+                            kind = KINDS.get(os.path.splitext(name)[1].lower())
+                            if kind in (None, "asset"):
+                                continue
+                            st = e.stat()
+                        except OSError:
+                            continue
+                        items.append({"id": prefix + rel + name, "name": name, "kind": kind,
+                                      "mtime": st.st_mtime, "size": st.st_size})
         items.sort(key=lambda i: i["id"].lower())
         return items
 
@@ -677,14 +748,11 @@ def search(lib, q, limit=40):
     for it in lib.scan():
         if it["kind"] not in ("note", "text", "html"):
             continue
-        p = lib.resolve(it["id"])
-        try:
-            text = p.read_text(errors="replace")
-        except OSError:
+        got = lib.search_text(it)
+        if got is None:
             continue
-        if it["kind"] == "html":
-            text = re.sub(r"<[^>]+>", " ", text)
-        i = text.lower().find(q)
+        text, low = got
+        i = low.find(q)
         if i == -1:
             continue
         snip = re.sub(r"\s+", " ", text[max(0, i - 60):i + len(q) + 80]).strip()
@@ -701,7 +769,7 @@ def search(lib, q, limit=40):
 # no network. Built with `artifacts --build-pdf-image`. Kept small on purpose:
 # Debian 12 slim (whose libgbm1 does not pull in LLVM, unlike Ubuntu 24.04's),
 # only the headless shell (no full Chromium, Firefox or WebKit, no Playwright),
-# only the shared libraries it links, and only the library files the print page
+# only its en-US locale pack, only the shared libraries it links, and only the library files the print page
 # loads (no source maps or other builds).
 # The headless shell comes from Chrome for Testing, pinned by version and
 # checksum: change PDF_CHROME_VERSION and PDF_CHROME_SHA256 together.
@@ -729,7 +797,8 @@ ADD --checksum=sha256:{PDF_INTER_SHA256} {PDF_INTER_URL} /inter.zip
 ADD --checksum=sha256:{PDF_CHROME_SHA256} {PDF_CHROME_URL} /chrome.zip
 RUN apt-get update && apt-get install -y --no-install-recommends unzip \\
     && unzip -j /inter.zip 'extras/ttf/Inter-*.ttf' -d /inter \\
-    && unzip -q /chrome.zip -d /opt && mv /opt/chrome-headless-shell-linux64 /opt/chrome-headless-shell
+    && unzip -q /chrome.zip -d /opt && mv /opt/chrome-headless-shell-linux64 /opt/chrome-headless-shell \\
+    && find /opt/chrome-headless-shell/locales -type f ! -name en-US.pak -delete
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends python3 \\
       libnss3 libnspr4 libgbm1 libdrm2 libasound2 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \\
@@ -1029,20 +1098,89 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write("%s %s %s\n" % (time.strftime("%H:%M:%S"), self.client_address[0], fmt % args))
 
-    def _send(self, status, body, ctype, extra=None):
-        if isinstance(body, str):
-            body = body.encode()
+    def log_request(self, code="-", size="-"):
+        # The page polls /api/tree and revalidates assets: successful API calls and
+        # 304s are noise. Errors, pages, PDFs and downloads are still logged.
+        try:
+            status = int(code)
+        except (TypeError, ValueError):
+            status = 0
+        if status == 304 or (self.path.startswith("/api/") and 200 <= status < 300):
+            return
+        super().log_request(code, size)
+
+    def _headers(self, status, ctype, length, cache, extra):
         self.send_response(status)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        if ctype:
+            self.send_header("Content-Type", ctype)
+        if length is not None:
+            self.send_header("Content-Length", str(length))
+        self.send_header("Cache-Control", cache)
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
+
+    def _send(self, status, body, ctype, extra=None, cache="no-store"):
+        if isinstance(body, str):
+            body = body.encode()
+        self._headers(status, ctype, len(body), cache, extra)
         if self.command != "HEAD":
             self.wfile.write(body)
+
+    def _not_modified(self, etag, extra=None, cache="no-store"):
+        self._headers(HTTPStatus.NOT_MODIFIED, None, None, cache, {"ETag": etag, **(extra or {})})
+
+    def _matches(self, etag, mtime):
+        """Does the request's validator (If-None-Match, else If-Modified-Since
+        unless mtime is None) match?"""
+        inm = self.headers.get("If-None-Match")
+        if inm is not None:
+            want = {t.strip().removeprefix("W/") for t in inm.split(",")}
+            return "*" in want or etag in want
+        ims = self.headers.get("If-Modified-Since")
+        if ims and mtime is not None:
+            try:
+                return mtime <= email.utils.parsedate_to_datetime(ims).timestamp()
+            except (TypeError, ValueError):
+                return False
+        return False
+
+    def _send_tree(self):
+        lib = self.library
+        items, body, items_etag = lib.snapshot()
+        head = json.dumps({"roots": [r.name for r in lib.roots], "title": self.title})
+        # The validator covers the whole response: items plus roots and title.
+        etag = '"' + hashlib.sha256((head + items_etag).encode()).hexdigest()[:24] + '"'
+        if self._matches(etag, None):  # the tree has no Last-Modified: If-None-Match only
+            return self._not_modified(etag, cache="private, no-cache")
+        return self._send(HTTPStatus.OK, head[:-1] + ',"items":' + body + "}", "application/json",
+                          {"ETag": etag}, cache="private, no-cache")
+
+    def _send_file(self, path, ctype, extra):
+        """A vault file with validators, revalidated on every use, streamed in chunks."""
+        try:
+            f = open(path, "rb")
+        except OSError:
+            return self._send(HTTPStatus.NOT_FOUND, "not found\n", "text/plain")
+        with f:
+            st = os.fstat(f.fileno())
+            etag = f'"{st.st_mtime_ns:x}-{st.st_size:x}"'
+            cache = "private, no-cache"
+            if self._matches(etag, int(st.st_mtime)):
+                return self._not_modified(etag, cache=cache)
+            self._headers(HTTPStatus.OK, ctype, st.st_size, cache, {
+                **(extra or {}), "ETag": etag, "Last-Modified": email.utils.formatdate(st.st_mtime, usegmt=True)})
+            if self.command == "HEAD":
+                return
+            left = st.st_size
+            while left > 0:
+                chunk = f.read(min(FILE_CHUNK, left))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                left -= len(chunk)
 
     def do_HEAD(self):
         self.do_GET()
@@ -1066,9 +1204,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get("Sec-Fetch-Site") not in (None, "same-origin"):
                 return self._send(HTTPStatus.FORBIDDEN, "[]", "application/json")
             if url.path == "/api/tree":
-                lib = self.library
-                return self._send(HTTPStatus.OK, json.dumps({"roots": [r.name for r in lib.roots], "title": self.title, "items": lib.scan()}),
-                                  "application/json")
+                return self._send_tree()
             if url.path == "/api/search":
                 q = urllib.parse.parse_qs(url.query).get("q", [""])[0]
                 return self._send(HTTPStatus.OK, json.dumps(search(self.library, q)), "application/json")
@@ -1110,8 +1246,8 @@ class Handler(BaseHTTPRequestHandler):
                 if ctype.startswith("text/") or ctype in ("image/svg+xml", "application/json", "application/javascript"):
                     ctype += "; charset=utf-8"
                 if kind == "archive":
-                    return self._send(HTTPStatus.OK, p.read_bytes(), "application/zip", {**sandboxed, **attachment(p.name)})
-                return self._send(HTTPStatus.OK, p.read_bytes(), ctype, sandboxed)
+                    return self._send_file(p, "application/zip", {**sandboxed, **attachment(p.name)})
+                return self._send_file(p, ctype, sandboxed)
         return self._send(HTTPStatus.NOT_FOUND, "not found\n", "text/plain")
 
 
@@ -1444,7 +1580,7 @@ async function downloadPdf() {
 
 async function refresh() {
   try {
-    const r = await fetch("/api/tree", { cache: "no-store" });
+    const r = await fetch("/api/tree", { cache: "no-cache" });  // revalidates: 304 when nothing changed
     const data = await r.json();
     items = data.items; byId = new Map(items.map((i) => [i.id, i]));
     $("vname").textContent = data.title || data.roots.join(", ");
@@ -1571,7 +1707,9 @@ document.addEventListener("keydown", (e) => {
   }
 });
 refresh();
-setInterval(refresh, 2000);
+// Poll every 10 s, not while the tab is hidden; catch up as soon as it is shown again.
+setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 10000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refresh(); });
 </script>
 </body></html>
 """

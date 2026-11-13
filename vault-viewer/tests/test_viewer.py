@@ -7,6 +7,7 @@ The end-to-end PDF check runs only when the docker image artifacts-pdf:local exi
 """
 import base64
 import contextlib
+import email.utils
 import http.client
 import importlib.machinery
 import importlib.util
@@ -15,6 +16,7 @@ import os
 import pathlib
 import re
 import shutil
+import time
 import subprocess
 import sys
 import tempfile
@@ -295,6 +297,118 @@ def t_http(lib):
         srv.server_close()
 
 
+def t_perf(base):
+    print("cached scan, ETag/304, log suppression, file caching")
+    vault = base / "perfvault"
+    vault.mkdir()
+    (vault / "a.md").write_text("# a\n\nfindme-alpha\n")
+    (vault / "pic.png").write_bytes(PNG)
+    (vault / "big.zip").write_bytes(ZIP + bytes(1 << 20))
+    lib = A.Library([vault], ttl=3600)
+    ids = lambda: [i["id"] for i in lib.scan()]  # noqa: E731
+    check(ids() == ["perfvault/a.md", "perfvault/big.zip", "perfvault/pic.png"], "scan lists the vault")
+    (vault / "new.md").write_text("# new\n")
+    check("perfvault/new.md" not in ids(), "scan is cached within the TTL")
+    lib.ttl = 0
+    check("perfvault/new.md" in ids(), "a new file appears once the TTL has passed")
+    (vault / "new.md").unlink()
+    check("perfvault/new.md" not in ids(), "a deleted file disappears")
+    old = {i["id"]: i["mtime"] for i in lib.scan()}["perfvault/a.md"]
+    os.utime(vault / "a.md", (old + 50, old + 50))
+    check({i["id"]: i["mtime"] for i in lib.scan()}["perfvault/a.md"] == old + 50, "an edit changes the mtime in the scan")
+    check(lib.snapshot()[2].startswith('"'), "the tree ETag is a quoted strong validator")
+    e1 = lib.snapshot()[2]
+    os.utime(vault / "a.md", (old + 99, old + 99))
+    check(lib.snapshot()[2] != e1, "the ETag changes when a file changes")
+    check(lib.snapshot()[2] == lib.snapshot()[2], "the ETag is stable when nothing changed")
+    (vault / "sub").mkdir()
+    (vault / "sub" / "deep.md").write_text("# deep\n")
+    (vault / ".dot").mkdir()
+    (vault / ".dot" / "x.md").write_text("# x\n")
+    check("perfvault/sub/deep.md" in ids() and not any(".dot" in i for i in ids()), "subfolders scanned, hidden folders skipped")
+
+    check([h["id"] for h in A.search(lib, "findme-alpha")] == ["perfvault/a.md"], "search finds a note")
+    (vault / "a.md").write_text("# a\n\nfindme-beta changed\n")
+    check(A.search(lib, "findme-beta") != [] and A.search(lib, "findme-alpha") == [],
+          "search sees an edited file (cache keyed by mtime and size)")
+    lib.TEXT_CACHE_CHARS = 100
+    A.search(lib, "zzzz")
+    check(lib._texts_chars <= 100, "the search text cache stays within its bound")
+    lib.TEXT_CACHE_CHARS = 48 << 20
+    lib.ttl = 3600
+
+    logged = []
+    A.Handler.log_message = lambda self, fmt, *args: logged.append(fmt % args)
+    srv = A.ThreadingHTTPServer(("127.0.0.1", 0), A.Handler)
+    port = srv.server_address[1]
+    A.Handler.hosts = {f"127.0.0.1:{port}"}
+    A.Handler.library = lib
+    A.Handler.gate = A.TailnetGate(None)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    c = Client(port)
+    try:
+        st, hdr, body = c.get("/api/tree")
+        etag = hdr.get("ETag", "")
+        check(st == 200 and etag.startswith('"') and not etag.startswith("W/"), "/api/tree sends a strong ETag")
+        check(hdr.get("Cache-Control") == "private, no-cache", "/api/tree is private, no-cache")
+        import json as _json
+        check([i["id"] for i in _json.loads(body)["items"]] == ids(), "/api/tree body lists the scan")
+        st, hdr, body = c.get("/api/tree", **{"If-None-Match": etag})
+        check(st == 304 and body == b"" and hdr.get("ETag") == etag, "If-None-Match with the current ETag -> 304, no body")
+        check(c.get("/api/tree", **{"If-None-Match": "W/" + etag})[0] == 304, "a weak form of the ETag also matches")
+        check(c.get("/api/tree", **{"If-None-Match": '"stale"'})[0] == 200, "a stale ETag -> 200")
+        check(c.get("/api/tree", Host="evil.example", **{"If-None-Match": etag})[0] == 403, "wrong Host is refused before any 304")
+        check(c.get("/api/tree", **{"If-None-Match": etag, "Sec-Fetch-Site": "cross-site"})[0] == 403,
+              "cross-site is refused before any 304")
+        check(c.get("/api/tree", **{"If-Modified-Since": email.utils.formatdate(time.time() + 3600, usegmt=True)})[0] == 200,
+              "/api/tree ignores If-Modified-Since (only If-None-Match)")
+        A.Handler.title = "other-title"
+        st, hdr, body = c.get("/api/tree", **{"If-None-Match": etag})
+        check(st == 200 and hdr["ETag"] != etag and b"other-title" in body, "a different title changes the tree ETag")
+        A.Handler.title = None
+        lib.ttl = 0
+        (vault / "later.md").write_text("# later\n")
+        st, hdr, body = c.get("/api/tree", **{"If-None-Match": etag})
+        check(st == 200 and b"later.md" in body and hdr["ETag"] != etag, "a new file changes the ETag and returns 200")
+        lib.ttl = 3600
+        etag = c.get("/api/tree")[1]["ETag"]
+        check(c.get("/api/tree", **{"If-None-Match": etag})[0] == 304, "the tree ETag matches again after the change")
+        check(c.get("/api/tree", **{"If-Modified-Since": email.utils.formatdate(time.time() + 3600, usegmt=True)})[0] == 200,
+              "an IMS-only request after a vault change gets 200")
+
+        st, hdr, body = c.get("/raw/perfvault/pic.png")
+        check(st == 200 and body == PNG, "/raw/<png> serves the bytes")
+        check(hdr.get("ETag", "").startswith('"') and "Last-Modified" in hdr and hdr.get("Cache-Control") == "private, no-cache",
+              "/raw/<png> has ETag, Last-Modified and Cache-Control private")
+        st, h2, body = c.get("/raw/perfvault/pic.png", **{"If-None-Match": hdr["ETag"]})
+        check(st == 304 and body == b"", "/raw/<png> If-None-Match -> 304")
+        st, _, body = c.get("/raw/perfvault/pic.png", **{"If-Modified-Since": hdr["Last-Modified"]})
+        check(st == 304, "/raw/<png> If-Modified-Since -> 304")
+        st, hdr, body = c.get("/raw/perfvault/big.zip")
+        check(st == 200 and len(body) == (1 << 20) + len(ZIP) and hdr.get("Content-Length") == str(len(body)),
+              "a zip larger than one chunk streams in full")
+        st, hdr, body = c.get("/raw/perfvault/big.zip", method="HEAD")
+        check(st == 200 and body == b"" and int(hdr["Content-Length"]) > 0, "HEAD on a file sends headers only")
+        check(c.get("/raw/perfvault/missing.png")[0] == 404, "a missing file -> 404")
+
+        logged.clear()
+        c.get("/api/tree")
+        c.get("/api/tree", **{"If-None-Match": etag})
+        c.get("/api/search?q=findme")
+        c.get("/raw/perfvault/pic.png", **{"If-None-Match": '"x"'})
+        c.get("/raw/perfvault/pic.png", **{"If-None-Match": "*"})
+        c.get("/api/nothing")
+        c.get("/raw/perfvault/missing.png")
+        check(not any("/api/tree" in m or "/api/search" in m for m in logged), "successful /api/ requests are not logged")
+        check(not any(" 304 " in m for m in logged), "304 responses are not logged")
+        check(any("/raw/perfvault/pic.png" in m and " 200 " in m for m in logged), "non-API requests are logged")
+        check(any("/api/nothing" in m and " 404 " in m for m in logged), "API errors are logged")
+        check(any("missing.png" in m and " 404 " in m for m in logged), "404s are logged")
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 def t_pdf_build():
     print("PDF image build")
     cmd = A.pdf_build_command("img:t")
@@ -305,6 +419,7 @@ def t_pdf_build():
           and f"ADD --checksum=sha256:{A.PDF_CHROME_SHA256} {A.PDF_CHROME_URL} " in D
           and A.PDF_CHROME_VERSION in A.PDF_CHROME_URL and A.PDF_CHROME_URL.endswith("/chrome-headless-shell-linux64.zip"),
           "Dockerfile takes Chromium's headless shell from Chrome for Testing, pinned by version and checksum")
+    check("locales -type f ! -name en-US.pak -delete" in D, "Dockerfile keeps only the en-US locale pack")
     check("playwright" not in D.lower() and "playwright" not in A.PDF_RENDER.lower(),
           "no Playwright in the image or the renderer (the renderer speaks DevTools over a pipe itself)")
     final = D[D.rindex("\nFROM "):]
@@ -406,6 +521,7 @@ def main():
         t_render(lib)
         t_mermaid(lib)
         t_http(lib)
+        t_perf(pathlib.Path(tmp).resolve())
         t_pdf_build()
     print()
     if FAILS:
