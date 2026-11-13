@@ -46,7 +46,7 @@ fi
 
 # One python call prints a line per finding: "PASS <text>" or "FAIL <text>".
 echo
-echo "== exposure and isolation of the rendered stack =="
+echo "== exposure, isolation, limits and logs of the rendered stack =="
 while IFS= read -r line; do
   case "$line" in
     PASS\ *) ok "${line#PASS }" ;;
@@ -103,6 +103,27 @@ say(env.get("WIREGUARD_PRIVATE_KEY_SECRETFILE") == "/run/secrets/wireguard_priva
 # 5. The host-network services are exactly plex and plex-tunnel.
 host = sorted(n for n, s in services.items() if s.get("network_mode") == "host")
 say(host == ["plex", "plex-tunnel"], f"host network is used by plex and plex-tunnel only (found: {host})")
+
+# 6. Every service has a memory cap and rotated json-file logs. The host has no
+#    swap, so an uncapped container can take RAM from its neighbours.
+for name, svc in sorted(services.items()):
+    mem = svc.get("mem_limit")
+    say(bool(mem) and str(mem) not in ("0", "0b"),
+        f"{name} has a memory limit (found: {mem!r})")
+    log = svc.get("logging") or {}
+    opts = log.get("options") or {}
+    say(log.get("driver") == "json-file" and bool(opts.get("max-size")) and bool(opts.get("max-file")),
+        f"{name} rotates its logs (json-file with max-size and max-file; found: {log!r})")
+
+# 7. The two services that had no health state have a healthcheck.
+for name in ("qbittorrent", "plex-tunnel"):
+    hc = services[name].get("healthcheck") or {}
+    say(bool(hc.get("test")) and not hc.get("disable"), f"{name} has a healthcheck")
+
+# 8. plex-tunnel shares the host network, so its metrics endpoint must stay on
+#    loopback (cloudflared's default is 0.0.0.0:20241).
+metrics = services["plex-tunnel"].get("environment", {}).get("TUNNEL_METRICS", "")
+say(metrics.startswith("127.0.0.1:"), f"plex-tunnel metrics listen on loopback (found: {metrics!r})")
 PY
 )
 
