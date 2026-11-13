@@ -11,6 +11,10 @@
 - name: Configure central alerting
   hosts: central
   become: true
+  # No role here reads an ansible_* fact, so skip the setup round trip (about
+  # 5 to 8 seconds per play on this fleet). Add `ansible.builtin.setup` to the
+  # role that first needs one.
+  gather_facts: false
   roles:
     - matrix_webhook
     - grafana_alerting

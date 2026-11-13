@@ -10,5 +10,9 @@
 - name: Deploy the Dell fan boost
   hosts: metal
   become: true
+  # No role here reads an ansible_* fact, so skip the setup round trip (about
+  # 5 to 8 seconds per play on this fleet). Add `ansible.builtin.setup` to the
+  # role that first needs one.
+  gather_facts: false
   roles:
     - dell_fan_boost

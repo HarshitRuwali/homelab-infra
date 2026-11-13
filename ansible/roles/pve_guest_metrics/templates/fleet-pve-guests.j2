@@ -15,10 +15,14 @@
 # the guest's virtual cable. What the host receives on it is what the guest
 # sent. The dashboard swaps receive and transmit to talk about the guest.
 #
-# WHY pvesh AND NOT PARSING /etc/pve: a guest's .conf file also holds snapshot
-# and pending sections that look like the live config. The API returns the
-# running configuration (--current) in a stable JSON shape, which is the same
-# reason roles/smart_metrics reads smartctl --json.
+# WHY ONE pvesh CALL AND NOT ONE PER GUEST: pvesh is a Perl program that takes
+# about a second of CPU to start, so asking it for every guest's config cost 20
+# seconds of CPU and 150 MiB every run. The guest LIST still comes from one
+# pvesh call. Each guest's CONFIG is read from its file in
+# /etc/pve/nodes/<node>/ instead, taking only the lines before the first
+# [section] header: that top section is the live configuration (what
+# `pvesh --current 1` returns). Snapshot and [pending] sections, which look
+# like it, come after and are ignored.
 
 import json
 import os
@@ -33,6 +37,8 @@ OUT_DIR = "{{ pve_guest_metrics_dir }}"
 OUT_FILE = "{{ pve_guest_metrics_file }}"
 
 PVESH = "/usr/bin/pvesh"
+PVE_NODES_DIR = "/etc/pve/nodes"
+CONF_DIR = {"qemu": "qemu-server", "lxc": "lxc"}
 NET_KEY = re.compile(r"^net(\d+)$")
 # The host-side device prefix Proxmox uses for each guest type.
 PREFIX = {"qemu": "tap", "lxc": "veth"}
@@ -46,6 +52,27 @@ def pvesh(path, *args):
         capture_output=True, text=True, timeout=60, check=True,
     )
     return json.loads(p.stdout)
+
+
+def read_config(node, gtype, vmid):
+    """The live config of a guest as {key: value}, from its file under /etc/pve.
+
+    Only the lines before the first [section] header count: later sections are
+    snapshots and pending changes. Raises OSError when the file is missing or
+    unreadable, which the caller treats like a failed API call.
+    """
+    path = os.path.join(PVE_NODES_DIR, node, CONF_DIR[gtype], str(vmid) + ".conf")
+    cfg = {}
+    with open(path) as fh:
+        for line in fh:
+            if line.startswith("["):
+                break
+            if line.startswith("#") or not line.strip():
+                continue
+            key, sep, value = line.partition(":")
+            if sep:
+                cfg[key.strip()] = value.strip()
+    return cfg
 
 
 def esc(s):
@@ -80,9 +107,8 @@ def main():
         # other cluster nodes have their devices on those nodes.
         if gtype not in PREFIX or vmid is None or g.get("template") or g.get("node") != node:
             continue
-        path = "/nodes/" + node + "/" + gtype + "/" + str(vmid) + "/config"
         try:
-            cfg = pvesh(path, "--current", "1")
+            cfg = read_config(node, gtype, vmid)
         except API_ERRORS as e:
             print("config of " + gtype + " " + str(vmid) + " failed: " + str(e), file=sys.stderr)
             failed.append(str(vmid))

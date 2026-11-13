@@ -13,6 +13,11 @@
   hosts: monitored
   become: true
   serial: "{{ collector_serial | default('100%') }}"
+  # No facts up front (a gather costs about 5 to 8 seconds per play on this
+  # fleet). alloy_collector reads /proc/meminfo itself, and gpu_exporter runs
+  # `setup` on the one host with a GPU, the only place it needs
+  # ansible_architecture.
+  gather_facts: false
   roles:
     # gpu_exporter first: it sets gpu_exporter_available, which
     # config.alloy.j2 reads to decide whether to scrape it.
