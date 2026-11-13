@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
+from app.http_client import get_http_client
 from app.models import MemoryChunk, MemoryFile
 from app.qdrant_store import get_qdrant, ensure_collection
 from app.schemas import (
@@ -38,6 +39,8 @@ from app.schemas import (
     MemoryDeleteResponse,
     MemorySearchRequest,
     MemorySearchResponse,
+    MemoryStoreBatchRequest,
+    MemoryStoreBatchResponse,
     MemoryStoreRequest,
     MemoryStoreResponse,
     MemoryUpdateRequest,
@@ -96,12 +99,46 @@ def _build_filter(conditions: dict[str, Any]) -> Filter | None:
     return Filter(must=clauses) if clauses else None
 
 
-async def _embed(text: str) -> list[float]:
-    """Call the AI VM embed endpoint and return the vector."""
-    url = f"{settings.embed_url}/embedding"
-    async with httpx.AsyncClient(timeout=30) as client:
+# llama.cpp accepts a list in "content" and answers one entry per input, but its
+# batch size is bounded, so large lists are embedded in groups.
+EMBED_GROUP_SIZE = 25
+
+
+def _vector_from(emb: Any) -> list[float] | None:
+    """Unwrap one embedding value: ``[[vec]]`` -> ``vec``, ``vec`` -> ``vec``."""
+    if isinstance(emb, list) and len(emb) == 1 and isinstance(emb[0], list):
+        return emb[0]
+    if isinstance(emb, list) and emb and isinstance(emb[0], (int, float)):
+        return emb
+    return None
+
+
+def _parse_embeddings(data: Any) -> list[list[float] | None]:
+    """Parse bge-large / llama.cpp / OpenAI style embed responses into one vector per input."""
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        items = sorted(data, key=lambda item: item.get("index", 0))
+        return [_vector_from(item.get("embedding", [])) for item in items]
+    if isinstance(data, dict):
+        if isinstance(data.get("data"), list):
+            items = sorted(data["data"], key=lambda item: item.get("index", 0))
+            return [_vector_from(item.get("embedding", [])) for item in items]
+        vector = data.get("embedding")
+        if isinstance(vector, list) and vector and isinstance(vector[0], list):
+            vector = vector[0]
+        return [vector or None]
+    return []
+
+
+async def _embed_many(texts: list[str]) -> list[list[float]]:
+    """Embed ``texts`` through the AI VM, one HTTP request per group of EMBED_GROUP_SIZE."""
+    client = get_http_client()
+    vectors: list[list[float]] = []
+    for start in range(0, len(texts), EMBED_GROUP_SIZE):
+        group = texts[start : start + EMBED_GROUP_SIZE]
+        content: str | list[str] = group[0] if len(group) == 1 else group
+        url, payload = settings.embed_request(content)
         try:
-            resp = await client.post(url, json={"content": text})
+            resp = await client.post(url, json=payload, timeout=30)
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise HTTPException(
@@ -111,31 +148,25 @@ async def _embed(text: str) -> list[float]:
         except httpx.RequestError as exc:
             raise HTTPException(status_code=502, detail=f"Cannot reach AI VM: {exc}")
 
-    data = resp.json()
-    # Parse bge-large / llama.cpp embed response formats
-    vector = None
-    if isinstance(data, list) and data and isinstance(data[0], dict):
-        emb = data[0].get("embedding", [])
-        if isinstance(emb, list) and len(emb) == 1 and isinstance(emb[0], list):
-            vector = emb[0]  # [[vec]] → [vec]
-        elif isinstance(emb, list) and emb and isinstance(emb[0], (int, float)):
-            vector = emb
-    elif isinstance(data, dict):
-        vector = data.get("embedding") or data.get("data", [{}])[0].get("embedding", [])
-        if isinstance(vector, list) and vector and isinstance(vector[0], list):
-            vector = vector[0]
-    if not vector:
-        raise HTTPException(status_code=502, detail="Empty vector returned by embed model")
+        parsed = _parse_embeddings(resp.json())
+        if len(parsed) != len(group) or not all(parsed):
+            raise HTTPException(status_code=502, detail="Empty vector returned by embed model")
+        for vector in parsed:
+            if len(vector) != settings.vector_dim:
+                raise HTTPException(
+                    status_code=502,
+                    detail=(
+                        f"Embed model returned {len(vector)} dimensions but VECTOR_DIM is "
+                        f"{settings.vector_dim}. Refusing to write a mismatched vector."
+                    ),
+                )
+        vectors.extend(parsed)
+    return vectors
 
-    if len(vector) != settings.vector_dim:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"Embed model returned {len(vector)} dimensions but VECTOR_DIM is "
-                f"{settings.vector_dim}. Refusing to write a mismatched vector."
-            ),
-        )
-    return vector
+
+async def _embed(text: str) -> list[float]:
+    """Call the AI VM embed endpoint and return the vector."""
+    return (await _embed_many([text]))[0]
 
 
 # ── POST /memory/search ───────────────────────────────────────────────────────
@@ -207,27 +238,44 @@ async def search_memory(
 
 # ── POST /memory/store ────────────────────────────────────────────────────────
 
-@router.post("/store", response_model=MemoryStoreResponse, status_code=201)
-async def store_memory(
-    request: MemoryStoreRequest,
-    db: AsyncSession = Depends(get_db),
-) -> MemoryStoreResponse:
-    """Embed and upsert a single memory chunk into Qdrant + PostgreSQL."""
+async def _store_chunks(
+    requests: list[MemoryStoreRequest],
+    db: AsyncSession,
+) -> list[MemoryStoreResponse]:
+    """Embed and upsert ``requests`` into Qdrant + PostgreSQL.
+
+    The one code path behind both ``/memory/store`` and ``/memory/store/batch``:
+    one embed call per group of chunks, one Qdrant upsert, one multi-row chunk
+    upsert, and one ``memory_files`` upsert per distinct (agent, project, file).
+    """
     await ensure_collection()
 
-    agent_id = normalize_agent_id(request.agent_id)
-    project = normalize_project(request.project)
-    chunk_id = _chunk_id(request.file_path, request.chunk_index, agent_id, project)
+    scoped = []
+    for request in requests:
+        agent_id = normalize_agent_id(request.agent_id)
+        project = normalize_project(request.project)
+        chunk_id = _chunk_id(request.file_path, request.chunk_index, agent_id, project)
+        scoped.append((request, agent_id, project, chunk_id))
 
-    vector = await _embed(request.chunk_text)
+    # Two entries for the same chunk cannot go into one INSERT ... ON CONFLICT,
+    # so the later entry wins (the same result as storing them one after another),
+    # at the position of its last occurrence so that the file metadata below also
+    # comes from the last chunk stored.
+    latest = {}
+    for entry in scoped:
+        latest.pop(entry[3], None)
+        latest[entry[3]] = entry
+    unique = list(latest.values())
+
+    vectors = await _embed_many([entry[0].chunk_text for entry in unique])
     now = datetime.now(timezone.utc)
-    updated_at = request.updated_at or now
 
     # ── Qdrant upsert ─────────────────────────────────────────────────────────
-    client = get_qdrant()
-    await client.upsert(
-        collection_name=settings.qdrant_collection,
-        points=[
+    points = []
+    rows = []
+    for (request, agent_id, project, chunk_id), vector in zip(unique, vectors):
+        updated_at = request.updated_at or now
+        points.append(
             PointStruct(
                 id=chunk_id,
                 vector=vector,
@@ -245,33 +293,12 @@ async def store_memory(
                     "session_id": request.session_id,
                 },
             )
-        ],
-    )
-
-    # ── PostgreSQL upsert ─────────────────────────────────────────────────────
-    # The conflict target is still chunk_id, but chunk_id now encodes the scope,
-    # so a different agent storing the same path+index inserts a NEW row instead
-    # of silently overwriting this one.
-    stmt = (
-        pg_insert(MemoryChunk)
-        .values(
-            chunk_id=chunk_id,
-            file_path=request.file_path,
-            chunk_index=request.chunk_index,
-            chunk_text=request.chunk_text,
-            type=request.type,
-            tags=request.tags,
-            priority=request.priority,
-            summary=request.summary,
-            updated_at=updated_at,
-            indexed_at=now,
-            agent_id=agent_id,
-            project=project,
-            session_id=request.session_id,
         )
-        .on_conflict_do_update(
-            index_elements=["chunk_id"],
-            set_={
+        rows.append(
+            {
+                "chunk_id": chunk_id,
+                "file_path": request.file_path,
+                "chunk_index": request.chunk_index,
                 "chunk_text": request.chunk_text,
                 "type": request.type,
                 "tags": request.tags,
@@ -282,53 +309,119 @@ async def store_memory(
                 "agent_id": agent_id,
                 "project": project,
                 "session_id": request.session_id,
-            },
+            }
         )
+    client = get_qdrant()
+    await client.upsert(collection_name=settings.qdrant_collection, points=points)
+
+    # One memory_files row per file, from the last chunk stored for it (computed
+    # before sorting). Chunk rows go in sorted by chunk_id so that concurrent
+    # batches lock overlapping rows in the same order.
+    files: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in rows:
+        files[(row["agent_id"], row["project"], row["file_path"])] = row
+    rows.sort(key=lambda row: row["chunk_id"])
+
+    # ── PostgreSQL upsert ─────────────────────────────────────────────────────
+    # The conflict target is still chunk_id, but chunk_id encodes the scope, so a
+    # different agent storing the same path+index inserts a NEW row instead of
+    # silently overwriting this one.
+    chunk_stmt = pg_insert(MemoryChunk).values(rows)
+    chunk_stmt = chunk_stmt.on_conflict_do_update(
+        index_elements=["chunk_id"],
+        set_={
+            column: getattr(chunk_stmt.excluded, column)
+            for column in (
+                "chunk_text",
+                "type",
+                "tags",
+                "priority",
+                "summary",
+                "updated_at",
+                "indexed_at",
+                "agent_id",
+                "project",
+                "session_id",
+            )
+        },
     )
-    await db.execute(stmt)
+    await db.execute(chunk_stmt)
 
     # ── memory_files upsert ───────────────────────────────────────────────────
-    chunk_count = await db.scalar(
-        select(func.count())
-        .select_from(MemoryChunk)
-        .where(
-            MemoryChunk.file_path == request.file_path,
-            MemoryChunk.agent_id == agent_id,
-            MemoryChunk.project == project,
+    # One row per (agent, project, file), however many chunks of it were stored.
+    # chunk_count is computed by the database in the same statement, after the
+    # chunk upsert above, so it needs no separate COUNT round trip. As before,
+    # the file row takes its metadata from the last chunk stored for that file.
+    for (agent_id, project, file_path), row in files.items():
+        chunk_count = (
+            select(func.count())
+            .select_from(MemoryChunk)
+            .where(
+                MemoryChunk.file_path == file_path,
+                MemoryChunk.agent_id == agent_id,
+                MemoryChunk.project == project,
+            )
+            .scalar_subquery()
         )
-    )
-    file_stmt = (
-        pg_insert(MemoryFile)
-        .values(
-            file_path=request.file_path,
+        file_stmt = (
+            pg_insert(MemoryFile)
+            .values(
+                file_path=file_path,
+                agent_id=agent_id,
+                project=project,
+                type=row["type"],
+                tags=row["tags"],
+                priority=row["priority"],
+                updated_at=row["updated_at"],
+                chunk_count=chunk_count,
+            )
+            .on_conflict_do_update(
+                index_elements=["agent_id", "project", "file_path"],
+                set_={
+                    "type": row["type"],
+                    "tags": row["tags"],
+                    "priority": row["priority"],
+                    "updated_at": row["updated_at"],
+                    "chunk_count": chunk_count,
+                },
+            )
+        )
+        await db.execute(file_stmt)
+
+    return [
+        MemoryStoreResponse(
+            chunk_id=chunk_id,
+            upserted=True,
             agent_id=agent_id,
             project=project,
-            type=request.type,
-            tags=request.tags,
-            priority=request.priority,
-            updated_at=updated_at,
-            chunk_count=chunk_count or 1,
+            session_id=request.session_id,
         )
-        .on_conflict_do_update(
-            index_elements=["agent_id", "project", "file_path"],
-            set_={
-                "type": request.type,
-                "tags": request.tags,
-                "priority": request.priority,
-                "updated_at": updated_at,
-                "chunk_count": chunk_count or 1,
-            },
-        )
-    )
-    await db.execute(file_stmt)
+        for request, agent_id, project, chunk_id in scoped
+    ]
 
-    return MemoryStoreResponse(
-        chunk_id=chunk_id,
-        upserted=True,
-        agent_id=agent_id,
-        project=project,
-        session_id=request.session_id,
-    )
+
+@router.post("/store", response_model=MemoryStoreResponse, status_code=201)
+async def store_memory(
+    request: MemoryStoreRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MemoryStoreResponse:
+    """Embed and upsert a single memory chunk into Qdrant + PostgreSQL."""
+    return (await _store_chunks([request], db))[0]
+
+
+@router.post("/store/batch", response_model=MemoryStoreBatchResponse, status_code=201)
+async def store_memory_batch(
+    request: MemoryStoreBatchRequest,
+    db: AsyncSession = Depends(get_db),
+) -> MemoryStoreBatchResponse:
+    """Embed and upsert up to 100 chunks in one request.
+
+    Same semantics as calling ``/memory/store`` once per chunk (each chunk keeps
+    its own scope and metadata), with one embed call per 25 chunks, one Qdrant
+    upsert and one chunk upsert for the whole list.
+    """
+    results = await _store_chunks(request.chunks, db)
+    return MemoryStoreBatchResponse(stored=len(results), chunks=results)
 
 
 # ── POST /memory/update ───────────────────────────────────────────────────────
@@ -372,7 +465,7 @@ async def update_memory(
         session_id=request.session_id
         or (existing.session_id if existing is not None else None),
     )
-    return await store_memory(store_req, db)
+    return (await _store_chunks([store_req], db))[0]
 
 
 # ── DELETE /memory/delete ─────────────────────────────────────────────────────
