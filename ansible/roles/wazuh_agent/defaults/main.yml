@@ -73,3 +73,11 @@ wazuh_fim_directories:
   - /usr/bin
   - /usr/sbin
   - /root/.ssh
+
+# Rootcheck (rootkit and anomaly checks). Off by default on LXC guests: their
+# /proc and /dev are provided by the host, so checks such as the /dev scan
+# match LXC's own files (/dev/.lxc-boot-id and similar) and raise rule 510 at
+# level 7 on every 12 hour scan (about 400 alerts a day across the LXC agents)
+# with nothing real behind them. Virtual machines and bare metal keep it on.
+# Set true or false per host or group to override the detection.
+wazuh_rootcheck_enabled: "{{ (ansible_virtualization_type | default('')) != 'lxc' }}"
