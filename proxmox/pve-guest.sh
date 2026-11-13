@@ -10,7 +10,8 @@
 # DRY RUN BY DEFAULT. Nothing is created until you pass --apply.
 #
 #   ./pve-guest.sh images                          # what is cached, what is usable
-#   ./pve-guest.sh template                        # VM template from the cloud image
+#   ./pve-guest.sh capacity                        # vCPU and RAM allocated vs the host (read-only)
+#   ./pve-guest.sh template                        # Ubuntu VM template (9001) from the cloud image
 #   ./pve-guest.sh template --apply
 #   ./pve-guest.sh vm  --name app01 --cores 2 --memory 2048 --disk 16
 #   ./pve-guest.sh lxc --name svc01 --memory 512 --image ubuntu-24.04-standard
@@ -23,9 +24,10 @@
 #   ./pve-guest.sh handover --vmid 113 --key alice.pub   # after Tailscale is up
 #
 # template options:
-#   --vmid N        template VMID                     (default 9000)
+#   --vmid N        template VMID                     (default 9001, TEMPLATE_VMID)
 #   --image FILE    cloud image, a file name in the ISO or import dir
-#                   (default: newest debian-*-genericcloud-amd64.qcow2)
+#                   (default: newest ubuntu-*-server-cloudimg-amd64.img).
+#                   Debian is optional: --image debian-13-genericcloud-amd64.qcow2 --vmid 9000
 #   --name NAME     template name                     (default: tmpl-<distro>)
 #   --cpu MODEL     CPU model clones inherit          (default x86-64-v3)
 #
@@ -36,11 +38,13 @@
 #   --memory MB     default 1024
 #   --disk GB       default 8
 #   --bridge BR     default vmbr0
-#   --template N    vm only: template VMID to clone   (default 9000)
+#   --template N    vm only: template VMID to clone   (default 9001, TEMPLATE_VMID)
 #   --cpu MODEL     vm only: CPU model                (default x86-64-v3)
 #   --image X       lxc only: template file, or a family such as
 #                   ubuntu-24.04-standard             (default debian-13-standard)
 #   --no-start      create it, leave it stopped
+#   --force         proceed although the RAM committed to running guests plus
+#                   this one would pass host RAM minus RAM_RESERVE_MB
 #
 # tenant options (a VM, always on the tenant bridge; --bridge is refused):
 #   --name, --vmid, --cores, --memory, --disk, --template, --cpu, --no-start
@@ -61,7 +65,10 @@
 #
 # Environment: STORAGE (guest disks, default local-lvm), STORAGE_TMPL (LXC
 # templates, default local), SSH_PUBKEY (default ~/.ssh/id_ed25519.pub),
-# CPU_TYPE (default x86-64-v3) and TENANT_* (see the configuration block).
+# TEMPLATE_VMID (default 9001), CPU_TYPE (default x86-64-v3), VCPU_RATIO_MAX
+# (warn above this vCPU:thread ratio, default 2.0), RAM_RESERVE_MB (RAM kept
+# free of guest commitments, default 16384) and TENANT_* (see the
+# configuration block).
 #
 # Existing guests are never modified. A half-built guest is destroyed, so a
 # rerun starts clean instead of skipping over it.
@@ -77,10 +84,22 @@ SSH_PUBKEY="${SSH_PUBKEY:-$HOME/.ssh/id_ed25519.pub}"
 # Where cloud images can already be. The ISO dir is where the security stack's
 # provisioner parks its qcow2 and where web UI uploads land; the import dir is
 # PVE 9's `import` content type. The vztmpl dir holds LXC tarballs only.
-IMAGE_DIRS=(/var/lib/vz/template/iso /var/lib/vz/import)
-LXC_CACHE=/var/lib/vz/template/cache
+# IMAGE_DIRS_LIST (colon separated) overrides it, for the tests.
+IFS=: read -ra IMAGE_DIRS <<<"${IMAGE_DIRS_LIST:-/var/lib/vz/template/iso:/var/lib/vz/import}"
+LXC_CACHE="${LXC_CACHE:-/var/lib/vz/template/cache}"
 
-TEMPLATE_VMID=9000
+# The VM template that `vm` and `tenant` clone, and the VMID `template` builds
+# at. It is the one on this host: tmpl-ubuntu-26.04. Override with TEMPLATE_VMID
+# or, per run, --template.
+TEMPLATE_VMID="${TEMPLATE_VMID:-9001}"
+# Capacity policy. vCPU is shared, so overcommit is a warning; RAM is not, so
+# committing more than host RAM minus a reserve is refused unless --force.
+VCPU_RATIO_MAX="${VCPU_RATIO_MAX:-2.0}"
+RAM_RESERVE_MB="${RAM_RESERVE_MB:-16384}"
+# Where PVE keeps guest configs. Read directly: one file read per guest instead
+# of a slow API call each.
+QEMU_CONF_DIR="${QEMU_CONF_DIR:-/etc/pve/qemu-server}"
+LXC_CONF_DIR="${LXC_CONF_DIR:-/etc/pve/lxc}"
 # The CPU model every VM gets. Unset, qm falls back to kvm64, which hides
 # SSE4.2, POPCNT and AVX2: modern runtimes (Bun, so Claude Code) spin or die
 # on it. x86-64-v3 is a generic model with AVX2 that still hides the exact
@@ -147,12 +166,12 @@ CMD="${1:-}"
 [[ -n "$CMD" ]] || usage 2
 shift
 case "$CMD" in
-  images|template|vm|lxc|firewall|tenant|handover) ;;
+  images|capacity|template|vm|lxc|firewall|tenant|handover) ;;
   -h|--help|help) usage 0 ;;
-  *) echo "unknown command: $CMD (images, template, vm, lxc, firewall, tenant, handover)" >&2; exit 2 ;;
+  *) echo "unknown command: $CMD (images, capacity, template, vm, lxc, firewall, tenant, handover)" >&2; exit 2 ;;
 esac
 
-NAME="" VMID="" CORES=1 MEMORY=1024 DISK=8 BRIDGE=vmbr0 IMAGE="" START=1 CPU=""
+NAME="" VMID="" CORES=1 MEMORY=1024 DISK=8 BRIDGE=vmbr0 IMAGE="" START=1 CPU="" FORCE=0
 FROM_TEMPLATE="$TEMPLATE_VMID" BRIDGE_SET=0
 T_USER="" T_KEY="" T_IP="" T_ALLOW="" T_UNCAPPED=0
 while [[ $# -gt 0 ]]; do
@@ -173,6 +192,7 @@ while [[ $# -gt 0 ]]; do
     --template) FROM_TEMPLATE="${2:?--template needs a value}"; shift 2 ;;
     --cpu)      CPU="${2:?--cpu needs a value}"; shift 2 ;;
     --no-start) START=0; shift ;;
+    --force)    FORCE=1; shift ;;
     -h|--help)  usage 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -191,6 +211,9 @@ case "$CMD" in
 esac
 if [[ "$CMD" != tenant ]] && { [[ -n "$T_USER$T_IP$T_ALLOW" ]] || (( T_UNCAPPED )); }; then
   die "--user, --ip, --allow and --uncapped are for tenant only"
+fi
+if (( FORCE )) && [[ "$CMD" != vm && "$CMD" != lxc && "$CMD" != tenant ]]; then
+  die "--force is for vm, lxc and tenant"
 fi
 if [[ "$CMD" != tenant && "$CMD" != handover && -n "$T_KEY" ]]; then
   die "--key is for tenant and handover; your own guests take SSH_PUBKEY"
@@ -263,7 +286,7 @@ lxc_templates() {
 
 vm_templates() {
   local conf
-  for conf in /etc/pve/qemu-server/*.conf; do
+  for conf in "$QEMU_CONF_DIR"/*.conf; do
     [[ -f "$conf" ]] || continue
     if grep -q '^template: 1' "$conf"; then
       printf '%s %s\n' "$(basename "$conf" .conf)" "$(sed -n 's/^name: //p' "$conf")"
@@ -332,6 +355,69 @@ check_name() {
   ok "name '$NAME' is unused"
 }
 
+# One line per guest that is not a template: "type vmid name status vcpu
+# mem_mb". vCPU is sockets x cores (or vcpus when set); a container with no
+# cores limit may use every thread, which is counted as 0 here, not guessed.
+# Status comes from `qm list` / `pct list`, memory is the configured maximum
+# (ballooning can only reclaim below it, never promise above it).
+guest_inventory() {
+  local conf id name vcpu mem cores sockets vcpus st
+  declare -A status=()
+  while read -r id st; do status[$id]="$st"; done < <(
+    { qm list 2>/dev/null | awk 'NR>1{print $1, $3}'
+      pct list 2>/dev/null | awk 'NR>1{print $1, $2}'; } || true)
+  for conf in "$QEMU_CONF_DIR"/*.conf; do
+    [[ -f "$conf" ]] || continue
+    # Only the main section: snapshots repeat the keys below a [header].
+    awk '/^\[/{exit} {print}' "$conf" | grep '^template: 1' >/dev/null && continue
+    id="$(basename "$conf" .conf)"
+    name="$(awk '/^\[/{exit} /^name: /{print $2; exit}' "$conf")"
+    cores="$(awk '/^\[/{exit} /^cores: /{print $2; exit}' "$conf")"
+    sockets="$(awk '/^\[/{exit} /^sockets: /{print $2; exit}' "$conf")"
+    vcpus="$(awk '/^\[/{exit} /^vcpus: /{print $2; exit}' "$conf")"
+    mem="$(awk '/^\[/{exit} /^memory: /{print $2; exit}' "$conf")"
+    vcpu="${vcpus:-$(( ${cores:-1} * ${sockets:-1} ))}"
+    printf 'vm %s %s %s %s %s\n' "$id" "${name:-?}" "${status[$id]:-unknown}" "$vcpu" "${mem:-512}"
+  done
+  for conf in "$LXC_CONF_DIR"/*.conf; do
+    [[ -f "$conf" ]] || continue
+    awk '/^\[/{exit} {print}' "$conf" | grep '^template: 1' >/dev/null && continue
+    id="$(basename "$conf" .conf)"
+    name="$(awk '/^\[/{exit} /^hostname: /{print $2; exit}' "$conf")"
+    cores="$(awk '/^\[/{exit} /^cores: /{print $2; exit}' "$conf")"
+    mem="$(awk '/^\[/{exit} /^memory: /{print $2; exit}' "$conf")"
+    printf 'lxc %s %s %s %s %s\n' "$id" "${name:-?}" "${status[$id]:-unknown}" "${cores:-0}" "${mem:-512}"
+  done
+}
+
+# Sets C_VCPU and C_MEM_MB: what the RUNNING guests hold, since a stopped guest
+# uses neither until it is started.
+C_VCPU=0 C_MEM_MB=0
+committed_resources() {
+  local out
+  out="$(guest_inventory | awk '$4=="running"{v+=$5; m+=$6} END{print v+0, m+0}')"
+  C_VCPU="${out% *}"; C_MEM_MB="${out#* }"
+}
+
+# Read-only. Allocated vs host capacity, per guest, running ones counted.
+cmd_capacity() {
+  need_host
+  local threads total_mb
+  threads="$(nproc)"
+  total_mb="$(free -m | awk '/^Mem:/{print $2}')"
+  [[ "$total_mb" =~ ^[0-9]+$ ]] || die "could not parse total memory from 'free -m'"
+  info "host: ${threads} threads, ${total_mb} MB RAM (guest RAM limit: $(( total_mb - RAM_RESERVE_MB )) MB, vCPU ratio warning above ${VCPU_RATIO_MAX}x)"
+  info ""
+  printf '%-5s %-6s %-22s %-9s %5s %9s\n' TYPE VMID NAME STATUS VCPU RAM_MB
+  guest_inventory | sort -k2,2n | while read -r t id n st v m; do
+    printf '%-5s %-6s %-22s %-9s %5s %9s\n' "$t" "$id" "$n" "$st" "$v" "$m"
+  done
+  committed_resources
+  info ""
+  awk -v v="$C_VCPU" -v t="$threads" -v m="$C_MEM_MB" -v tot="$total_mb" 'BEGIN{
+    printf "running guests: %d vCPU on %d threads (%.2fx), %d MB RAM of %d MB (%.0f%%)\n", v, t, v/t, m, tot, 100*m/tot }'
+}
+
 # RAM is a hard gate: a hypervisor pushed into swap degrades every guest on it.
 # Disk is checked against the pool's free space, which on thin storage is what
 # runs out, not the sum of allocations.
@@ -347,6 +433,30 @@ check_capacity() {
     ok "RAM: ${MEMORY} MB of ${avail_mb} MB available"
   fi
   (( CORES <= $(nproc) )) || warn "${CORES} vCPU on a $(nproc) core host"
+
+  # What the running guests already hold. The checks above see only free RAM
+  # now, which ballooning and page cache make look comfortable while the
+  # promises add up to more than the host.
+  local threads total_mb limit_mb
+  threads="$(nproc)"
+  total_mb="$(free -m | awk '/^Mem:/{print $2}')"
+  [[ "$total_mb" =~ ^[0-9]+$ ]] || die "could not parse total memory from 'free -m'"
+  committed_resources
+  if awk -v c="$(( C_VCPU + CORES ))" -v t="$threads" -v r="$VCPU_RATIO_MAX" 'BEGIN{exit !(c > r*t)}'; then
+    warn "vCPU overcommit: $(( C_VCPU + CORES )) vCPU on ${threads} threads, more than ${VCPU_RATIO_MAX}x (${C_VCPU} already on running guests)"
+  else
+    ok "vCPU: $(( C_VCPU + CORES )) committed on ${threads} threads (${C_VCPU} on running guests)"
+  fi
+  limit_mb=$(( total_mb - RAM_RESERVE_MB ))
+  if (( C_MEM_MB + MEMORY > limit_mb )); then
+    if (( FORCE )); then
+      warn "RAM committed: $(( C_MEM_MB + MEMORY )) MB would pass ${limit_mb} MB (${total_mb} MB minus ${RAM_RESERVE_MB} MB reserve); continuing because of --force"
+    else
+      die "RAM committed: running guests hold ${C_MEM_MB} MB, plus ${MEMORY} MB is over ${limit_mb} MB (${total_mb} MB minus ${RAM_RESERVE_MB} MB reserve). Free some, or pass --force"
+    fi
+  else
+    ok "RAM committed: $(( C_MEM_MB + MEMORY )) MB of ${limit_mb} MB usable (${C_MEM_MB} MB on running guests)"
+  fi
 
   avail_gb="$(pvesm status --storage "$STORAGE" | awk 'NR==2{print int($6/1048576)}')"
   if [[ -z "$avail_gb" ]]; then
@@ -432,7 +542,9 @@ resolve_cloud_image() {
       if [[ "${f##*/}" == "$IMAGE" ]]; then IMAGE_PATH="$f"; fi
     done < <(cloud_images)
   else
-    IMAGE_PATH="$(cloud_images | grep -E '/debian-[0-9]+-genericcloud-amd64\.qcow2$' | sort -V | tail -1 || true)"
+    # The default is Ubuntu, the distro of template 9001 that vm and tenant
+    # clone. Debian is explicit: --image debian-13-genericcloud-amd64.qcow2 --vmid 9000.
+    IMAGE_PATH="$(cloud_images | grep -E '/ubuntu-[0-9.]+-server-cloudimg-amd64\.img$' | sort -V | tail -1 || true)"
   fi
   if [[ -z "$IMAGE_PATH" ]]; then
     # shellcheck disable=SC2016  # $IMAGE does expand: the quotes are literal
@@ -509,7 +621,7 @@ cmd_template() {
 TMPL_NAME=""
 check_template() {
   qm config "$FROM_TEMPLATE" 2>/dev/null | grep '^template: 1' >/dev/null \
-    || die "vmid $FROM_TEMPLATE is not a VM template. Build one: $0 template --apply"
+    || die "vmid $FROM_TEMPLATE is not a VM template (TEMPLATE_VMID default $TEMPLATE_VMID). Pass --template <vmid> naming one of: $(vm_templates | awk '{printf "%s(%s) ", $1, $2}'). Or build one: $0 template --apply"
   local base_gb
   TMPL_NAME="$(qm config "$FROM_TEMPLATE" | sed -n 's/^name: //p')"
   ok "template $FROM_TEMPLATE ($TMPL_NAME)"
@@ -1110,6 +1222,7 @@ next_steps() {
 
 case "$CMD" in
   images)   need_host; cmd_images ;;
+  capacity) cmd_capacity ;;
   template) cmd_template ;;
   vm)       cmd_vm ;;
   lxc)      cmd_lxc ;;
