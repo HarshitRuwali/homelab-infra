@@ -63,9 +63,20 @@ The AWS values are deliberately blank; step 2 fills them in. What to verify:
 | `NEXTCLOUD_APP_CONTAINER`, `NEXTCLOUD_DB_CONTAINER` | your Nextcloud containers | `NEXTCLOUD_ENABLED=1` |
 | `NEXTCLOUD_DATA_DIR`, `NEXTCLOUD_CONFIG_DIR` | Nextcloud's data and config directories | `NEXTCLOUD_ENABLED=1` |
 | `NEXTCLOUD_DB_ENGINE` | `mysql` or `postgres` | `NEXTCLOUD_ENABLED=1` |
+| `RCLONE_COMPARE` | `size-only` (default), `modtime` or `checksum`: how the Immich sync detects changes. See [Immich comparison](operations.md#immich-comparison) | optional |
 
 A setting for a disabled service is ignored and never validated, so leaving
 `UNKNOWN` or a wrong path there is harmless until you switch it on.
+
+Nextcloud's two directories need not share a parent. With the official image
+the data directory is often a bind mount from the HDD while `config/` lives in
+the `html` Docker volume (`/var/lib/docker/volumes/<project>_html/_data/config`
+on the host). Point `NEXTCLOUD_DATA_DIR` at the bind mount and
+`NEXTCLOUD_CONFIG_DIR` at the volume path; only the data directory is checked
+against `HDD_MOUNTPOINT` and the canary. Find both with
+`docker inspect <app-container>` (the `Mounts` section). For a Postgres-backed
+Nextcloud set `NEXTCLOUD_DB_ENGINE="postgres"`; the dump uses the database
+container's own `POSTGRES_USER` and `POSTGRES_DB`.
 
 `s3-backup-discover` prints the same draft on demand if you want to compare.
 
@@ -182,7 +193,7 @@ It runs monthly on its own timer from here on.
 | Code, docs, policies | `/opt/s3-backup` (what actually runs) |
 | Which build is deployed | `/opt/s3-backup/.installed`, or `s3-backup --version` |
 | Config | `/etc/s3-backup/backup.env` (0600) |
-| Database dumps awaiting upload | `/var/lib/s3-backup/staging` |
+| Database dumps awaiting upload (plain `.sql`, so budget for the uncompressed size times `STAGING_KEEP` + 1) | `/var/lib/s3-backup/staging` |
 | restic cache | `/var/cache/restic` |
 | Restic password during a run | `/run/s3-backup` (tmpfs, removed afterwards) |
 | Logs | `journalctl -u s3-backup.service` |
