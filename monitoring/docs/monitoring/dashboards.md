@@ -181,9 +181,10 @@ a signature all work.
 
 !!! tip "Tune noisy rules in OPNsense, not here"
     UPnP discovery against the firewall trips sid 2019102 (SSDP amplification)
-    within minutes on a normal LAN. Disable a rule like that by SID under
-    **Services > Intrusion Detection > Rules** rather than filtering it out of
-    the dashboard; a filter hides it here and nowhere else.
+    within minutes on a normal LAN; here it is disabled for that reason. Disable
+    a rule like that by SID under **Services > Intrusion Detection > Rules**
+    rather than filtering it out of the dashboard; a filter hides it here and
+    nowhere else.
 
 ## Disk Health
 
