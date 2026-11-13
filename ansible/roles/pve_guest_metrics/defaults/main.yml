@@ -22,6 +22,7 @@ pve_guest_metrics_script: /usr/local/bin/fleet-pve-guests
 # Every 5 minutes, not the 15 of update_metrics and smart_metrics. Names and
 # bridges rarely change, but a newly created guest should be named within
 # minutes rather than a quarter of an hour. A run is one pvesh call for the
-# guest list plus one per guest, which is cheap.
+# guest list plus a read of each guest's config file under /etc/pve. It used to
+# be one pvesh call per guest, which was 20 seconds of CPU per run.
 pve_guest_metrics_oncalendar: "*:0/5"
 pve_guest_metrics_randomized_delay: 60

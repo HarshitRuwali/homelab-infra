@@ -52,6 +52,121 @@ alloy_fs_mount_points_exclude: '^/(dev|proc|run/credentials/.+|sys|var/lib/docke
 alloy_fs_types_exclude: '^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|fuse\\.lxcfs|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs)$'
 alloy_systemd_unit_exclude: '.+\\.(automount|device|mount|scope|slice)'
 
+# Memory ceiling for the collector (GOMEMLIMIT plus a systemd MemoryHigh).
+#
+# Without a limit the Go runtime keeps up to ~2x its live heap as slack:
+# measured on the fleet, RSS was 126-460 MiB per host against 55-100 MiB of
+# heap in use (184 MiB on cloud-services), and 49% of the RAM of the 256 MiB
+# ingress container. A soft limit makes the runtime collect earlier instead.
+# On the same Alloy binary and config, GOMEMLIMIT=60MiB cut resident anonymous
+# memory from 96 MiB to 52 MiB for about 1% of one core more CPU.
+#
+#   auto  (default)  alloy_gomemlimit_percent of the memory the host sees,
+#                    clamped to [alloy_gomemlimit_min_mib, alloy_gomemlimit_max_mib].
+#                    Read from /proc/meminfo, which inside an LXC is the
+#                    container's own limit, so no fact gathering is needed.
+#   0                no limit: GOMEMLIMIT is not set and the drop-in is removed
+#   <n>              a fixed limit of n MiB, e.g. alloy_gomemlimit_mib: 160
+#
+# GOMEMLIMIT is soft: when live data exceeds it the runtime keeps working and
+# spends up to half the CPU on GC rather than failing, so the floor is set
+# above the largest small-host heap (83 MiB), the ceiling above the largest
+# heap measured (184 MiB on cloud-services, whose 7 GiB would otherwise give
+# far more than that), and the whole thing is never an OOM kill. MemoryHigh is the backstop and also soft (it throttles and
+# reclaims, it never kills); there is deliberately no MemoryMax.
+alloy_gomemlimit_mib: auto
+alloy_gomemlimit_percent: 12
+alloy_gomemlimit_min_mib: 96
+alloy_gomemlimit_max_mib: 256
+# MemoryHigh as a percentage of the limit. 150 leaves room for page cache the
+# cgroup charges to the unit (journal and log files) before reclaim starts.
+alloy_memory_high_percent: 150
+
+# Collectors of prometheus.exporter.unix to turn off (passed as
+# disable_collectors). Empty everywhere but LXC guests.
+#
+# An LXC guest shares the hypervisor's kernel, so these collectors report the
+# HOST's ZFS ARC, softnet and schedstat counters, every host CPU's frequency,
+# the host's disks and hardware sensors: the same ~1500 series on each of six
+# guests, identical to what the hypervisor (a `metal` host, which keeps them)
+# already exports. thermal_zone also fails with "no data available" on every
+# scrape in a guest. Dashboards and alert rules read node_hwmon_* only for
+# role="hypervisor" and role="pi" hosts and node_disk_* only on the hypervisor
+# dashboard; nothing reads zfs, softnet, schedstat, cpufreq, edac, xfs, nvme,
+# powersupplyclass or rapl series at all.
+#
+# Membership of the `lxc` inventory group is what selects a guest. Override
+# per host or group (for example `[]` to export everything again).
+alloy_lxc_disabled_collectors:
+  - thermal_zone
+  - hwmon
+  - cpufreq
+  - zfs
+  - softnet
+  - schedstat
+  - edac
+  - xfs
+  - diskstats
+  - nvme
+  - powersupplyclass
+  - rapl
+alloy_unix_disable_collectors: "{{ alloy_lxc_disabled_collectors if 'lxc' in group_names else [] }}"
+
+# Metric names to drop from the host-unix job after collection (RE2, matched
+# against the whole name). The cpu collector, which dashboards need for
+# node_cpu_seconds_total, also emits the hypervisor's thermal-throttle
+# counters; those cannot be switched off with a collector, so LXC guests drop
+# them here.
+alloy_unix_drop_metrics_regex: "{{ 'node_cpu_(core|package)_throttles_total' if 'lxc' in group_names else '' }}"
+
+# Alloy's own metrics (job="alloy"). Empty keeps everything. The default keeps
+# `up`, scrape bookkeeping, build and config status, Go runtime memory and
+# goroutines, process_*, loki_write_* (log delivery and drops) and
+# prometheus_remote_storage_* (the remote-write health alert reads
+# prometheus_remote_storage_samples_failed_total), and drops every histogram
+# bucket. That is ~90 of ~550 series per host.
+alloy_self_metrics_keep_regex: >-
+  up|scrape_.+|alloy_build_info|alloy_config_.+|alloy_resources_.+|go_goroutines|go_threads|go_info|go_gc_gomemlimit_bytes|go_gc_gogc_percent|go_memstats_(alloc_bytes|alloc_bytes_total|heap_alloc_bytes|heap_inuse_bytes|heap_sys_bytes|sys_bytes|next_gc_bytes)|process_.+|loki_write_.+|prometheus_remote_storage_.+
+
+# cAdvisor (Docker hosts only). `disabled_metrics` REPLACES Alloy's default
+# list, so the defaults (percpu, sched, tcp, udp, advtcp, process, hugetlb,
+# referenced_memory, cpu_topology, resctrl, memory_numa) are repeated and
+# `disk` (container_fs_*), `diskIO` (container_blkio_*) and `cpuLoad`
+# (container_tasks_state) added. Measured on a Docker host: 1188 series
+# before, 429 after. Empty list leaves Alloy's defaults alone.
+alloy_cadvisor_disabled_metrics:
+  - percpu
+  - sched
+  - tcp
+  - udp
+  - advtcp
+  - process
+  - hugetlb
+  - referenced_memory
+  - cpu_topology
+  - resctrl
+  - memory_numa
+  - disk
+  - diskIO
+  - cpuLoad
+
+# Families still emitted by the groups left on that nothing queries. What the
+# dashboards and alerts read is container_cpu_usage_seconds_total,
+# container_memory_working_set_bytes, container_last_seen,
+# container_health_state, container_start_time_seconds,
+# container_spec_memory_limit_bytes, container_oom_events_total and the
+# network byte counters; all of those are kept. Empty disables the drop.
+alloy_cadvisor_drop_metrics_regex: >-
+  container_network_(receive|transmit)_(packets|errors|packets_dropped)_total|container_memory_failures_total|container_pressure_.+|container_memory_(workingset_refault_(file|anon)_total|pgsteal_total|pgscan_total|migrate|mapped_file|kernel_usage|max_usage_bytes|failcnt|events_(max|high)_total|file_writeback_bytes|file_dirty_bytes|total_(in)?active_file_bytes)|container_spec_(memory_swap_limit_bytes|memory_reservation_limit_bytes|cpu_shares|cpu_period)|container_creation_time_seconds
+
+# Docker log entries older than this are dropped by the collector before they
+# are sent. Loki rejects entries older than its reject_old_samples_max_age
+# (168h) with HTTP 400 and discards the whole batch, so one replayed old line
+# also lost the recent lines in the same request. Keep it a little inside the
+# Loki limit. Empty disables the stage. The journal needs none: it is already
+# bounded by alloy_journal_max_age.
+alloy_loki_max_entry_age: 160h
+
 # The central node pushes over loopback and lets nginx own auth.
 collector_basic_auth_required: true
 

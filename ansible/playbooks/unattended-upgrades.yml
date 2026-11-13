@@ -18,6 +18,10 @@
 - name: Enable auto-applied security updates
   hosts: autoupdate
   become: true
+  # No role here reads an ansible_* fact, so skip the setup round trip (about
+  # 5 to 8 seconds per play on this fleet). Add `ansible.builtin.setup` to the
+  # role that first needs one.
+  gather_facts: false
   vars:
     uu_enable_installs: true
   roles:
@@ -26,6 +30,10 @@
 - name: Keep package lists fresh without installing anything
   hosts: no_autoupdate
   become: true
+  # No role here reads an ansible_* fact, so skip the setup round trip (about
+  # 5 to 8 seconds per play on this fleet). Add `ansible.builtin.setup` to the
+  # role that first needs one.
+  gather_facts: false
   vars:
     uu_enable_installs: false
   roles:

@@ -399,6 +399,11 @@ addresses, memory, mounts. They are available as variables like
 `ansible_facts['distribution']`. That first `Gathering Facts` task in the
 output is this.
 
+Gathering costs a round trip per host, so the fleet playbooks set
+`gather_facts: false` where no role reads a fact and a role that needs one
+runs `ansible.builtin.setup` itself (`gpu_exporter` does, on the GPU host
+only). `onboard.yml` and `preflight.yml` still gather.
+
 ## Ansible Vault
 
 Secrets are encrypted at rest but still committed to git:
