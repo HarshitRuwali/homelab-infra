@@ -1,8 +1,18 @@
-"""Queue inference across a single-GPU LM Studio host instead of racing for it.
+"""Queue inference across a single-GPU host instead of racing for it.
+
+Current state (2026-11-11 onwards)
+----------------------------------
+The AI box now serves chat from llama.cpp ``llama-server`` on ``:8090`` (one
+resident model, ``qwen3.8-27b``) and embeddings from ``llama-embed`` on ``:8080``;
+LM Studio is disabled. The default upstream is therefore ``:8090``. With a single
+model the gate never queues; the proxy's remaining value is tool-schema cleaning
+and the reasoning off-switch translation (the gate matters again only if several
+models are configured). The sections below describe the LM Studio era problem
+the gate was built for.
 
 The problem
 -----------
-The AI box holds exactly one model resident. LM Studio JIT-evicts correctly
+The AI box held exactly one model resident. LM Studio JIT-evicts correctly
 when asked for a different one (measured on this hardware: ~11 s to swap in a
 16 GB 27B), so *sequential* switching is fine. What breaks is concurrency.
 
@@ -79,7 +89,7 @@ def _serve_forever(host: str, port: int, upstream: str) -> None:
     asyncio.set_event_loop(loop)
     try:
         app = loop.run_until_complete(proxy_mod._make_app())
-        runner = web.AppRunner(app)
+        runner = web.AppRunner(app, **proxy_mod.RUNNER_KWARGS)
         loop.run_until_complete(runner.setup())
         loop.run_until_complete(web.TCPSite(runner, host, port).start())
         logger.info("%s: serving %s:%s -> %s", PLUGIN_NAME, host, port, upstream)
@@ -103,7 +113,7 @@ def register(ctx) -> None:
         port = int(ctx.get_config("port", 8099))
         upstream = str(ctx.get_config(
             "upstream", os.environ.get(
-                "MODEL_PROXY_UPSTREAM", "http://10.10.50.122:8080",
+                "MODEL_PROXY_UPSTREAM", "http://10.10.50.122:8090",
             ),
         ))
 
