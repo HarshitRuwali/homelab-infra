@@ -67,9 +67,14 @@ restic_retention() {
 
   local prune_flag=(); (( prune )) && prune_flag=(--prune)
   info "restic: forget (keep ${RESTIC_KEEP_DAILY}d/${RESTIC_KEEP_WEEKLY}w/${RESTIC_KEEP_MONTHLY}m/${RESTIC_KEEP_YEARLY}y)$([[ $prune == 1 ]] && echo ' + prune')"
+  # --group-by host: every snapshot carries a unique per-run date tag, so
+  # grouping by tags would make each snapshot a group of one and the keep
+  # policy would never remove anything. host, not host,paths: the path set changes
+  # when a service is enabled, and the old group would then be pinned forever.
+  # The --host and --tag filters already scope this to our own snapshots.
   restic_run forget \
     --host "$RESTIC_HOST" \
-    --group-by host,tags \
+    --group-by host \
     --tag s3-backup-automation \
     --keep-daily "$RESTIC_KEEP_DAILY" \
     --keep-weekly "$RESTIC_KEEP_WEEKLY" \
