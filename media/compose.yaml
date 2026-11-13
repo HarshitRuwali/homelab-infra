@@ -16,6 +16,24 @@
 #                  All torrent traffic leaves through gluetun; if the tunnel
 #                  drops, gluetun's firewall blocks it rather than leaking.
 
+# Limits and logs. Every service has a memory cap (`mem_limit`, honoured by
+# Docker Compose v2 and later) and size-capped json-file logs through the
+# x-logging anchor. The host has no swap, so an uncapped container can take RAM
+# from its neighbours (Immich, Nextcloud). Caps are sized from 7-day peaks with
+# headroom and can be raised per host in .env (see .env.example). New services
+# must set both; tests/compose-test.sh fails if one does not.
+#
+# Transcoding: the VM has no /dev/dri, so Plex cannot use hardware transcoding
+# and a transcode runs in software on the VM's vCPUs. Plex's nightly maintenance
+# (Butler: library scan, analysis, thumbnails) runs 02:00 to 05:00 IST and uses
+# about one core; that is expected, not a fault.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 name: media
 
 services:
@@ -24,6 +42,8 @@ services:
     container_name: plex
     network_mode: host
     restart: unless-stopped
+    mem_limit: ${PLEX_MEM_LIMIT:-1536m}
+    logging: *default-logging
     environment:
       TZ: ${TZ}
       PLEX_UID: ${MEDIA_UID}
@@ -42,14 +62,30 @@ services:
     # (http://localhost:32400) reaches Plex unchanged.
     network_mode: host
     restart: unless-stopped
+    mem_limit: ${PLEX_TUNNEL_MEM_LIMIT:-128m}
+    logging: *default-logging
     command: ["tunnel", "--no-autoupdate", "run"]
     env_file:
       - ${MEDIA_DIR}/secrets/plex-tunnel.env   # TUNNEL_TOKEN=...
+    environment:
+      # Host network: the metrics endpoint would otherwise bind 0.0.0.0:20241
+      # on the host. Loopback only, and it is what `tunnel ready` queries.
+      TUNNEL_METRICS: 127.0.0.1:${PLEX_TUNNEL_METRICS_PORT:-20241}
+    healthcheck:
+      # The image is distroless: no shell or curl, so use cloudflared itself.
+      # Ready means at least one connection to the Cloudflare edge is up.
+      test: ["CMD", "cloudflared", "tunnel", "ready"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   gluetun:
     image: qmcgaw/gluetun:latest
     container_name: gluetun
     restart: unless-stopped
+    mem_limit: ${GLUETUN_MEM_LIMIT:-192m}
+    logging: *default-logging
     cap_add: [NET_ADMIN]
     devices:
       - /dev/net/tun:/dev/net/tun
@@ -87,9 +123,19 @@ services:
     # No network of its own: every packet goes through gluetun.
     network_mode: service:gluetun
     restart: unless-stopped
+    mem_limit: ${QBT_MEM_LIMIT:-512m}
+    logging: *default-logging
     depends_on:
       gluetun:
         condition: service_healthy
+    healthcheck:
+      # Runs in gluetun's namespace, so 127.0.0.1 is qBittorrent's WebUI. The
+      # login page needs no authentication, unlike /api.
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:${QBT_WEBUI_PORT}/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     environment:
       TZ: ${TZ}
       PUID: ${MEDIA_UID}
