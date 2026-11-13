@@ -102,7 +102,10 @@ journalctl --user -u artifacts.service -f
 ```
 
 The service prints its address, roots, accepted `Host` names and tailnet user
-on start, then one line per request. PDF render errors appear here too.
+on start, then one line per request, except successful `/api/*` calls and
+`304 Not Modified` replies (the page polls the file list, so logging those
+would drown everything else). Errors, page, file, PDF and download requests
+are logged, and PDF render errors appear here too.
 
 ## Uninstall
 
