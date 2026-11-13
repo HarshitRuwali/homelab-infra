@@ -21,13 +21,24 @@ groups:
       #
       # EXCLUDED SIDS are known noise in THIS network, still visible on the
       # dashboard, just never messaged:
-      #   2019102  SSDP amplification: ordinary UPnP discovery from guests
-      #            to the firewall, 50+ a day
+      #   2019102  SSDP amplification: Tailscale's port mapper probing the
+      #            gateway, ~3,000 a day. Disabled in OPNsense since
+      #            2026-11-08; kept here in case it is re-enabled.
       #   2012811  .tk lookups   } the torrent client resolving trackers
       #   2027757  .to lookups   }
       # Pure noise with no investigative value is better disabled in
       # OPNsense (Rules tab, by SID). Exclude here only what should stay on
       # the dashboard. The list is a regex; add to it with `|`.
+      #
+      # 2003068 (ET SCAN Potential SSH Scan OUTBOUND, 5 outbound SSH
+      # connections in 120 s) is kept, because a sandbox host scanning port 22
+      # is exactly what this room is for, EXCEPT towards GitHub: a git push or
+      # fetch over SSH from ubuntu-dev trips it, and that was all 11 of its
+      # hits in the week to 2026-11-08. The ranges are GitHub's four large git
+      # blocks plus the Indian edge (20.207.73.80/29) that ubuntu-dev
+      # resolves github.com to, from https://api.github.com/meta ("git") on
+      # 2026-11-08. If GitHub moves, the alert returns rather than going
+      # silent; add the new range here.
       #
       # for: 0m because an IDS alert is an event, not a condition that needs
       # to persist. The five-minute window is what keeps one burst to one
@@ -64,6 +75,7 @@ groups:
                     | event_type="alert"
                     | alert_severity=~"1|2"
                     | alert_signature_id!~"2019102|2012811|2027757"
+                    | alert_signature_id!="2003068" or (dest_ip!=ip("140.82.112.0/20") and dest_ip!=ip("192.30.252.0/22") and dest_ip!=ip("185.199.108.0/22") and dest_ip!=ip("143.55.64.0/20") and dest_ip!=ip("20.207.73.80/29"))
                     | __error__="" [5m])
                 )
           - refId: B

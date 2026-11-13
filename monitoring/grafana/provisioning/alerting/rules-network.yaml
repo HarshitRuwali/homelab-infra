@@ -70,6 +70,13 @@ groups:
       # Drops are rated below errors on purpose. A low drop rate is normal
       # under burst on a busy host, so this wants a real rate, not any
       # non-zero value.
+      #
+      # The threshold is 5/s, not 1/s. A switch on the home LAN broadcasts
+      # Realtek RRCP frames (ethertype 0x8899) at about 1/s; the kernel has no
+      # handler for them and counts each one in rx_dropped. Every host bridged
+      # onto the LAN sees them (sec-wazuh eth0, t7920 nic1), and at 1/s the
+      # rule flapped on that floor 46 times in the two weeks to 2026-11-08.
+      # Real queue or ring pressure runs well above 5/s.
       - uid: fleet-net-interface-drops
         title: Network Interface Dropping Packets
         condition: C
@@ -104,7 +111,7 @@ groups:
               type: threshold
               expression: B
               conditions:
-                - evaluator: {type: gt, params: [1]}
+                - evaluator: {type: gt, params: [5]}
 
       # ---------------------------------------------------------------
       # "Down" alone is not a fault: a spare NIC that has never been plugged in
@@ -115,6 +122,11 @@ groups:
       # interchangeable with `or`: it keeps a left-hand series only where a
       # matching right-hand series exists, i.e. only where this exact device on
       # this exact host was up at some point in the last 6h.
+      #
+      # Workstations (role="workstation") are left out. skullsaints carries two
+      # Wi-Fi adapters that drop and rejoin as it moves (15 firings on wlan0
+      # and wlan1 in the two weeks to 2026-11-08); a workstation that loses
+      # every link stops pushing and Host Down reports it instead.
       - uid: fleet-net-link-lost
         title: Network Link Lost
         condition: C
@@ -138,11 +150,11 @@ groups:
               expr: |
                 (
                   max by (host, device) (node_network_up{
-                    device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}) == 0
+                    role!="workstation", device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}) == 0
                 )
                 and on (host, device) (
                   max by (host, device) (max_over_time(node_network_up{
-                    device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}[6h])) == 1
+                    role!="workstation", device!~"lo|veth.*|docker.*|br-.*|tap.*|fwbr.*|fwln.*|fwpr.*|vmbr.*|cni.*|virbr.*"}[6h])) == 1
                 )
           - refId: B
             datasourceUid: __expr__
