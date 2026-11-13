@@ -7,10 +7,12 @@ How long data is kept, and the disk arithmetic that decided it.
 | Store | Setting | Where |
 |---|---|---|
 | Prometheus | `PROMETHEUS_RETENTION`, default `7d` | `.env` on the central node |
-| Loki | `retention_period`, default `168h` (7d) | `loki/loki-config.yml` |
+| Loki | `LOKI_RETENTION_PERIOD`, default `720h` (30d) | `.env` on the central node; `retention_period` in `loki/loki-config.yml` for Compose |
 | systemd journal (local) | `SystemMaxUse`, uncapped by default | `journald_system_max_use` per group |
 
-Both were shortened from 30 days. That was not a preference; it was arithmetic.
+Prometheus was shortened from 30 days to 7. That was not a preference; it was
+arithmetic. Loki stays at 30 days because it is small: the live store holds
+about 355 MB, which fits the disk without trimming.
 
 ## The measurement
 
@@ -54,11 +56,12 @@ box from 75% to 60% used.
 
 === "Loki"
 
-    ```yaml
-    # loki/loki-config.yml
-    limits_config:
-      retention_period: 336h
+    ```bash
+    # in .env on the central node (default 720h)
+    LOKI_RETENTION_PERIOD=336h
     ```
+
+    Compose reads `retention_period` in `loki/loki-config.yml` instead.
 
     ```bash
     scripts/lxc-update.sh central --config-only

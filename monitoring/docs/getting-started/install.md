@@ -39,6 +39,9 @@ Everything below runs from `monitoring/`.
     starts the services. The other actions are `init`, `validate`, `down`,
     `restart`, `status` and `logs`.
 
+    The images are pinned to the versions the apt deployment runs. The APT
+    install is canonical: bump the Compose tags when the packages move.
+
     State lives in four **external** Docker volumes
     (`monitoring-grafana-data`, `-prometheus-data`, `-loki-data`,
     `-alloy-data`), which is why `docker compose down -v` does not destroy it.
