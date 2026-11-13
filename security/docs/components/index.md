@@ -340,6 +340,19 @@ before you rely on it:
   alongside the Wazuh indices.
 - **Settings → DNS → Upstream**, pointed at your firewall's resolver or at DoH
   directly.
+- **Settings → DNS settings → Rate limit: 0** (unlimited). The default of 20
+  queries per second is counted per /24, so every client behind one NAT or
+  one subnet shares a single bucket and a burst gets dropped. Clients here are
+  trusted LAN hosts, so the limit protects nothing. If you prefer a limit,
+  keep it high and list the LAN ranges under *Disallowed rate limit
+  subnets* (`ratelimit_whitelist`).
+- **Settings → DNS settings → DNS cache configuration**: cache size **16 MiB**
+  (the 4 MiB default is small and holds few records) and **Optimistic
+  caching** on, which answers a stale entry at once and refreshes it in the
+  background. With a single DoH upstream, a cold lookup costs 20 to 35 ms.
+  The settings above are keys in `AdGuardHome.yaml` (`ratelimit`,
+  `cache_size`, `cache_optimistic`) as of v0.107.80; this repository does not
+  manage that file.
 
 !!! warning "Order matters, and getting it wrong takes the LAN offline"
     Verify from a *test client*, not from the server, before you change

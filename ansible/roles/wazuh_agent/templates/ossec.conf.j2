@@ -37,7 +37,7 @@
   </syscheck>
 
   <rootcheck>
-    <disabled>no</disabled>
+    <disabled>{{ 'no' if (wazuh_rootcheck_enabled | string | lower) == 'true' else 'yes' }}</disabled>
   </rootcheck>
 
   <!-- Package inventory, which is what gives the manager CVE correlation. -->
