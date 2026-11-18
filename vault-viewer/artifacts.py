@@ -1340,7 +1340,7 @@ PAGE = r"""<!doctype html>
       <a class="btn" id="open" target="_blank" rel="noopener" title="Open the raw file in a new tab">Raw &#8599;</a>
     </div>
     <div id="stage">
-      <div class="empty" id="empty"><div>Pick a note or an artifact on the left.</div></div>
+      <div class="empty" id="empty"><div id="emptymsg">Loading the file list&hellip;</div></div>
       <div class="empty hidden" id="dl"><div><div id="dlname"></div><p>Archives are not previewed.</p><a class="btn" id="dllink" download>Download</a></div></div>
       <iframe id="frame" class="hidden" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
       <div id="imgwrap" class="hidden"><button id="closezoom" class="hidden" title="Back to the note (Esc)">&#10005; Close</button><img id="img" alt=""></div>
@@ -1353,7 +1353,7 @@ const $ = (id) => document.getElementById(id);
 const ICON = { note: "≣", html: "◈", svg: "◇", image: "▣", text: "≡", archive: "▤" };
 let items = [], byId = new Map(), current = null, seen = new Set(), firstLoad = true, overlay = false;
 let open = new Set(JSON.parse(localStorage.getItem("vault-open") || "[]"));
-let scrolls = {}, zoom = { s: 1, x: 0, y: 0 }, hits = null, searchTimer = null;
+let scrolls = {}, zoom = { s: 1, x: 0, y: 0 }, hits = null, searchTimer = null, retryTimer = null;
 const phone = matchMedia("(max-width: 760px)");
 // Desktop: the sidebar collapses. Phone: it's a drawer over the page.
 const toggleSidebar = (force) => $("app").classList.toggle(phone.matches ? "drawer" : "collapsed", force);
@@ -1578,9 +1578,12 @@ async function downloadPdf() {
   finally { b.disabled = false; b.textContent = "PDF"; }
 }
 
+// Until the first tree arrives the stage says it is loading; a failed first
+// load says why and retries every 2 s instead of waiting for the next poll.
 async function refresh() {
   try {
     const r = await fetch("/api/tree", { cache: "no-cache" });  // revalidates: 304 when nothing changed
+    if (!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
     items = data.items; byId = new Map(items.map((i) => [i.id, i]));
     $("vname").textContent = data.title || data.roots.join(", ");
@@ -1590,13 +1593,20 @@ async function refresh() {
       history.replaceState({ depth: (history.state && history.state.depth) || 0 }, "");
       const it = byId.get(decodeURIComponent(location.hash.slice(1)));
       firstLoad = false;
+      $("emptymsg").textContent = "Pick a note or an artifact on the left.";
       if (it) select(it, "", "replace"); else goHome("replace");
     } else if (current && !overlay) {
       const now = byId.get(current.id);
       if (now && now.mtime !== current.mtime) { current = now; show(now, { keep: true }); }
     }
     render();
-  } catch (e) { /* server restarting; next tick */ }
+  } catch (e) {
+    // Later polls stay quiet (the server may be restarting); the first load says so.
+    if (firstLoad) {
+      $("emptymsg").textContent = "Could not load the file list (" + (e.message || e) + "). Retrying\u2026";
+      clearTimeout(retryTimer); retryTimer = setTimeout(refresh, 2000);
+    }
+  }
 }
 
 window.addEventListener("message", (e) => {

@@ -74,7 +74,11 @@ Run from this directory:
 python3 tests/test_viewer.py                # server behaviour and security checks
 ./tests/test_install.sh                     # installer against a scratch home
 ./tests/docs-consistency-test.sh            # docs against the code
+./tests/e2e.sh                              # the page in headless Chromium (docker)
 ```
+
+`./tests/e2e.sh --bench URL NOTE` times cold loads of a running viewer instead:
+see [Benchmark a page load](docs/operations.md#benchmark-a-page-load).
 
 `ARTIFACTS_PY=/path/to/copy.py python3 tests/test_viewer.py` runs the viewer
 tests against another copy of the program. The end-to-end PDF check runs only

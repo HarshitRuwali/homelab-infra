@@ -158,6 +158,12 @@ def t_render(lib):
           and 'e.source !== $("frame").contentWindow' in A.PAGE,
           "viewer: copies only text, bounded, and only for its own frame")
     check(".copy { display: none; }" in A.NOTE_CSS, "print: copy buttons hidden")
+
+    print("viewer page states (driven in a browser by tests/e2e.sh)")
+    check('id="emptymsg">Loading the file list' in A.PAGE, "viewer: the stage says it is loading until the tree arrives")
+    check('if (!r.ok) throw new Error("HTTP " + r.status);' in A.PAGE
+          and "retryTimer = setTimeout(refresh, 2000)" in A.PAGE,
+          "viewer: a failed first tree load is shown with its status and retried after 2 s")
     node = shutil.which("node") or shutil.which("nodejs")
     if not node:
         skip("JavaScript syntax check (needs node)")

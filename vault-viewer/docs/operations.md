@@ -126,6 +126,8 @@ itself is never touched.
 | Links or bookmarks stop working | The bind address no longer matches the host's Tailscale address. Compare the unit's `--bind` with `tailscale ip -4` and re-run the installer with the current one. |
 | `403 forbidden host` | You browsed by a name that is not accepted. Add it with `--allow-host NAME` and reinstall. The port is part of the check. |
 | `403 forbidden` | The [tailnet gate](security.md#the-tailnet-gate) refused the device: it is tagged, belongs to another login, or `tailscale whois` failed. Check with `tailscale whois --json <client ip>`. |
+| The stage says `Could not load the file list (HTTP 403)` | The page loaded but the file list was refused, usually the [tailnet gate](security.md#the-tailnet-gate) after a failed `tailscale whois` (a refusal is cached for 60 s). The page retries every 2 s on its own. |
+| The window stays empty: no sidebar, no title bar, not even the dark background | The browser did not draw the tab. The page has no step that can hide everything: its sidebar and title bar are plain HTML drawn before any script runs. If the service log shows `GET /` and `GET /view/...` answered with 200 for that device, the server did its part; time the same note with the [benchmark](#benchmark-a-page-load) to confirm, then try another browser or turn the browser's hardware acceleration off and on. |
 | The page does not load at all | The server is not running (`systemctl --user status artifacts.service`), the tailnet ACL does not allow the port from your device, or the port is taken by another program. |
 | No diagrams or code colours | The viewing device cannot reach cdnjs, jsdelivr or unpkg. See [Browser dependencies](security.md#browser-dependencies). |
 | Notes show as plain text | `python3-markdown` is missing on the host. Install the distribution package, then restart the service. |
@@ -133,6 +135,29 @@ itself is never touched.
 | PDF button reports the image does not match this program | The program was updated without its image. Rebuild it as above, or run [`deploy.sh`](#deploy-to-other-hosts), which updates both. |
 | PDF button reports a failed render | Read the service log; see [PDF export](pdf-export.md#limits) for the limits. |
 | Service stops when you log out or after a reboot | Enable lingering; see [Survive logout and reboot](#survive-logout-and-reboot). |
+
+## Benchmark a page load
+
+`tests/e2e.sh` loads the page in headless Chromium from the Playwright
+container. With no arguments it runs the page checks against a scratch vault.
+With `--bench` it times cold loads (a fresh browser context each run, so an
+empty cache) of one note on a running viewer, with the note path in the URL
+hash written both with plain and with `%2F`-encoded slashes, and prints one
+JSON line per run: first contentful paint, file list shown, note title shown and
+note text shown, in milliseconds from navigation.
+
+The tailnet gate refuses the host's own address, so on the viewer's host time a
+loopback copy over the same vault (a second process; the service is untouched):
+
+```bash
+python3 ~/.local/bin/artifacts --port 7778 ~/obsidian &
+./tests/e2e.sh --bench http://127.0.0.1:7778 obsidian/some/note.md 5
+kill %1
+```
+
+`NOTE` is the vault id shown after `#` in the viewer's URL. Server-side timings
+alone come from curl, for example
+`curl -s -o /dev/null -w '%{time_total}\n' http://127.0.0.1:7778/api/tree`.
 
 ## Running by hand
 

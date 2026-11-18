@@ -26,6 +26,7 @@ is_other_flag() { printf '%s\n' "${OTHER_FLAGS[@]}" | grep -qxF -- "$1"; }
 in_install_parser()   { grep -qE -e "(^|[|[:space:]])$1([|)])" install.sh; }
 in_artifacts_parser() { grep -qE -e "add_argument\(\"$1\"" artifacts.py; }
 in_deploy_parser()    { grep -qE -e "(^|[|[:space:]])$1([|)])" deploy.sh; }
+in_e2e_parser()       { grep -qE -e "(^|[|[:space:]])$1([|)])" tests/e2e.sh; }
 
 # One logical command per line: join backslash continuations, and join the
 # indented continuation lines of a usage block to the line that opened it.
@@ -53,7 +54,7 @@ headings() {
 # hyphen become one hyphen.
 slug() { tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_ -]//g; s/^ +| +$//g; s/[ -]+/-/g'; }
 
-for need in install.sh deploy.sh artifacts.py mkdocs.yml; do
+for need in install.sh deploy.sh artifacts.py mkdocs.yml tests/e2e.sh; do
   [[ -f "$need" ]] || { echo "missing $need, cannot check"; exit 1; }
 done
 
@@ -73,6 +74,7 @@ check_flags() {
       case "$tok" in
         install.sh|*/install.sh)                  cmd=install;   break ;;
         deploy.sh|*/deploy.sh)                    cmd=deploy;    break ;;
+        e2e.sh|*/e2e.sh)                          cmd=e2e;       break ;;
         artifacts|artifacts.py|*/artifacts|*/artifacts.py) cmd=artifacts; break ;;
       esac
     done
@@ -88,6 +90,8 @@ check_flags() {
                      || { no "$label shows 'deploy.sh $flag' but deploy.sh has no such flag"; flagfail=1; } ;;
         artifacts) in_artifacts_parser "$flag" || [[ "$flag" == --help ]] \
                      || { no "$label shows 'artifacts $flag' but artifacts.py has no such flag"; flagfail=1; } ;;
+        e2e)       in_e2e_parser       "$flag" \
+                     || { no "$label shows 'e2e.sh $flag' but tests/e2e.sh has no such flag"; flagfail=1; } ;;
       esac
     done
   done < <(logical_lines "$file")
@@ -116,8 +120,9 @@ while read -r flag; do
   in_install_parser "$flag" && continue
   in_artifacts_parser "$flag" && continue
   in_deploy_parser "$flag" && continue
+  in_e2e_parser "$flag" && continue
   is_other_flag "$flag" && continue
-  no "docs mention '$flag', which is in neither parser nor the known-other-tools list"; anyfail=1
+  no "docs mention '$flag', which is in no parser nor the known-other-tools list"; anyfail=1
 done < <(grep -ohE -- '--[a-z][a-z-]*' "${SURFACES[@]}" | sort -u)
 (( anyfail )) || ok "no unknown flag appears anywhere in README or docs"
 
