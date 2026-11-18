@@ -16,6 +16,7 @@ the note anything useful.
 | A note's script drives the viewer | [Navigation by message](#navigation-by-message) |
 | A request reaches a file outside the vault or a hidden file | [File access](#file-access) |
 | Another web site makes your browser start PDF renders | [Cross-site requests](pdf-export.md#limits) |
+| A note's HTML attacks the host through the PDF renderer | [PDF rendering](#pdf-rendering) |
 
 ## Bind address
 
@@ -88,7 +89,54 @@ The viewer loads highlight.js and Mermaid (with the ELK layout) from cdnjs,
 jsdelivr and unpkg, and fonts from Google Fonts. The **viewing device** needs
 internet access for diagrams and code highlighting; without it, text and tables
 still render. The server itself makes no outbound calls apart from
-`tailscale whois` and, for PDFs, `docker`. PDFs need no internet at all.
+`tailscale whois` and, for PDFs, the local renderer. PDFs need no internet at all.
+
+## PDF rendering
+
+A PDF is made by printing the note in Chromium's headless shell, and a note can
+carry raw HTML and script that runs there. The renderer is a subprocess of the
+service on the same host, not a container. Its controls:
+
+- **Chromium's own sandbox is on.** The renderer processes run in user and PID
+  namespaces with a seccomp filter. `--no-sandbox` is never used. On Ubuntu
+  23.10 and later this needs an AppArmor profile for the browser binary, which
+  grants only `userns` and attaches to the exact runtime directory it was printed
+  for, so a binary copied elsewhere does not get it; without it the render fails with a clear message
+  instead of running unsandboxed. See
+  [The AppArmor profile](pdf-export.md#the-apparmor-profile).
+- **The network is blocked in layers, and each layer stops different things.**
+  Fetch interception refuses every request except the page and the runtime's
+  bundled libraries. It is enabled on every target Chromium creates (browser-level
+  auto-attach pauses a new target, a `window.open` popup included, until it has
+  the filter), but it only sees HTTP-level requests, not UDP. The launch flags
+  resolve no name (`--host-resolver-rules=MAP * ~NOTFOUND`) and send all
+  HTTP(S) and WebSocket traffic, loopback included, to a dead local proxy port,
+  which also covers a target the filter missed; `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`
+  is the only layer that stops WebRTC UDP. The page's policy carries
+  `connect-src 'none'`, which binds the page itself, not a popup.
+- **A temporary `HOME` per render.** The working directory, `HOME`, `TMPDIR`
+  and Chromium's profile are one fresh directory, removed afterwards, and the
+  environment holds only a few variables. Nothing of the service user's
+  configuration reaches the render.
+- **Bounded resources.** At most 2 renders run at a time, each is killed with
+  its whole process group after 90 s, and the unit caps the service and its
+  renders together (`MemoryMax=1536M`, `TasksMax=1024`). Each renderer sets its
+  `oom_score_adj` to 1000 (Chromium inherits it), so within that shared limit
+  the OOM killer picks the render before the server.
+- **Pinned content.** The browser, libraries and fonts are pinned by SHA-256
+  and checked before extraction, and archive members with absolute paths, `..`
+  or links are refused.
+
+What changed against the docker container this replaced: the renderer used to
+run with no network namespace, a read-only root, no capabilities, no new
+privileges and per-render memory and process limits, in a filesystem view that
+held only the image. Now the browser process runs as the service user in the
+host's filesystem, with no separate filesystem view, and the limits are shared
+by the unit rather than per render. What keeps a hostile note contained is
+Chromium's sandbox around the code that handles the note, plus the blocked
+network. A sandbox escape would land as the service user, which can read the
+vault and that user's files. The viewer needs no docker group membership any
+more, which removes a route to root on the host.
 
 ## Navigation by message
 

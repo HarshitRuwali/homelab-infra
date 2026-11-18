@@ -20,7 +20,8 @@ input. See [Security](security.md) for the model.
   vault scan for 2 s). Any diagram opens full screen with pan and zoom. Every code
   block has a **Copy** button (shown on hover, always on touch screens).
 - **Exports PDF.** Notes and text files download as a print-styled A4 PDF,
-  rendered in a locked-down container. See [PDF export](pdf-export.md).
+  rendered by a sandboxed headless Chromium on the host, with no network. See
+  [PDF export](pdf-export.md).
 - **Stays read-only.** There is no route that writes, renames or deletes.
 
 Keyboard shortcuts in the viewer:
@@ -41,13 +42,14 @@ Keyboard shortcuts in the viewer:
 | Everything | `/usr/bin/python3` (the unit runs it by that path) and `systemd --user` |
 | Notes rendered as HTML | `python3-markdown` (Debian and Ubuntu package name). Optional: without it, notes render as plain text and the service logs `python3-markdown is missing` |
 | `--tailnet-user` | The `tailscale` CLI, logged in on the host |
-| PDF export | `docker`, usable by the installing user |
+| PDF export | The PDF runtime (installed with `--install-pdf-runtime`; no docker), and on Ubuntu 23.10 and later an AppArmor profile, which the installer writes with `sudo` |
 
 The installer installs no packages. By default it writes only under your home
 directory: the program goes to `ARTIFACTS_BIN` (default
 `$HOME/.local/bin/artifacts`), so pointing that variable elsewhere writes
-there instead, and `--build-pdf-image` creates a docker image in your docker
-daemon.
+there instead. `--install-pdf-runtime` adds the PDF runtime under
+`${XDG_DATA_HOME:-$HOME/.local/share}/artifacts/pdf-runtime`, and the AppArmor
+profile goes to `/etc/apparmor.d` with `sudo` when the kernel needs it.
 
 ## Getting started
 
@@ -71,7 +73,7 @@ changes nothing. It does not print the next-steps text.
 
 ```text
 install.sh --bind ADDR [--port N] [--allow-host NAME]... [--tailnet-user LOGIN]
-           [--title NAME] [--build-pdf-image] [--dry-run] ROOT...
+           [--title NAME] [--install-pdf-runtime] [--no-apparmor] [--dry-run] ROOT...
 install.sh -h | --help
 ```
 
@@ -82,7 +84,8 @@ install.sh -h | --help
 | `--allow-host NAME` | Extra `Host` header name to accept, such as the machine name or its tailnet name. Repeatable. The bind address is always accepted. |
 | `--tailnet-user LOGIN` | Admit only this login's untagged tailnet devices. Without it, the server does no login check. See [Security](security.md#the-tailnet-gate). |
 | `--title NAME` | Name shown in the sidebar. Defaults to the vault folder names. |
-| `--build-pdf-image` | Also build the PDF container image. Needs docker, takes a few minutes and downloads about 500 MB. See [PDF export](pdf-export.md). |
+| `--install-pdf-runtime` | Also download and install the PDF runtime (Chromium's headless shell, libraries and fonts). Downloads about 180 MB once. See [PDF export](pdf-export.md#the-runtime). |
+| `--no-apparmor` | Do not install the AppArmor profile that Chromium's sandbox needs on Ubuntu 23.10 and later. The PDF button then reports the sandbox as unusable until you install it. See [PDF export](pdf-export.md#the-apparmor-profile). |
 | `--dry-run` | Print the unit and the actions, change nothing. |
 | `ROOT...` | One or more vault folders to serve. Each must be an existing directory. |
 
@@ -91,15 +94,20 @@ No option value, ROOT or `ARTIFACTS_BIN` may contain a control character
 
 ### What the installer does
 
-1. With `--build-pdf-image`, builds the PDF image first. If the build fails,
-   the installer exits with status 1 before it has changed anything else.
-2. Copies `artifacts.py` to `${ARTIFACTS_BIN:-$HOME/.local/bin/artifacts}`.
-3. Renders `systemd/artifacts.service` into
+1. With `--install-pdf-runtime`, installs the PDF runtime first. If that
+   fails, the installer exits with status 1 before it has changed anything else.
+2. When the kernel restricts unprivileged user namespaces and the profile is
+   missing, writes the AppArmor profile to
+   `/etc/apparmor.d/artifacts-chrome-headless-shell` with `sudo` and loads it
+   (skipped with `--no-apparmor`). A failure here is a warning, not an error:
+   the viewer works and only the PDF button needs the profile.
+3. Copies `artifacts.py` to `${ARTIFACTS_BIN:-$HOME/.local/bin/artifacts}`.
+4. Renders `systemd/artifacts.service` into
    `${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/artifacts.service`. If a
    unit is already there and differs, it is first copied to
    `artifacts.service.bak` next to it.
-4. Runs `systemctl --user daemon-reload`, `enable` and `restart`.
-5. Verifies the service: the unit must be active (`systemctl --user is-active`)
+5. Runs `systemctl --user daemon-reload`, `enable` and `restart`.
+6. Verifies the service: the unit must be active (`systemctl --user is-active`)
    and, within 10 s, the server must answer `http://ADDR:PORT/` with `200`. A
    `403` also counts, but only when you passed `--tailnet-user`: the installing
    host may be a tagged tailnet device, which the
@@ -108,7 +116,7 @@ No option value, ROOT or `ARTIFACTS_BIN` may contain a control character
    header mismatch) is a failure: the installer prints the last status lines,
    runs `systemctl --user disable --now artifacts.service` so the unit does not
    crash-loop, and exits with status 1.
-6. Prints the next steps.
+7. Prints the next steps, including the state of PDF export.
 
 Each vault folder is a root. File ids are `<root folder name>/<path>`, so
 serving `~/obsidian/personal` gives ids that start with `personal/`.
@@ -116,5 +124,5 @@ serving `~/obsidian/personal` gives ids that start with `personal/`.
 ## Where next
 
 - [Security](security.md): the threat model and what each control stops.
-- [PDF export](pdf-export.md): contents, container, limits, rebuilding.
+- [PDF export](pdf-export.md): contents, the runtime, the sandbox, limits, updating.
 - [Operations](operations.md): upgrade, logs, uninstall, troubleshooting.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# e2e.sh - load the viewer page in headless Chromium, from the Playwright
-# container (nothing is installed on the host).
+# e2e.sh - load the viewer page in Chromium's headless shell, driven over the
+# DevTools pipe (no docker, no Playwright).
 #
 #   ./tests/e2e.sh                           # page checks against a scratch vault
 #   ./tests/e2e.sh --bench URL NOTE [RUNS]   # cold-load timings of a running viewer
@@ -19,26 +19,18 @@
 #   ./tests/e2e.sh --bench http://127.0.0.1:7778 obsidian/some/note.md
 #
 # ARTIFACTS_PY=/path/to/copy.py runs the checks against another copy of the
-# program. Needs docker; the first run downloads the image and the Playwright
-# package (into ~/.cache/vault-viewer-e2e).
+# program. Needs the PDF runtime (python3 artifacts.py --install-pdf-runtime):
+# the browser is E2E_CHROME if set, else the runtime's chrome/chrome-headless-shell
+# under ARTIFACTS_PDF_RUNTIME (default ${XDG_DATA_HOME:-~/.local/share}/artifacts/pdf-runtime).
+# It runs with Chromium's sandbox on, so the AppArmor profile must allow it.
 set -euo pipefail
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.."
 
-IMAGE=mcr.microsoft.com/playwright/python:v1.49.0-noble
-PW_VERSION=1.49.0   # must match the image's browsers
-CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/vault-viewer-e2e"
 PROGRAM="${ARTIFACTS_PY:-artifacts.py}"
 
 usage() { sed -n '3,8p' "$0" | sed 's/^# \{0,1\}//'; }
 
-in_browser() {
-  mkdir -p "$CACHE"
-  docker run --rm --network host --ipc host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-    -v "$PWD/tests/e2e_page.py:/e2e/e2e_page.py:ro" -v "$CACHE:/cache" "$IMAGE" sh -c '
-      [ -f /cache/pw-'"$PW_VERSION"'/playwright/__init__.py ] ||
-        pip install -q --disable-pip-version-check --target /cache/pw-'"$PW_VERSION"' playwright=='"$PW_VERSION"' >&2
-      cd /tmp && PYTHONPATH=/cache/pw-'"$PW_VERSION"' exec python3 /e2e/e2e_page.py "$@"' sh "$@"
-}
+in_browser() { PYTHONDONTWRITEBYTECODE=1 python3 tests/e2e_page.py "$@"; }
 
 case "${1:-}" in
   -h|--help) usage; exit 0 ;;

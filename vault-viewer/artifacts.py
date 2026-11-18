@@ -24,21 +24,25 @@ treated as untrusted:
   * only files under the vault roots are served, hidden paths never are.
 
 Notes and text files also download as PDF (/pdf/<id>, the viewer's PDF
-button): a light, print-styled page rendered by headless Chromium in a
-container (--pdf-image, built once with --build-pdf-image) that runs with no
-network, a read-only root and no capabilities. Mermaid, highlight.js and the
-fonts are baked into that image, and images are inlined, so nothing is fetched
-while printing.
+button): a light, print-styled page rendered by headless Chromium (its
+headless shell, installed once with --install-pdf-runtime into a per-user
+directory) with Chromium's own sandbox on and the network blocked by browser
+switches and request interception. Mermaid, highlight.js and the fonts come
+from that runtime, and images are inlined, so nothing is fetched while
+printing. On Ubuntu 23.10+ the sandbox needs an AppArmor profile
+(--print-apparmor-profile).
 
 Needs python3-markdown (Debian/Ubuntu package) for notes; the tailscale CLI
-for --tailnet-user; docker for PDFs.
+for --tailnet-user; network access once for --install-pdf-runtime.
 Usage: artifacts.py [--bind ADDR] [--port 7777] [--allow-host NAME] [--tailnet-user LOGIN]
-                    [--pdf-image IMAGE] [--build-pdf-image] [--pdf-rev] [ROOT ...]
+                    [--pdf-runtime DIR] [--install-pdf-runtime] [--check-pdf-runtime]
+                    [--print-apparmor-profile] [--pdf-rev] [ROOT ...]
 """
 import argparse
 import base64
 import collections
 import email.utils
+import fcntl
 import hashlib
 import html
 import ipaddress
@@ -46,12 +50,19 @@ import json
 import mimetypes
 import os
 import re
+import selectors
+import shutil
+import signal
+import stat
 import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
 import time
 import urllib.parse
-import uuid
+import urllib.request
+import zipfile
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -80,12 +91,11 @@ CDNS = "https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com"
 HLJS = "https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0"
 MERMAID = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs"
 MERMAID_ELK = "https://cdn.jsdelivr.net/npm/@mermaid-js/layout-elk@0/dist/mermaid-layout-elk.esm.min.mjs"
-# The same libraries inside the PDF image, served to the page by PDF_RENDER.
+# The same libraries inside the PDF runtime, served to the page by PDF_RENDER.
 PDF_LIB = "/lib"
 PDF_HLJS = PDF_LIB + "/@highlightjs/cdn-assets"
 PDF_MERMAID = PDF_LIB + "/mermaid/dist/mermaid.esm.min.mjs"
 PDF_MERMAID_ELK = PDF_LIB + "/@mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs"
-PDF_IMAGE = "artifacts-pdf:local"
 PDF_CSP = ("default-src 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; "
            "img-src data:; font-src 'self' data:; connect-src 'none'; form-action 'none'; base-uri 'none'")
 
@@ -537,7 +547,7 @@ function addCopyButtons() {
 # Mermaid 11 with the ELK layout engine (much better subgraph and edge routing
 # than the default dagre); falls back to dagre if ELK can't load. In the viewer
 # each diagram opens full screen on click. For a PDF it loads the copy baked
-# into the PDF image, uses the light theme, fits diagrams to the page width and
+# into the PDF runtime, uses the light theme, fits diagrams to the page width and
 # flags the page ready once every diagram is drawn.
 def mermaid_head(pdf=False):
     src, elk = (PDF_MERMAID, PDF_MERMAID_ELK) if pdf else (MERMAID, MERMAID_ELK)
@@ -766,78 +776,148 @@ def search(lib, q, limit=40):
 
 # Chromium's headless shell (driven over the DevTools protocol by PDF_RENDER,
 # standard library only) plus the page's libraries and fonts, so printing needs
-# no network. Built with `artifacts --build-pdf-image`. Kept small on purpose:
-# Debian 12 slim (whose libgbm1 does not pull in LLVM, unlike Ubuntu 24.04's),
-# only the headless shell (no full Chromium, Firefox or WebKit, no Playwright),
-# only its en-US locale pack, only the shared libraries it links, and only the library files the print page
-# loads (no source maps or other builds).
-# The headless shell comes from Chrome for Testing, pinned by version and
-# checksum: change PDF_CHROME_VERSION and PDF_CHROME_SHA256 together.
-PDF_CHROME_VERSION = "153.0.8010.12"
-PDF_CHROME_URL = ("https://storage.googleapis.com/chrome-for-testing-public/"
-                  f"{PDF_CHROME_VERSION}/linux64/chrome-headless-shell-linux64.zip")
-PDF_CHROME_SHA256 = "a9da028861a0cf789ff25c2fed45f5f1aaf969ed9247835b6a7821a4f7af9d1d"
-# Inter as static TrueType, from the upstream release. Debian's fonts-inter
-# ships CFF outlines (.otf), which Chromium can only embed in a PDF as Type 3
-# glyph drawings: PDF readers then select and copy that text badly or not at all.
-PDF_INTER_URL = "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip"
-PDF_INTER_SHA256 = "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e"
-PDF_DOCKERFILE = f"""
-FROM node:22-slim AS lib
-RUN npm install --prefix /build --no-audit --no-fund \\
-      mermaid@11 @mermaid-js/layout-elk@0 @highlightjs/cdn-assets@11.9.0 \\
-    && cd /build/node_modules && mkdir /lib-out \\
-    && cp --parents mermaid/dist/mermaid.esm.min.mjs @mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs \\
-         @highlightjs/cdn-assets/highlight.min.js @highlightjs/cdn-assets/styles/github.min.css /lib-out \\
-    && cp -r --parents mermaid/dist/chunks/mermaid.esm.min \\
-         @mermaid-js/layout-elk/dist/chunks/mermaid-layout-elk.esm.min /lib-out \\
-    && find /lib-out -name '*.map' -delete
-FROM debian:bookworm-slim AS fetch
-ADD --checksum=sha256:{PDF_INTER_SHA256} {PDF_INTER_URL} /inter.zip
-ADD --checksum=sha256:{PDF_CHROME_SHA256} {PDF_CHROME_URL} /chrome.zip
-RUN apt-get update && apt-get install -y --no-install-recommends unzip \\
-    && unzip -j /inter.zip 'extras/ttf/Inter-*.ttf' -d /inter \\
-    && unzip -q /chrome.zip -d /opt && mv /opt/chrome-headless-shell-linux64 /opt/chrome-headless-shell \\
-    && find /opt/chrome-headless-shell/locales -type f ! -name en-US.pak -delete
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends python3 \\
-      libnss3 libnspr4 libgbm1 libdrm2 libasound2 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \\
-      libdbus-1-3 libxkbcommon0 libx11-6 libxcb1 libxext6 libxcomposite1 libxdamage1 libxfixes3 \\
-      libxi6 libxrandr2 fontconfig-config fonts-dejavu-core fonts-jetbrains-mono fonts-noto-color-emoji \\
-    && rm -rf /var/lib/apt/lists/* \\
-    && useradd --create-home pwuser
-COPY --from=fetch /inter /usr/share/fonts/truetype/inter
-COPY --from=fetch /opt/chrome-headless-shell /opt/chrome-headless-shell
-COPY --from=lib /lib-out /opt/vault-pdf/lib
+# no network. `artifacts --install-pdf-runtime` downloads them once into a
+# per-user directory (the "PDF runtime"); PDF_RENDER then runs on the host with
+# Chromium's own sandbox on, and no network (see the launch switches).
+# Kept small on purpose: only the headless shell (no full Chromium, Firefox or
+# WebKit, no Playwright), only its en-US locale pack, no software Vulkan, only
+# the library files the print page loads (no source maps or other builds) and
+# only the font faces the print CSS uses.
+# Every download is pinned by URL and sha256, and checked BEFORE it is
+# unpacked. The headless shell comes from Chrome for Testing: change its version
+# (in the URL) and checksum together. Inter is static TrueType from the upstream
+# release: Debian's fonts-inter ships CFF outlines (.otf), which Chromium can only
+# embed in a PDF as Type 3 glyph drawings, so PDF readers then select and copy
+# that text badly or not at all.
+PDF_PINS = {
+    "chrome": (
+        "https://storage.googleapis.com/chrome-for-testing-public/153.0.8010.12/linux64/"
+        "chrome-headless-shell-linux64.zip",
+        "a9da028861a0cf789ff25c2fed45f5f1aaf969ed9247835b6a7821a4f7af9d1d"),
+    "inter": (
+        "https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip",
+        "9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e"),
+    "jetbrains-mono": (
+        "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.242/JetBrainsMono-2.242.zip",
+        "4e315b4ef176ce7ffc971b14997bdc8f646e3d1e5b913d1ecba3a3b10b4a1a9f"),
+    "dejavu": (
+        "https://github.com/dejavu-fonts/dejavu-fonts/releases/download/version_2_37/dejavu-fonts-ttf-2.37.zip",
+        "7576310b219e04159d35ff61dd4a4ec4cdba4f35c00e002a136f00e96a908b0a"),
+    "noto-emoji": (
+        "https://github.com/googlefonts/noto-emoji/raw/v2.042/fonts/NotoColorEmoji.ttf",
+        "c2f19f6a404baa7da7a710b018c2892d7b51386983ddca146811f76aea0b6861"),
+    "mermaid": (
+        "https://registry.npmjs.org/mermaid/-/mermaid-11.17.2.tgz",
+        "6ad2f42c3fc26bbf9e45cbb6d11898972573ea52b33a5f4ff51952899f950ffd"),
+    "layout-elk": (
+        "https://registry.npmjs.org/@mermaid-js/layout-elk/-/layout-elk-0.2.3.tgz",
+        "68b5d3e1baa6d48ed2b67c715c2c69e459fe852224d9cd9edd906149a17278ab"),
+    "highlightjs": (
+        "https://registry.npmjs.org/@highlightjs/cdn-assets/-/cdn-assets-11.9.0.tgz",
+        "62b15dbb4430b9692eb864e99393f4578646da1b25d437fc9e10a79786330dd0"),
+}
+# What is kept from each download: (regex over the archive member's path, where
+# it goes in the runtime), first match wins, a member that matches nothing is
+# dropped. A download that is not an archive (.ttf) is one member with an empty
+# name. The runtime's layout lives here, and so does the trimming.
+_FACES = "Regular|Italic|SemiBold|SemiBoldItalic|Bold|BoldItalic"
+PDF_FILES = {
+    "chrome": [(r"chrome-headless-shell-linux64/(?!locales/(?!en-US\.pak$)|libvk_swiftshader\.so$|libvulkan\.so\.1$"
+                r"|vk_swiftshader_icd\.json$)(.+)", r"chrome/\1")],
+    "inter": [(rf"extras/ttf/(Inter-(?:{_FACES})\.ttf)", r"fonts/inter/\1")],
+    "jetbrains-mono": [(rf"fonts/ttf/(JetBrainsMono-(?:{_FACES})\.ttf)", r"fonts/jetbrains-mono/\1")],
+    "dejavu": [(r"[^/]+/ttf/(DejaVu(?:Sans|Sans-Bold|SansMono|SansMono-Bold|Serif|Serif-Bold)\.ttf)",
+                r"fonts/dejavu/\1")],
+    "noto-emoji": [(r"", "fonts/noto/NotoColorEmoji.ttf")],
+    "mermaid": [(r"package/dist/(mermaid\.esm\.min\.mjs)", r"lib/mermaid/dist/\1"),
+                (r"package/dist/(chunks/mermaid\.esm\.min/(?!.*\.map$).+)", r"lib/mermaid/dist/\1")],
+    "layout-elk": [(r"package/dist/(mermaid-layout-elk\.esm\.min\.mjs)", r"lib/@mermaid-js/layout-elk/dist/\1"),
+                   (r"package/dist/(chunks/mermaid-layout-elk\.esm\.min/(?!.*\.map$).+)",
+                    r"lib/@mermaid-js/layout-elk/dist/\1")],
+    "highlightjs": [(r"package/(highlight\.min\.js|styles/github\.min\.css)", r"lib/@highlightjs/cdn-assets/\1")],
+}
+# Fontconfig for the render: the host's own rules (/etc/fonts/conf.d, which
+# give the same text as the fonts a Debian container would) plus only the
+# runtime's fonts. PDF_RENDER runs with a throwaway HOME, so a user's own fonts
+# never leak into a PDF. The two paths are relative to this file's own
+# directory, so a runtime copied to another path still finds its fonts.
+# The host's rules are part of the render: a host that remaps families
+# (docs/pdf-export.md, "Fonts") can change the output.
+PDF_FONTS_CONF = """<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+<fontconfig>
+  <include ignore_missing="yes">/etc/fonts/conf.d</include>
+  <dir prefix="relative">fonts</dir>
+  <cachedir prefix="relative">fontcache</cachedir>
+</fontconfig>
+"""
+# Ubuntu 23.10+ keeps Chromium's sandbox from using user namespaces
+# (kernel.apparmor_restrict_unprivileged_userns=1) unless the binary has an
+# AppArmor profile that grants `userns`. The viewer never falls back to
+# --no-sandbox: install.sh loads this profile instead (`--print-apparmor-profile`).
+# The profile attaches to the exact runtime directory it is printed for (the
+# `*` is the revision), never to a pattern other users could create elsewhere.
+PDF_APPARMOR_NAME = "artifacts-chrome-headless-shell"
+PDF_APPARMOR_FILE = Path("/etc/apparmor.d") / PDF_APPARMOR_NAME
+_APPARMOR_UNSAFE = re.compile(r'[*?\[\]{}^"\\,\s\x00-\x1f]')
+
+
+def abs_runtime(runtime_dir):
+    """The one place a runtime directory becomes an absolute path (~ expanded, cwd applied,
+    . and .. folded), so a relative --pdf-runtime means the same thing for the renderer."""
+    return Path(os.path.abspath(os.path.expanduser(str(runtime_dir))))
+
+
+def pdf_apparmor_profile(runtime_dir):
+    """The AppArmor profile text for the runtime in runtime_dir. Raises ValueError for a path
+    with characters that mean something in an AppArmor path pattern (or whitespace and quotes)."""
+    base = str(abs_runtime(runtime_dir))
+    if _APPARMOR_UNSAFE.search(base):
+        raise ValueError(f"the runtime directory {base!r} contains characters that are special in an "
+                         "AppArmor path pattern, or whitespace or quotes: choose another --pdf-runtime")
+    return f"""\
+# Written by the vault-viewer installer: lets the viewer's PDF renderer
+# (Chromium's headless shell) use Chromium's own sandbox, which needs
+# unprivileged user namespaces. Only this user's runtime folder matches.
+abi <abi/4.0>,
+include <tunables/global>
+
+profile {PDF_APPARMOR_NAME} {base}/*/chrome/chrome-headless-shell flags=(unconfined) {{
+  userns,
+
+  include if exists <local/{PDF_APPARMOR_NAME}>
+}}
 """
 
 
-PDF_BASE_REMOVED = ("--pdf-base was removed: the PDF image now builds on debian:bookworm-slim with only "
-                    "Chromium's headless shell, so there is no Playwright base image to pick")
+PDF_REMOVED = ("PDFs no longer use docker; install the runtime with `--install-pdf-runtime`")
 
 
-def pdf_build_command(image):
-    """The `docker build` argv for the PDF image (Dockerfile on stdin)."""
-    return ["docker", "build", "--pull", "-t", image, "-"]
-
-
-# Runs inside the container: the page arrives on stdin, the PDF leaves on
-# stdout. It drives Chromium's headless shell over the DevTools protocol on a
-# pipe (fds 3 and 4, NUL-separated JSON), standard library only. The page is
-# served at a made-up origin, with only PDF_LIB files beside it; every other
-# request is refused (and the container has no network). Launch switches and
-# print parameters follow what Playwright used for this before, so the output
-# is unchanged.
+# Runs as a host subprocess (`python3 -I -c`, see render_pdf): the page arrives
+# on stdin, the PDF leaves on stdout. It drives Chromium's headless shell over
+# the DevTools protocol on a pipe (fds 3 and 4, NUL-separated JSON), standard
+# library only. The page is served at a made-up origin, with only the runtime's
+# lib/ files beside it; every other request is refused by the Fetch
+# interception, which is enabled on every target Chromium creates (browser-level
+# auto-attach, so popups too). The launch switches below keep it from reaching the
+# network even where interception does not apply (no name resolution, no proxy
+# but a dead local port, no WebRTC UDP). The sandbox stays ON. Print parameters follow what Playwright
+# used for this before, so the output is unchanged.
 PDF_RENDER = r"""
 import base64, fcntl, json, os, select, signal, sys, tempfile, time, urllib.parse
 from pathlib import Path
 
-CHROME = "/opt/chrome-headless-shell/chrome-headless-shell"
+CHROME = os.environ["PDF_CHROME"]
+try:  # the renderer shares the service's memory cgroup: make it, and Chromium after it, the OOM killer's first pick
+    with open("/proc/self/oom_score_adj", "w") as f:
+        f.write("1000")
+except OSError:
+    pass
 page_html = sys.stdin.buffer.read()
-lib = Path("/opt/vault-pdf/lib").resolve()
+lib = Path(os.environ["PDF_LIB_DIR"]).resolve()
 types = {".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css"}
 flags = [
-    "--headless", "--no-sandbox", "--remote-debugging-pipe", "--no-startup-window",
+    "--headless", "--remote-debugging-pipe", "--no-startup-window",
     "--user-data-dir=" + tempfile.mkdtemp(prefix="chrome-"),
     "--disable-dev-shm-usage", "--enable-unsafe-swiftshader", "--force-color-profile=srgb",
     "--hide-scrollbars", "--mute-audio", "--export-tagged-pdf",
@@ -847,6 +927,8 @@ flags = [
     "--disable-breakpad", "--disable-component-update", "--disable-default-apps", "--disable-extensions",
     "--disable-field-trial-config", "--disable-hang-monitor", "--disable-sync", "--metrics-recording-only",
     "--no-default-browser-check", "--no-first-run", "--no-service-autorun", "--password-store=basic",
+    "--host-resolver-rules=MAP * ~NOTFOUND", "--proxy-server=http://127.0.0.1:9", "--proxy-bypass-list=<-loopback>",
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
 ]
 
 def high(fd):  # move off 0-9, so the dup2 onto 3 and 4 below never maps an fd onto itself
@@ -863,7 +945,7 @@ pid = os.posix_spawn(CHROME, [CHROME, *flags], os.environ, file_actions=[
 for fd in (cmd_r, out_w, null):
     os.close(fd)
 
-buf, scanned, last_id, seen = bytearray(), 0, 0, set()
+buf, scanned, last_id, seen, attached = bytearray(), 0, 0, set(), {}
 
 def read_msg(deadline):
     global scanned
@@ -915,8 +997,9 @@ def handle(m):
     method, p = m.get("method"), m.get("params", {})
     if method == "Fetch.requestPaused":
         serve(p, m.get("sessionId"))
-    elif method == "Target.attachedToTarget":  # frames and workers: same request filter
+    elif method == "Target.attachedToTarget":  # every new target (frames, workers, popups): same request filter
         child = p["sessionId"]
+        attached[p["targetInfo"]["targetId"]] = child
         send("Fetch.enable", {"patterns": [{"urlPattern": "*"}]}, child)
         send("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True}, child)
         send("Runtime.runIfWaitingForDebugger", None, child)
@@ -951,10 +1034,14 @@ footer = ('<div style="font: 7.5pt Inter, sans-serif; color: #8a8f98; width: 100
           'display: flex; justify-content: space-between"><span class="title"></span>'
           '<span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>')
 try:
+    # Browser-level auto-attach: every target Chromium ever creates, a window.open() popup
+    # included, is paused at start and given the request filter (handle) before it runs.
+    call("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True})
     target = call("Target.createTarget", {"url": "about:blank"})["targetId"]
-    s = call("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
-    call("Fetch.enable", {"patterns": [{"urlPattern": "*"}]}, s)
-    call("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True}, s)
+    deadline = time.monotonic() + 30
+    while target not in attached:
+        handle(read_msg(deadline))
+    s = attached[target]
     call("Page.enable", None, s)
     call("Emulation.setDeviceMetricsOverride", {"width": 1280, "height": 720, "deviceScaleFactor": 1,
          "mobile": False, "screenWidth": 1280, "screenHeight": 720,
@@ -970,7 +1057,7 @@ try:
         if time.monotonic() > ready_by:
             print("page not ready after 20 s, printing it as it is", file=sys.stderr)
             break
-        pump(0.1)
+        pump(0.02)
     pdf = call("Page.printToPDF", {
         "landscape": False, "displayHeaderFooter": True, "headerTemplate": "<span></span>",
         "footerTemplate": footer, "printBackground": True, "scale": 1, "paperWidth": 8.27, "paperHeight": 11.7,
@@ -979,6 +1066,11 @@ try:
         "generateDocumentOutline": False}, s, timeout=60)["data"]
     sys.stdout.buffer.write(base64.b64decode(pdf))
     sys.stdout.flush()
+    # The PDF is complete: point stdout and stderr at /dev/null so the server sees
+    # end of file and answers now, while Chromium shuts down below.
+    quiet = os.open(os.devnull, os.O_WRONLY)
+    os.dup2(quiet, 1)
+    os.dup2(quiet, 2)
     try:
         call("Browser.close", timeout=5)
     except (TimeoutError, RuntimeError):
@@ -992,61 +1084,345 @@ finally:
         os.kill(pid, signal.SIGKILL)
 """
 
-# The render script and the image depend on each other's layout, so the image
-# carries the revision of the pair it was built from, and a program only trusts
-# an image with its own revision. `artifacts --pdf-rev` prints it.
-PDF_REV_LABEL = "vault-viewer.pdf-rev"
-PDF_REV = hashlib.sha256((PDF_DOCKERFILE + PDF_RENDER).encode()).hexdigest()[:12]
-PDF_DOCKERFILE += f"LABEL {PDF_REV_LABEL}={PDF_REV}\n"
+# The runtime lives in DIR/<PDF_REV>/: the revision covers what is installed
+# (the pins, the trimming rules and the fontconfig template), so a program only
+# ever uses a runtime built for it, and an upgrade installs beside the old one.
+# PDF_RENDER is not part of it: the script runs from the program, so changing it
+# needs no new runtime. `artifacts --pdf-rev` prints the revision.
+PDF_REV = hashlib.sha256(json.dumps([PDF_PINS, PDF_FILES, PDF_FONTS_CONF],
+                                    sort_keys=True).encode()).hexdigest()[:12]
 
 
-def pdf_image_rev(image):
-    """The PDF_REV label of a local image: "" if it has none, None if docker can't say."""
+def default_pdf_runtime():
+    data = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return Path(data) / "artifacts" / "pdf-runtime"
+
+
+class PdfInstallError(Exception):
+    pass
+
+
+def pdf_download(url, dest):
+    """Fetch url into the file dest (the one place the installer touches the network)."""
+    req = urllib.request.Request(url, headers={"User-Agent": "artifacts-pdf-runtime"})
+    with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
+        shutil.copyfileobj(r, f, 1 << 20)
+
+
+def _pdf_target(name, rules):
+    """Where an archive member goes in the runtime, or None to drop it."""
+    for pattern, dest in rules:
+        m = re.fullmatch(pattern, name)
+        if m:
+            return m.expand(dest)
+    return None
+
+
+def _pdf_safe(name):
+    """Archive members with absolute paths or .. never leave the staging directory."""
+    return bool(name) and not name.startswith("/") and "\\" not in name and ".." not in name.split("/")
+
+
+def _pdf_members(kind, path):
+    """Yield (name, mode, open-for-reading) for every regular file of an archive, and refuse
+    links, devices and unsafe names anywhere in it, kept or not."""
+    if kind == "zip":
+        with zipfile.ZipFile(path) as z:
+            for info in z.infolist():
+                if not _pdf_safe(info.filename.rstrip("/")):
+                    raise PdfInstallError(f"unsafe path in the archive: {info.filename!r}")
+                mode = info.external_attr >> 16
+                if stat.S_ISLNK(mode):
+                    raise PdfInstallError(f"link in the archive: {info.filename!r}")
+                if not info.is_dir():
+                    yield info.filename, (mode & 0o777) or 0o644, lambda i=info: z.open(i)
+    else:
+        with tarfile.open(path) as t:
+            for m in t:
+                if not _pdf_safe(m.name.rstrip("/")):
+                    raise PdfInstallError(f"unsafe path in the archive: {m.name!r}")
+                if m.isdir():
+                    continue
+                if not m.isreg():
+                    raise PdfInstallError(f"link or special file in the archive: {m.name!r}")
+                yield m.name, m.mode & 0o777, lambda m=m: t.extractfile(m)
+
+
+def _pdf_extract(name, path, dest_root):
+    """Unpack the kept files of one verified download under dest_root; returns how many."""
+    rules = PDF_FILES[name]
+    url = PDF_PINS[name][0]
+    kind = "zip" if url.endswith(".zip") else "tar" if url.endswith(".tgz") else "file"
+    members = [("", 0o644, lambda: open(path, "rb"))] if kind == "file" else _pdf_members(kind, path)
+    kept = 0
+    for member, mode, opener in members:
+        rel = _pdf_target(member, rules)
+        if rel is None:
+            continue
+        dest = dest_root / rel
+        if dest_root.resolve() not in dest.resolve().parents:
+            raise PdfInstallError(f"{name}: {member!r} would land outside the runtime")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with opener() as src, open(dest, "wb") as out:
+            shutil.copyfileobj(src, out, 1 << 20)
+        os.chmod(dest, (mode | 0o600) & 0o755)
+        kept += 1
+    if not kept:
+        raise PdfInstallError(f"{name}: nothing in the download matches the expected layout")
+    return kept
+
+
+def pdf_runtime_ready(runtime_dir):
     try:
-        out = subprocess.run(["docker", "image", "inspect", "-f", f'{{{{ index .Config.Labels "{PDF_REV_LABEL}" }}}}',
-                              image], capture_output=True, text=True, timeout=15)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if out.returncode != 0:
-        return None
-    rev = out.stdout.strip()
-    return "" if rev == "<no value>" else rev
+        return (abs_runtime(runtime_dir) / PDF_REV / "REV").read_text().strip() == PDF_REV
+    except OSError:
+        return False
+
+
+def install_pdf_runtime(runtime_dir, say=print):
+    """Download, verify and unpack the PDF runtime into runtime_dir/<PDF_REV>, atomically.
+    Raises PdfInstallError (leaving no partial runtime) on any failure. Installers of one
+    directory take turns (a flock on DIR/.lock), so they cannot corrupt each other."""
+    base = abs_runtime(runtime_dir)
+    final = base / PDF_REV
+    if pdf_runtime_ready(base):
+        say(f"already installed: {final}")
+        return final
+    base.mkdir(parents=True, exist_ok=True)
+    with open(base / ".lock", "a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            say(f"another installer is using {base}: waiting for it")
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        if pdf_runtime_ready(base):  # the installer we waited for did the work
+            say(f"already installed: {final}")
+            return final
+        return _install_locked(base, final, say)
+
+
+def _install_locked(base, final, say):
+    stage = base / f".tmp-{PDF_REV}-{os.getpid()}-{threading.get_ident()}"
+    downloads = Path(tempfile.mkdtemp(prefix="artifacts-pdf-dl-"))
+    try:
+        shutil.rmtree(stage, ignore_errors=True)
+        stage.mkdir()
+        for name, (url, sha) in PDF_PINS.items():
+            say(f"downloading {name}: {url}")
+            archive = downloads / name
+            try:
+                pdf_download(url, archive)
+            except OSError as e:  # urllib's errors are OSErrors
+                raise PdfInstallError(f"{name}: download failed: {e}") from e
+            got = hashlib.sha256(archive.read_bytes()).hexdigest()
+            if got != sha:
+                raise PdfInstallError(f"{name}: checksum mismatch (expected {sha}, got {got}); nothing installed")
+            try:
+                _pdf_extract(name, archive, stage)
+            except (zipfile.BadZipFile, tarfile.TarError, OSError) as e:
+                raise PdfInstallError(f"{name}: cannot unpack: {e}") from e
+        chrome = stage / "chrome" / "chrome-headless-shell"
+        if not chrome.is_file():
+            raise PdfInstallError("the headless shell is missing from its download")
+        chrome.chmod(0o755)
+        (stage / "fonts.conf").write_text(PDF_FONTS_CONF)
+        (stage / "REV").write_text(PDF_REV + "\n")  # last: its presence means "complete"
+        if final.exists():  # an interrupted older install without REV
+            shutil.rmtree(final)
+        os.rename(stage, final)
+    except BaseException:
+        shutil.rmtree(stage, ignore_errors=True)
+        raise
+    finally:
+        shutil.rmtree(downloads, ignore_errors=True)
+    # With the lock held no other installer is running, so every .tmp-* is stale.
+    for other in base.iterdir():  # other revisions and leftovers of interrupted installs, nothing else
+        if other != final and re.fullmatch(r"[0-9a-f]{12}|\.tmp-.*", other.name):
+            shutil.rmtree(other, ignore_errors=True)
+    return final
+
+
+def pdf_runtime_size(path):
+    return sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file() and not f.is_symlink())
+
+
+def pdf_apparmor_state(runtime_dir):
+    """Lines saying whether Chromium's sandbox can work on this host. The kernel's list of
+    loaded profiles needs root, so this reports what a user can read: whether the installed
+    profile file is there and is the one this program prints for this runtime."""
+    try:
+        restricted = Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").read_text().strip() == "1"
+    except OSError:
+        return ["AppArmor user namespace restriction: off (not present)"]
+    try:
+        want = pdf_apparmor_profile(runtime_dir)
+    except ValueError as e:
+        return [f"AppArmor user namespace restriction: {'ON' if restricted else 'off'}", f"warning: {e}"]
+    try:
+        have = PDF_APPARMOR_FILE.read_text()
+        profile = "installed and current" if have == want else "installed but DIFFERENT from `artifacts --print-apparmor-profile`"
+    except OSError:
+        profile = "NOT installed"
+    lines = [f"AppArmor user namespace restriction: {'ON' if restricted else 'off'}; "
+             f"profile file {PDF_APPARMOR_FILE}: {profile} (whether it is loaded is not readable without root)"]
+    if restricted and profile != "installed and current":
+        lines.append("Chromium's sandbox will fail without it: see `artifacts --print-apparmor-profile`")
+    return lines
 
 
 PDF_SLOTS = threading.BoundedSemaphore(2)
+PDF_TIMEOUT = 90
 
 
-def render_pdf(page_html, image):
-    """Print a page to PDF in a throwaway container. Returns (pdf bytes, None) or (None, reason)."""
-    if not PDF_SLOTS.acquire(timeout=60):
-        return None, "busy rendering other PDFs, try again"
-    name = f"artifacts-pdf-{uuid.uuid4().hex[:12]}"
+def render_pdf(page_html, runtime_dir, wait=False):
+    """Print a page to PDF with the installed runtime. Returns (pdf bytes, None) or (None, reason).
+    The server answers as soon as the PDF is complete and lets the renderer's shutdown finish in
+    the background; wait=True (the command line) finishes it, and its cleanup, before returning."""
+    runtime_dir = abs_runtime(runtime_dir)
+    rt = runtime_dir / PDF_REV
+    if not pdf_runtime_ready(runtime_dir):
+        return None, "the PDF runtime is not installed: run `artifacts --install-pdf-runtime`"
+    # cwd, HOME and TMPDIR are one fresh directory (Chromium's profile goes there too), so
+    # nothing of the user's reaches the render and nothing is left behind.
     try:
-        out = subprocess.run(
-            ["docker", "run", "--rm", "-i", "--name", name, "--pull", "never", "--network", "none",
-             "--read-only", "--tmpfs", "/tmp:rw,size=512m", "--env", "HOME=/tmp", "--user", "pwuser",
-             "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--memory", "1g", "--pids-limit", "512",
-             image, "python3", "-c", PDF_RENDER],
-            input=page_html.encode(), capture_output=True, timeout=90)
-    except subprocess.TimeoutExpired:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=15)
-        return None, "rendering took longer than 90 s"
+        home = tempfile.mkdtemp(prefix="artifacts-pdf-")
     except OSError as e:
-        return None, f"cannot run docker: {e}"
-    finally:
-        PDF_SLOTS.release()
-    err = out.stderr.decode(errors="replace").strip()
+        return None, f"cannot create a temporary directory for the render: {e}"
+    if not PDF_SLOTS.acquire(timeout=60):
+        shutil.rmtree(home, ignore_errors=True)
+        return None, "busy rendering other PDFs, try again"
+    # From here on _finish owns the slot and the directory: whatever happens, it runs once.
+    env = {"PATH": "/usr/bin:/bin", "HOME": home, "TMPDIR": home, "LANG": "C.UTF-8",
+           "FONTCONFIG_FILE": str(rt / "fonts.conf"), "PDF_CHROME": str(rt / "chrome" / "chrome-headless-shell"),
+           "PDF_LIB_DIR": str(rt / "lib")}
+    proc, handed = None, False  # handed: _finish has been given the slot and the directory
+    try:
+        proc = subprocess.Popen([sys.executable, "-I", "-c", PDF_RENDER], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=home, env=env,
+                                start_new_session=True)
+        # The slot and the temp directory are given back once the renderer has exited,
+        # which a successful render leaves to a background thread (_finish).
+        stdout, stderr = _exchange(proc, page_html.encode(), PDF_TIMEOUT)
+        ok = stdout.startswith(b"%PDF") and stdout.rstrip().endswith(b"%%EOF")
+        handed = True
+        if ok and not wait:
+            # The renderer closed its output after the last byte of the PDF: answer now,
+            # and let Chromium's shutdown (about 150 ms) finish in the background.
+            try:
+                threading.Thread(target=_finish, args=(proc, home, PDF_SHUTDOWN), daemon=True).start()
+            except RuntimeError:  # no thread to be had: do it here
+                _finish(proc, home, PDF_SHUTDOWN)
+        else:
+            _finish(proc, home, PDF_SHUTDOWN)
+    except subprocess.TimeoutExpired:
+        if not handed:
+            _kill_group(proc)
+            _finish(proc, home, 0)
+        return None, f"rendering took longer than {PDF_TIMEOUT} s"
+    except BaseException as e:
+        if not handed:
+            if proc:
+                _kill_group(proc)
+            _finish(proc, home, 0)
+        if not isinstance(e, Exception):
+            raise
+        if proc is None and isinstance(e, OSError):
+            return None, f"cannot run the PDF renderer: {e}"
+        sys.stderr.write(f"artifacts: pdf: {type(e).__name__}: {e}\n")
+        return None, "rendering failed (details in the service log)"
+    err = stderr.decode(errors="replace").strip()
     if err:
         sys.stderr.write(f"artifacts: pdf: {err[-2000:]}\n")
-    if out.returncode != 0 or not out.stdout.startswith(b"%PDF"):
-        if "No such image" in err:
-            return None, f"the PDF image {image} is missing: run `artifacts --build-pdf-image`"
-        rev = pdf_image_rev(image)
-        if rev is not None and rev != PDF_REV:
-            return None, (f"the PDF image {image} does not match this program (image revision {rev or 'none'}, "
-                          f"program {PDF_REV}): run `artifacts --build-pdf-image`")
+    if not ok:
+        if "No usable sandbox" in err:
+            return None, ("Chromium's sandbox is not usable on this host: install the AppArmor profile "
+                          "(see `artifacts --print-apparmor-profile`)")
         return None, "rendering failed (details in the service log)"
-    return out.stdout, None
+    return stdout, None
+
+
+PDF_SHUTDOWN = 10  # seconds the renderer gets to exit after its output closed
+
+
+def _exchange(proc, data, timeout):
+    """Feed stdin and read stdout and stderr to end of file. Unlike communicate(),
+    this does not wait for the process to exit. Raises TimeoutExpired."""
+    out, err = bytearray(), bytearray()
+    view = memoryview(data)
+    deadline = time.monotonic() + timeout
+    with selectors.DefaultSelector() as sel:
+        os.set_blocking(proc.stdin.fileno(), False)
+        sel.register(proc.stdin, selectors.EVENT_WRITE)
+        sel.register(proc.stdout, selectors.EVENT_READ, out)
+        sel.register(proc.stderr, selectors.EVENT_READ, err)
+        while sel.get_map():
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise subprocess.TimeoutExpired(proc.args, timeout)
+            for key, _ in sel.select(left):
+                if key.fileobj is proc.stdin:
+                    try:
+                        view = view[os.write(key.fd, view[:1 << 16]):]
+                    except BrokenPipeError:
+                        view = view[:0]
+                    if not view:
+                        sel.unregister(proc.stdin)
+                        proc.stdin.close()
+                    continue
+                chunk = os.read(key.fd, 1 << 16)
+                if chunk:
+                    key.data.extend(chunk)
+                else:
+                    sel.unregister(key.fileobj)
+                    key.fileobj.close()
+    return bytes(out), bytes(err)
+
+
+def _finish(proc, home, grace):
+    """Reap the renderer (killing its process group if it outlives grace seconds),
+    then free its temp directory and its render slot."""
+    try:
+        if proc:
+            try:
+                proc.wait(timeout=grace)
+            except subprocess.TimeoutExpired:
+                pass
+            _kill_group(proc)  # whatever Chromium helpers are left; harmless when none are
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            for f in (proc.stdin, proc.stdout, proc.stderr):
+                try:
+                    if f and not f.closed:
+                        f.close()
+                except OSError:
+                    pass
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+        PDF_SLOTS.release()
+
+
+def _kill_group(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)  # the render was started as a session leader
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+PDF_CHECK_TEXT = "PDF runtime check"
+
+
+def check_pdf_runtime(runtime_dir):
+    """Render a tiny page and check the PDF embeds the runtime's Inter (so the fonts were
+    found, not silently replaced). Returns (True, "ok") or (False, reason)."""
+    pdf, why = render_pdf(render_page(PDF_CHECK_TEXT, f"<p>{PDF_CHECK_TEXT}</p>", pdf=True), runtime_dir, wait=True)
+    if not pdf:
+        return False, why
+    if not re.search(rb"/BaseFont\s*/[A-Z]{6}\+Inter-", pdf):
+        return False, ("the PDF does not embed the runtime's fonts (fontconfig did not find "
+                       f"{abs_runtime(runtime_dir) / PDF_REV / 'fonts'})")
+    return True, "ok"
 
 
 # ------------------------------------------------------------------ the server
@@ -1093,7 +1469,7 @@ class Handler(BaseHTTPRequestHandler):
     hosts = {"127.0.0.1:7777", "localhost:7777"}
     gate = TailnetGate(None)
     title = None
-    pdf_image = PDF_IMAGE
+    pdf_runtime = default_pdf_runtime()
 
     def log_message(self, fmt, *args):
         sys.stderr.write("%s %s %s\n" % (time.strftime("%H:%M:%S"), self.client_address[0], fmt % args))
@@ -1222,7 +1598,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(HTTPStatus.METHOD_NOT_ALLOWED, "", "text/plain", {"Allow": "GET"})
             try:
                 page = render_note(self.library, p, ident, pdf=True) if kind == "note" else render_text(p, ident, pdf=True)
-                pdf, why = render_pdf(page, self.pdf_image)
+                pdf, why = render_pdf(page, self.pdf_runtime)
             except Exception as e:  # noqa: BLE001 (any failure must still answer the button)
                 sys.stderr.write(f"artifacts: pdf: {ident}: {e!r}\n")
                 pdf, why = None, "rendering failed (details in the service log)"
@@ -1735,34 +2111,61 @@ def main():
     ap.add_argument("--tailnet-user", default=os.environ.get("ARTIFACTS_TAILNET_USER"),
                     help="only admit this user's untagged tailnet devices (tailscale login name)")
     ap.add_argument("--title", help="name shown in the sidebar (default: the vault folder names)")
-    ap.add_argument("--pdf-image", default=os.environ.get("ARTIFACTS_PDF_IMAGE", PDF_IMAGE),
-                    help=f"docker image that renders PDFs (default {PDF_IMAGE})")
-    ap.add_argument("--build-pdf-image", action="store_true",
-                    help="build --pdf-image with docker, then exit (needs network once)")
+    ap.add_argument("--pdf-runtime", metavar="DIR", type=Path, default=default_pdf_runtime(),
+                    help="where the PDF runtime is installed (default %(default)s; the AppArmor profile "
+                         "printed by --print-apparmor-profile names this directory)")
+    ap.add_argument("--install-pdf-runtime", action="store_true",
+                    help="download (once) and install the PDF runtime into --pdf-runtime, then exit")
+    ap.add_argument("--check-pdf-runtime", action="store_true",
+                    help="render a tiny page with the installed runtime, print ok or the reason, then exit")
+    ap.add_argument("--print-apparmor-profile", action="store_true",
+                    help="print the AppArmor profile Chromium's sandbox needs on Ubuntu 23.10+ for the --pdf-runtime "
+                         "directory, then exit")
     ap.add_argument("--pdf-rev", action="store_true",
-                    help=f"print the revision the PDF image must carry (its {PDF_REV_LABEL} label), then exit")
-    # Removed: the PDF image no longer builds on a Playwright image. Kept hidden so
+                    help="print the revision of the PDF runtime this program uses, then exit")
+    # Removed: the PDF image (docker) and, before it, the Playwright base image. Kept hidden so
     # an old command line says what changed instead of "unrecognized arguments".
+    ap.add_argument("--build-pdf-image", action="store_true", help=argparse.SUPPRESS)
+    ap.add_argument("--pdf-image", metavar="IMAGE", nargs="?", const="", help=argparse.SUPPRESS)
     ap.add_argument("--pdf-base", metavar="IMAGE", help=argparse.SUPPRESS)
     ap.add_argument("roots", nargs="*", type=Path, help="vault folders to serve (default: ~/obsidian)")
     args = ap.parse_args()
+    args.pdf_runtime = abs_runtime(args.pdf_runtime)
+    for flag, given in (("--build-pdf-image", args.build_pdf_image), ("--pdf-image", args.pdf_image is not None),
+                        ("--pdf-base", args.pdf_base is not None)):
+        if given:
+            print(f"artifacts: `{flag}` was removed: {PDF_REMOVED}", file=sys.stderr)
+            sys.exit(2)
     if args.pdf_rev:
         print(PDF_REV)
         sys.exit(0)
-    if args.pdf_base is not None:
-        print(f"artifacts: {PDF_BASE_REMOVED}; run `artifacts --build-pdf-image` without it", file=sys.stderr)
-        sys.exit(2)
-    if args.build_pdf_image:
-        if os.environ.get("ARTIFACTS_PDF_BASE"):
-            print(f"artifacts: ignoring ARTIFACTS_PDF_BASE: {PDF_BASE_REMOVED}", file=sys.stderr)
-        sys.exit(subprocess.run(pdf_build_command(args.pdf_image), input=PDF_DOCKERFILE.encode()).returncode)
+    if args.print_apparmor_profile:
+        try:
+            print(pdf_apparmor_profile(args.pdf_runtime), end="")
+        except ValueError as e:
+            print(f"artifacts: {e}", file=sys.stderr)
+            sys.exit(2)
+        sys.exit(0)
+    if args.install_pdf_runtime:
+        try:
+            final = install_pdf_runtime(args.pdf_runtime)
+        except (PdfInstallError, OSError) as e:
+            print(f"artifacts: installing the PDF runtime failed: {e}", file=sys.stderr)
+            sys.exit(1)
+        print(f"installed {final} ({pdf_runtime_size(final) / (1 << 20):.0f} MiB)")
+        print("\n".join(pdf_apparmor_state(args.pdf_runtime)))
+        sys.exit(0)
+    if args.check_pdf_runtime:
+        ok, why = check_pdf_runtime(args.pdf_runtime)
+        print(why, file=sys.stdout if ok else sys.stderr)
+        sys.exit(0 if ok else 1)
     names = {args.bind, *args.allow_host}
     if ipaddress.ip_address(args.bind).is_loopback:
         names |= {"127.0.0.1", "localhost"}
     Handler.hosts = {f"{n.lower()}:{args.port}" for n in names}
     Handler.gate = TailnetGate(args.tailnet_user)
     Handler.title = args.title
-    Handler.pdf_image = args.pdf_image
+    Handler.pdf_runtime = args.pdf_runtime
     Handler.library = Library(args.roots or DEFAULT_ROOTS)
     if markdown is None:
         print("artifacts: python3-markdown is missing, notes render as plain text", file=sys.stderr)
