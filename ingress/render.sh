@@ -60,8 +60,14 @@ cat >"$caddy" <<'EOF'
 # change sites.tsv and re-run install.sh --apply.
 {
 	# Certificates come from Caddy's own CA; no public CA can issue for .lan.
-	# Devices trust its root once (docs/certificates.md).
-	local_certs
+	# Devices trust its root once (docs/certificates.md). This is local_certs
+	# with a longer leaf lifetime: Caddy's 12 h default renewed every name every
+	# 8 h and logged about 360 lines a day. 72 h stays inside the 7 day
+	# lifetime of Caddy's intermediate. (local_certs cannot be combined with
+	# cert_issuer, so the issuer is named here instead.)
+	cert_issuer internal {
+		lifetime 72h
+	}
 	skip_install_trust
 }
 
