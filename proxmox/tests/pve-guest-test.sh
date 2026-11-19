@@ -72,7 +72,8 @@ while read -r v; do unset "$v"; done < <(grep -oP '^[A-Z][A-Z0-9_]*(?==")' "$SRC
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 BIN="$T/bin"; FW="$T/pve/firewall"; STATE="$T/state"; LOG="$T/fake.log"
-mkdir -p "$BIN" "$FW" "$STATE" "$T/pve/nodes/$(hostname)" "$T/home"
+QEMU_DIR="$T/pve/qemu-server"; LXC_DIR="$T/pve/lxc"; LXC_CACHE_DIR="$T/lxc-cache"
+mkdir -p "$BIN" "$FW" "$STATE" "$T/pve/nodes/$(hostname)" "$T/home" "$QEMU_DIR" "$LXC_DIR" "$LXC_CACHE_DIR"
 : > "$LOG"
 
 # --- the script under test, with its host paths moved into the sandbox ------
@@ -103,14 +104,14 @@ echo 'flags : fpu sse sse4_2 avx avx2 avx512f aes' > "$T/cpuinfo"
 # --- shims ------------------------------------------------------------------
 fake() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$BIN/$1"; chmod +x "$BIN/$1"; }
 
-# qm: the template is 9000. FAKE_GUEST is an existing VM (for handover), with
+# qm: the template is 9001 (the script default). FAKE_GUEST is an existing VM (for handover), with
 # FAKE_TAGS. A clone creates a state file so that `qm config` finds the new VM.
 fake qm '
 echo "qm $*" >> "$FAKE_LOG"
 case "$1" in
   config)
-    if [[ "$2" == 9000 ]]; then
-      printf "%s\n" "name: tmpl-debian-13" "template: 1" "scsi0: local-lvm:base-9000-disk-0,size=3G"
+    if [[ "$2" == 9001 ]]; then
+      printf "%s\n" "name: tmpl-debian-13" "template: 1" "scsi0: local-lvm:base-9001-disk-0,size=3G"
     elif [[ "$2" == "${FAKE_GUEST:-none}" ]]; then
       printf "%s\n" "name: alice-vm" "ciuser: alice" "tags: ${FAKE_TAGS-tenant;lease}"
       [[ -z "${FAKE_HOOKSCRIPT:-}" ]] || echo "hookscript: $FAKE_HOOKSCRIPT"
@@ -118,7 +119,7 @@ case "$1" in
       printf "%s\n" "name: new" "scsi0: local-lvm:vm-$2-disk-0,size=3G"
     else exit 2; fi ;;
   status) [[ "$2" == "${FAKE_GUEST:-none}" ]] || exit 2; echo "status: ${FAKE_RUNSTATE:-stopped}" ;;
-  list)   printf "%s\n" "VMID NAME STATUS" "9000 tmpl-debian-13 stopped" "100 sec-wazuh running" ;;
+  list)   printf "%s\n" "VMID NAME STATUS" "9001 tmpl-debian-13 stopped" "100 sec-wazuh running" ${FAKE_QM_EXTRA:+"$FAKE_QM_EXTRA"} ;;
   set)    [[ "$*" != *--hookscript* ]] || echo "hookscript-set-saw-file: $([[ -x "$FAKE_VZ/snippets/lease-limits.pl" ]] && echo yes || echo no)" >> "$FAKE_LOG" ;;
   clone)  echo "clone-saw-hookscript: $([[ -x "$FAKE_VZ/snippets/lease-limits.pl" ]] && echo yes || echo no)" >> "$FAKE_LOG"
           touch "$FAKE_STATE/vm-$3" ;;
@@ -157,7 +158,10 @@ case "$*" in
   "-br link")    for b in ${FAKE_BRIDGES:-vmbr0 vmbr1 vmbr2 vmbr5}; do echo "$b UP"; done ;;
 esac
 exit 0'
-fake free 'echo "Mem: 32000 2000 8000 100 6000 24000"'
+# free and nproc: a host big enough for the capacity preflight (32000 MB, 16
+# threads) unless FAKE_MEM_TOTAL_MB / FAKE_NPROC say otherwise.
+fake free 'echo "Mem: ${FAKE_MEM_TOTAL_MB:-32000} 2000 8000 100 6000 24000"'
+fake nproc 'echo "${FAKE_NPROC:-16}"'
 fake iptables 'printf "%s\n" "-P INPUT ACCEPT" "-A INPUT -j ts-input"'
 fake pve-firewall 'echo "local IP address: 10.10.0.109"'
 # tc: logs, shows FAKE_TC_QDISC for `qdisc show`, and fails `filter add` with FAKE_TC_ADD_RC.
@@ -184,6 +188,7 @@ VZ="$T/vz"; HOOK="$VZ/snippets/lease-limits.pl"
 run_guest() {
   OUT="$T/out.$((++N))"
   FAKE_LOG="$LOG" FAKE_STATE="$STATE" FAKE_VZ="$VZ" PATH="$BIN:$PATH" PERL5LIB="$FAKE_PERL" \
+    QEMU_CONF_DIR="$QEMU_DIR" LXC_CONF_DIR="$LXC_DIR" LXC_CACHE="$LXC_CACHE_DIR" \
     SSH_CLIENT="100.64.1.2 5555 22" HOME="$T/home" \
     bash "$GUEST" "$@" > "$OUT.raw" 2>&1
   RC=$?
@@ -191,7 +196,7 @@ run_guest() {
 }
 # fresh [cluster.fw]: empty the sandbox, then install a cluster.fw if given.
 fresh() {
-  rm -rf "${FW:?}"/* "${STATE:?}"/*; : > "$LOG"; rm -f "$T/pve/nodes/$(hostname)"/host.fw
+  rm -rf "${FW:?}"/* "${STATE:?}"/* "${QEMU_DIR:?}"/* "${LXC_DIR:?}"/*; : > "$LOG"; rm -f "$T/pve/nodes/$(hostname)"/host.fw
   [[ -n "${KEEP_VZ:-}" ]] || rm -rf "${VZ:?}"
   [[ $# -eq 0 ]] || cp "$1" "$FW/cluster.fw"
 }
@@ -802,7 +807,7 @@ check "a lease with no snippets storage is created under --apply" rc0_has "alice
 check "storage local gained snippets, extending its list" logged '^pvesm set local --content vztmpl,iso,backup,import,snippets$'
 check "that came before the hookscript existed, before the clone, and the hookscript is set before the start" \
   logged_all '^pvesm-set: hookscript present: no$' '^clone-saw-hookscript: yes$' \
-  && log_order '^pvesm set local' '^qm clone 9000 113' '^qm set 113 --hookscript local:snippets/lease-limits.pl$' '^qm start 113$'
+  && log_order '^pvesm set local' '^qm clone 9001 113' '^qm set 113 --hookscript local:snippets/lease-limits.pl$' '^qm start 113$'
 check "the hookscript is in the snippets directory" test -f "$HOOK"
 check "it is mode 0755" test "$(stat -c %a "$HOOK")" = 755
 check "it starts with a perl shebang and the managed header" \
@@ -967,6 +972,41 @@ FAKE_GUEST=114 FAKE_TAGS='tenantx;lease' run_guest handover --vmid 114 --key "$K
 check "handover is exact about the tag" test "$RC" -ne 0
 FAKE_GUEST=114 run_guest handover --vmid 114 --key "$KEYS/setup.pub"
 check "handover refuses the operator's own key" rcnz_has "so it is yours"
+
+# ============================================================================
+echo
+echo "== capacity, --force and the template preflight, with tenant and hookscript =="
+# A running lease (4 vCPU, 4096 MB), a stopped work VM and the template, as PVE
+# keeps them in QEMU_CONF_DIR; qm list says which are running.
+cap_fixture() {
+  printf '%s\n' 'name: tmpl-debian-13' 'template: 1' 'cores: 1' 'memory: 512' > "$QEMU_DIR/9001.conf"
+  printf '%s\n' 'name: lease-a' 'cores: 2' 'sockets: 2' 'memory: 4096' 'tags: tenant;lease' > "$QEMU_DIR/101.conf"
+  printf '%s\n' 'name: work-a' 'cores: 8' 'memory: 8192' 'tags: tenant;uncapped' > "$QEMU_DIR/102.conf"
+}
+fresh "$GEN"; cap_fixture
+FAKE_QM_EXTRA=$'101 lease-a running\n102 work-a stopped' run_guest capacity
+check "capacity lists the lease and the work VM, not the template" rc0_has "lease-a" "work-a" && nothas "tmpl-debian-13"
+check "capacity counts only the running one: 4 vCPU and 4096 MB" has "running guests: 4 vCPU on 16 threads" && has "4096 MB RAM of 32000 MB"
+check "capacity changes nothing" test -z "$(grep -E '^(qm (set|clone|create|start)|pct |pvesm set)' "$LOG")"
+FAKE_QM_EXTRA=$'101 lease-a running' run_guest "${TENANT_ARGS[@]}" --ip 10.10.90.10
+check "a lease passes the capacity preflight, counting the running lease" rc0_has "vCPU: 6 committed on 16 threads (4 on running guests)" "RAM committed: 6144 MB of 15616 MB usable (4096 MB on running guests)"
+check "and still gets the lease bridge, CPU and template" has_all "vmbr5" "x86-64-v2-AES" "template 9001 (tmpl-debian-13)" && true
+FAKE_QM_EXTRA=$'101 lease-a running' FAKE_MEM_TOTAL_MB=20000 run_guest "${TENANT_ARGS[@]}" --ip 10.10.90.10
+check "a lease that would pass host RAM minus the reserve is refused" rcnz_has "RAM committed: running guests hold 4096 MB" "Free some, or pass --force"
+FAKE_QM_EXTRA=$'101 lease-a running' FAKE_MEM_TOTAL_MB=20000 run_guest "${TENANT_ARGS[@]}" --ip 10.10.90.10 --force
+check "--force lets it through with a warning, still on the lease segment" rc0_has "continuing because of --force" "vmbr5" "x86-64-v2-AES" "lease"
+FAKE_QM_EXTRA=$'101 lease-a running' FAKE_MEM_TOTAL_MB=20000 run_guest "${TENANT_ARGS[@]}" --ip 10.10.60.10 --uncapped
+check "--uncapped is held to the same RAM check" rcnz_has "RAM committed"
+FAKE_QM_EXTRA=$'101 lease-a running' FAKE_MEM_TOTAL_MB=20000 run_guest "${TENANT_ARGS[@]}" --ip 10.10.60.10 --uncapped --force
+check "--uncapped --force stays on vmbr2 with x86-64-v3 and group tenant" rc0_has "vmbr2" "x86-64-v3" "GROUP tenant"
+FAKE_NPROC=2 run_guest "${TENANT_ARGS[@]}" --ip 10.10.90.10 --cores 5
+check "vCPU overcommit (5 vCPU on 2 threads) is only a warning for a tenant" rc0_has "vCPU overcommit"
+run_guest "${TENANT_ARGS[@]}" --ip 10.10.90.10 --template 9000
+check "a tenant asked to clone a VMID that is not a template is refused" rcnz_has "vmid 9000 is not a VM template" "tmpl-debian-13"
+run_guest hookscript
+check "hookscript does not run the capacity or template preflight" rc0_has "dry run" && nothas "RAM committed" && nothas "is not a VM template"
+run_guest hookscript --force
+check "--force is refused for hookscript" rcnz_has "--force is for vm, lxc and tenant"
 
 # ============================================================================
 echo

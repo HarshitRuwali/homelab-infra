@@ -76,6 +76,15 @@ done < <(sed -E 's/#.*//' sites.example.tsv | awk 'NF')
 (( sitesfail )) || ok "one block per site, and the example has both access values"
 
 echo
+echo "== certificates: internal issuer with a 72 h leaf lifetime =="
+certfail=0
+has "$out/Caddyfile" $'\tcert_issuer internal {' || { no "Caddyfile does not name the internal issuer"; certfail=1; }
+has "$out/Caddyfile" $'\t\tlifetime 72h' || { no "Caddyfile does not set the 72h leaf lifetime"; certfail=1; }
+has "$out/Caddyfile" $'\tskip_install_trust' || { no "Caddyfile lacks skip_install_trust"; certfail=1; }
+grep -qE '^[[:space:]]*local_certs' "$out/Caddyfile" && { no "local_certs cannot be combined with cert_issuer"; certfail=1; }
+(( certfail )) || ok "global block uses cert_issuer internal with lifetime 72h"
+
+echo
 echo "== access: tailnet sites import tailnet_only, lan sites do not =="
 accfail=0
 has "$out/Caddyfile" '(tailnet_only) {' || { no "Caddyfile does not define tailnet_only"; accfail=1; }

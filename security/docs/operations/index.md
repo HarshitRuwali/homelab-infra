@@ -20,10 +20,21 @@ The working, for roughly 15 monitored hosts:
 - Keep about 25 percent of the disk free for OpenSearch segment merges.
 
 `(9 + 20) / 0.75` is about 39 GB, which is the generous ceiling. The
-allocation is **25 GB**: the 20 GB for the stack is padding, and an all-in-one
-install settles well under that, so `(9 + 10) / 0.75` fits even at the noisy
-300 MB per day. At the realistic 45 MB per day it is mostly headroom. Single
-node, so no replica shard doubles it.
+allocation is **40 GB**. The original 25 GB assumed the stack settles at about
+10 GB, but the vulnerability feed alone is about 12 GB, and Wazuh needs the feed
+and a feed update's download side by side. Single node, so no replica shard
+doubles it.
+
+Disk budget on `sec-wazuh` (measured 2026-11-13, 19 GB used of 40 GB):
+
+| What | Size | Grows? |
+|---|---|---|
+| Vulnerability feed, `/var/ossec/queue/vd/feed` | about 12 GB | Flat, but a feed update needs room for a second copy while it downloads |
+| Feed updater scratch, `queue/vd_updater/tmp` | under 100 MB | Kept small by the nightly cleanup, was 9 GB on 2026-09-23 |
+| Indexer queue, `/var/ossec/queue/indexer` | about 1.6 GB | Slowly |
+| Indexer data, `/var/lib/wazuh-indexer` | under 1 GB | Bounded by the 30 day index retention |
+| Alert archives, `/var/ossec/logs/alerts` | about 3.4 MB per day | Bounded by the archive retention (90 days by default, about 0.3 GB) |
+| OS, packages, Wazuh binaries | the rest | No |
 
 !!! warning "Watch the disk, not just the alerts"
     OpenSearch stops allocating shards at 90 percent disk and turns every index
@@ -47,6 +58,9 @@ day 45, the index no longer holds the evidence.
 Wazuh already rotates and gzips daily alert files into
 `/var/ossec/logs/alerts/YYYY/MMM/`. Those are alert records only, not the full
 event stream, and they compress to a few MB per day. A year is a couple of GB.
+The nightly cleanup prunes them after 90 days by default; set
+`ALERT_RETENTION_DAYS` (see Recurring work) to 365 or more if you keep a long
+archive.
 Attach a second disk from the bulk tier and bind-mount it:
 
 ```
@@ -74,7 +88,8 @@ operation:
 qm resize 110 scsi0 +20G     # then grow the filesystem inside the guest
 ```
 
-That asymmetry is the whole argument for starting at 25 GB. If real ingest runs
+That asymmetry is the argument for sizing from measured data rather than a
+guess, as the 25 GB first allocation was. If real ingest runs
 higher, you add disk in a minute. Over-provision and reclaiming it means a
 backup, a rebuild and a restore.
 
@@ -138,14 +153,24 @@ Roughly monthly:
 
 Automatic, nightly at 02:00 IST on `sec-wazuh`:
 
-- **`wazuh-vd-tmp-cleanup.timer`** deletes vulnerability feed updater scratch
-  files in `/var/ossec/queue/vd_updater/tmp` that have not been written for six
-  hours. Wazuh leaves its feed downloads there; on 2026-09-23 they reached 9 GB,
-  filled the 25 GB root, stopped the manager and silenced the guest's
-  monitoring. Installed by `install/configure-sec-wazuh-cleanup.sh`, which
-  `install-sec-wazuh.sh` runs. Check it with
-  `journalctl -u wazuh-vd-tmp-cleanup`. The disk was grown to 40 GB the same
-  day, because a full feed update needs the feed and its download side by side.
+- **`wazuh-vd-tmp-cleanup.timer`** does two things. It deletes vulnerability
+  feed updater scratch files in `/var/ossec/queue/vd_updater/tmp` that have not
+  been written for six hours. Wazuh leaves its feed downloads there; on
+  2026-09-23 they reached 9 GB, filled the then 25 GB root, stopped the manager
+  and silenced the guest's monitoring. The disk was grown to 40 GB the same day,
+  because a full feed update needs the feed and its download side by side. It
+  also deletes rotated alert archives (`ossec-alerts-*.gz` under
+  `/var/ossec/logs/alerts/`) older than `ALERT_RETENTION_DAYS`, 90 by default,
+  because Wazuh never prunes them. Installed by
+  `install/configure-sec-wazuh-cleanup.sh`, which `install-sec-wazuh.sh` runs.
+  Check it with `journalctl -u wazuh-vd-tmp-cleanup`.
+
+  Preview what it would delete with `sudo wazuh-vd-tmp-cleanup --dry-run`. Change
+  the retention with a drop-in
+  (`systemctl edit wazuh-vd-tmp-cleanup.service`, then
+  `Environment=ALERT_RETENTION_DAYS=365`); `0` keeps archives forever. Raise it
+  if you keep the long archive described under
+  [Keep cheap archives longer](#keep-cheap-archives-longer-than-the-searchable-index).
 
 ## Verification
 

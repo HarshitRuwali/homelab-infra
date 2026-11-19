@@ -50,7 +50,7 @@ for need in "$SCRIPT" "$README"; do
 done
 
 # Flags of other tools that the README names on their own in inline code.
-OTHER_FLAGS=(--protection --net0)
+OTHER_FLAGS=(--protection --net0 --all)  # --all is vzdump's
 # No `grep -q` after a pipe: it exits at the first match, the writer dies of
 # SIGPIPE, and under pipefail a match reads as a miss. `>/dev/null` makes grep
 # read to the end.

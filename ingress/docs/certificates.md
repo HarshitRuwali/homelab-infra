@@ -1,7 +1,8 @@
 # Certificates
 
 No public certificate authority issues for `.lan`, so Caddy signs the site
-certificates itself with a local CA (`local_certs` in the Caddyfile). It does
+certificates itself with a local CA (`cert_issuer internal` in the Caddyfile,
+the same issuer `local_certs` selects). It does
 not install that CA anywhere (`skip_install_trust`). Each device trusts the
 root once; after that every `https://<name>.lan` is valid, including sites you
 add later, because they are signed by the same root.
@@ -77,6 +78,14 @@ Rotation (the last bullet above) creates a new root and key, so it must be
 followed by `./install.sh --apply`: until then `/etc/ingress/ca-root.crt` is
 still the old root, and the installer's `https` check would fail against it.
 
+## Which root to trust
+
+Devices trust the **Caddy Local Authority - 2026 ECC Root** that
+`/etc/ingress/ca-root.crt` holds, and nothing else. Other CA files in the
+homelab, such as the `Homelab Root CA` used for monitoring ingest mTLS
+([monitoring](https://github.com/HarshitRuwali/homelab-infra/blob/master/monitoring/docs/architecture/index.md)),
+did not sign these certificates and do not validate them.
+
 ## Upstream certificates
 
 These are separate. Caddy checks an `https` upstream against the CA file named
@@ -88,6 +97,12 @@ file must be readable by that user (`chmod 0644`; it is a public certificate).
 `install.sh` stops before rendering if one is not, because a check made as
 root would pass and Caddy would then fail at its next start.
 
-Caddy renews its site certificates on its own. The root is valid far longer
+Caddy renews its site certificates on its own. The Caddyfile sets their
+lifetime to 72 hours (`lifetime 72h` in the global `cert_issuer` block) instead
+of Caddy's 12 hour default. That cuts renewals from about 36 a day to roughly 6 to 12, and
+the log accordingly. It is not a fixed 6: Caddy clamps a leaf's lifetime near the end
+of the intermediate's life, so renewals are more frequent (with a clamping warning)
+during the last 72 hours of each cycle. The limit is the 7 day lifetime of
+Caddy's intermediate certificate, which signs them. The root is valid far longer
 than the site certificates it signs, so a device needs a new root only after
 the rotation above.
