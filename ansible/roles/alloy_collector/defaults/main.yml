@@ -28,6 +28,20 @@ alloy_journal_max_age: 12h
 #   alloy_enable_process: true
 alloy_enable_process: false
 
+# Per-process metrics kept where alloy_enable_process is on. Empty keeps all.
+# The default keeps what the Host processes dashboard and the metrics reference
+# use (process count, CPU, memory, threads, open file descriptors, the oldest
+# start time) and the exporter's scrape-error counters, and drops states,
+# context switches, I/O bytes, page faults, worst_fd_ratio and thread wait
+# channels: on ubuntu-dev (about 220 process groups) 3,180 of 4,729 series,
+# measured 2026-11-19.
+alloy_process_keep_regex: >-
+  up|scrape_.+|process_exporter_build_info|namedprocess_scrape_.+|namedprocess_namegroup_(num_procs|cpu_seconds_total|memory_bytes|num_threads|open_filedesc|oldest_start_time_seconds)
+
+# memtype values of namedprocess_namegroup_memory_bytes to drop. Only resident
+# memory is charted; virtual is misleading and swapped is unused. Empty keeps all.
+alloy_process_drop_memtypes: "virtual|swapped|proportionalResident|proportionalSwapped"
+
 # auto | true | false. `auto` stats /var/run/docker.sock, mirroring the
 # conditional in scripts/lxc-install.sh.
 alloy_enable_docker: auto

@@ -21,6 +21,8 @@ For how variable precedence works at all, see
 | `alloy_journal_max_age` | `12h` | lower to `1h` on hosts with huge journals |
 | `alloy_enable_docker` | `auto` | `auto` stats `/var/run/docker.sock` |
 | `alloy_enable_process` | `false` | per-process metrics; **opt-in on cardinality grounds** |
+| `alloy_process_keep_regex` | see file | the per-process metric names kept where `alloy_enable_process` is on; empty keeps all. The default keeps what the Host processes dashboard reads |
+| `alloy_process_drop_memtypes` | `virtual\|swapped\|proportionalResident\|proportionalSwapped` | `memtype` values of `namedprocess_namegroup_memory_bytes` dropped; empty keeps all |
 | `alloy_syslog_listener_port` | `""` | empty means no listener; `5514` in `group_vars/central` for the firewall's Suricata output |
 | `alloy_fs_mount_points_exclude` | see file | |
 | `alloy_fs_types_exclude` | see file | |

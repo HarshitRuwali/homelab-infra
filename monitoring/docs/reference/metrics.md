@@ -74,7 +74,7 @@ From `prometheus.exporter.process`, **opt-in per host** via
 |---|---|
 | `namedprocess_namegroup_num_procs` | processes in the group |
 | `namedprocess_namegroup_cpu_seconds_total` | CPU seconds, by mode |
-| `namedprocess_namegroup_memory_bytes{memtype="resident"}` | RSS; `virtual` exists but is misleading |
+| `namedprocess_namegroup_memory_bytes{memtype="resident"}` | RSS; the collector drops the other memory types (`alloy_process_drop_memtypes`) |
 | `namedprocess_namegroup_num_threads` / `..._open_filedesc` | threads and open FDs |
 | `namedprocess_namegroup_oldest_start_time_seconds` | age of the oldest PID in the group |
 

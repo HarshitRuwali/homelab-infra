@@ -242,7 +242,29 @@ prometheus.scrape "processes" {
   job_name        = "host-process"
   targets         = prometheus.exporter.process.processes.targets
   scrape_interval = "{{ alloy_scrape_interval }}"
-  forward_to      = [prometheus.remote_write.central.receiver]
+  forward_to      = [prometheus.relabel.processes.receiver]
+}
+
+// Per-group metrics nothing charts (states, context switches, I/O, page
+// faults) are most of the series; see alloy_process_keep_regex.
+prometheus.relabel "processes" {
+  forward_to = [prometheus.remote_write.central.receiver]
+{% if alloy_process_keep_regex | length > 0 %}
+
+  rule {
+    source_labels = ["__name__"]
+    regex         = "{{ alloy_process_keep_regex | trim }}"
+    action        = "keep"
+  }
+{% endif %}
+{% if alloy_process_drop_memtypes | length > 0 %}
+
+  rule {
+    source_labels = ["__name__", "memtype"]
+    regex         = "namedprocess_namegroup_memory_bytes;({{ alloy_process_drop_memtypes }})"
+    action        = "drop"
+  }
+{% endif %}
 }
 {% endif %}
 {% if gpu_exporter_available | default(false) %}

@@ -156,6 +156,19 @@ for name, text in (("lxc", lxc),):
           name + ": Docker logs do not go through loki.process")
     check('older_than          = "160h"' in text, name + ": no older_than drop stage for Docker logs")
 check("loki.process" not in metal, "metal (no Docker): a docker log pipeline was rendered")
+proc = render_template("config.alloy.j2", host_vars(["lxc"], alloy_enable_process=True))
+check("forward_to      = [prometheus.relabel.processes.receiver]" in proc,
+      "process scrape does not go through its relabel")
+check('action        = "keep"' in proc.split('prometheus.relabel "processes"')[1].split("\n}\n")[0],
+      "process relabel has no keep rule")
+check('regex         = "namedprocess_namegroup_memory_bytes;(virtual|swapped|' in proc,
+      "process relabel does not drop the unused memory types")
+proc_all = render_template("config.alloy.j2", host_vars(["lxc"], alloy_enable_process=True,
+                                                        alloy_process_keep_regex="", alloy_process_drop_memtypes=""))
+check('prometheus.relabel "processes"' in proc_all and "rule {" not in proc_all.split('prometheus.relabel "processes"')[1].split("\n}\n")[0],
+      "empty process keep and memtype settings still render a rule")
+check('prometheus.relabel "processes"' not in render_template("config.alloy.j2", host_vars(["lxc"])),
+      "process relabel rendered with alloy_enable_process off")
 no_age = render_template("config.alloy.j2", host_vars(["lxc"], alloy_loki_max_entry_age=""))
 check("stage.drop" not in no_age, "empty alloy_loki_max_entry_age still renders a drop stage")
 
@@ -224,6 +237,23 @@ check(keep.fullmatch("prometheus_remote_storage_samples_failed_total") is not No
 check(keep.fullmatch("go_gc_gomemlimit_bytes") is not None, "keep rule drops go_gc_gomemlimit_bytes")
 check(keep.fullmatch("go_memstats_heap_inuse_bytes") is not None, "keep rule drops heap in use")
 check(keep.fullmatch("prometheus_target_interval_length_seconds_sum") is None, "keep rule keeps an unused family")
+# Per-process metrics: everything a dashboard or rule reads is kept, and only resident memory is read.
+pkeep = re.compile(d["alloy_process_keep_regex"].strip())
+dropped_mem = set(d["alloy_process_drop_memtypes"].split("|"))
+read_names = set()
+for p, t in READERS:
+    for name in set(re.findall(r"\bnamedprocess_[a-z_]+", t)):
+        read_names.add(name)
+        check(pkeep.fullmatch(name) is not None, "%s reads %s, which the process keep rule drops"
+              % (p.relative_to(REPO), name))
+    for mt in re.findall(r'memtype=\\?"([A-Za-z]+)', t):
+        check(mt not in dropped_mem, "%s reads memtype %s, which the collector drops" % (p.relative_to(REPO), mt))
+check({"namedprocess_namegroup_num_procs", "namedprocess_namegroup_cpu_seconds_total",
+       "namedprocess_namegroup_memory_bytes"} <= read_names, "the process dashboard queries were not found")
+check("resident" not in dropped_mem, "the memtype drop removes resident memory")
+for unused in ("namedprocess_namegroup_states", "namedprocess_namegroup_context_switches_total",
+               "namedprocess_namegroup_read_bytes_total", "namedprocess_namegroup_threads_wchan"):
+    check(pkeep.fullmatch(unused) is None, "process keep rule keeps the unused " + unused)
 
 # --- 3. the memory limit ------------------------------------------------------
 tasks = yaml.safe_load((ROLES / "alloy_collector" / "tasks" / "main.yml").read_text())
