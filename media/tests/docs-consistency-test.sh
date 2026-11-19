@@ -136,6 +136,16 @@ done < <(sed -n '/^nav:/,$p' mkdocs.yml | grep -oE '[A-Za-z0-9_./-]+\.md')
 (( navfail )) || ok "nav and docs/*.md agree"
 
 echo
+echo "== extra_css and extra_javascript name files that exist =="
+extrafail=0
+# Top-level list keys only: the `- path` items under extra_css / extra_javascript.
+while read -r target; do
+  [[ -f "docs/$target" ]] || { no "mkdocs.yml loads docs/$target, which does not exist"; extrafail=1; }
+done < <(awk '/^extra_(css|javascript):/ { on = 1; next } /^[^ #-]/ { on = 0 } on && /^[[:space:]]+-[[:space:]]/ { sub(/^[[:space:]]+-[[:space:]]+/, ""); sub(/[[:space:]]*#.*/, ""); print }' mkdocs.yml)
+grep -qE '^extra_javascript:' mkdocs.yml || { no "mkdocs.yml has no extra_javascript, so the diagram viewer is not loaded"; extrafail=1; }
+(( extrafail )) || ok "every extra_css and extra_javascript file in mkdocs.yml exists"
+
+echo
 echo "== compose.yaml and .env.example name the same settings =="
 envfail=0
 env_keys="$(grep -oE '^[A-Z][A-Z0-9_]*=' .env.example | tr -d '=' | sort -u)"
@@ -192,7 +202,7 @@ DASH_RE='\x{2014}|&mdas''h;'
 while read -r hit; do no "hardcoded count in prose: $hit"; textfail=1; done \
   < <(grep -nE "$COUNT_RE" "${SURFACES[@]}" || true)
 while read -r hit; do no "em dash: $hit"; textfail=1; done \
-  < <(grep -nP "$DASH_RE" "${SURFACES[@]}" mkdocs.yml compose.yaml install.sh .env.example tests/*.sh || true)
+  < <(grep -nP "$DASH_RE" "${SURFACES[@]}" mkdocs.yml compose.yaml install.sh .env.example tests/*.sh docs/javascripts/*.js docs/stylesheets/*.css || true)
 (( textfail )) || ok "no hardcoded test counts, no em dashes"
 
 echo

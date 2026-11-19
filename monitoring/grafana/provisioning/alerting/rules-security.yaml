@@ -3,8 +3,10 @@ apiVersion: 1
 # Security alerts. Everything here carries `route: security`, which
 # policies.yaml sends to the matrix-security room and never to the fleet room.
 #
-# Suricata runs on the firewall and ships EVE alerts as syslog into Loki as
-# host="opnsense"; see security/docs/wiring/index.md, section 2. The Suricata
+# Suricata runs on the firewall and ships EVE alerts as syslog into Loki with
+# job="suricata" (and host="opnsense", like every firewall stream); see
+# security/docs/wiring/index.md, section 2. The rules select job="suricata", the
+# Suricata stream alone. The Suricata
 # Alerts dashboard shows every alert. This rule decides which ones are worth a
 # message, which is a different and much smaller set.
 groups:
@@ -63,7 +65,7 @@ groups:
               queryType: instant
               expr: |
                 sum by (alert_signature_id, alert_signature, alert_severity, src_ip, dest_ip) (
-                  count_over_time({host="opnsense"} |= "event_type" | json
+                  count_over_time({job="suricata"} |= "event_type" | json
                     | event_type="alert"
                     | alert_severity=~"1|2"
                     | alert_signature_id!~"2019102|2012811|2027757|2003068"
@@ -129,7 +131,7 @@ groups:
               queryType: instant
               expr: |
                 sum by (alert_signature_id, alert_signature, alert_severity, src_ip) (
-                  count_over_time({host="opnsense"} |= "2003068" | json
+                  count_over_time({job="suricata"} |= "2003068" | json
                     | event_type="alert"
                     | alert_signature_id="2003068"
                     | __error__="" [15m])
@@ -144,7 +146,7 @@ groups:
               expr: |
                 count by (alert_signature_id, alert_signature, alert_severity, src_ip) (
                   sum by (alert_signature_id, alert_signature, alert_severity, src_ip, dest_ip) (
-                    count_over_time({host="opnsense"} |= "2003068" | json
+                    count_over_time({job="suricata"} |= "2003068" | json
                       | event_type="alert"
                       | alert_signature_id="2003068"
                       | __error__="" [15m])

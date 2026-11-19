@@ -128,7 +128,8 @@ Documented so the omission is a decision, not a gap.
     It **is** monitored, as the sole member of the `metal` platform group, and
     it is the only host that can report SMART disk health. It is also the only
     host with guests, so it names their network counters for the Guest Traffic
-    dashboard (`pve_guest_metrics`). What is deliberately
+    dashboard and counts the tenant VMs' connections and the packet-rate limit's and
+    firewall's drops (`pve_guest_metrics`). What is deliberately
     out of scope is **patching**: it is kept out of `autoupdate`, because an
     unattended upgrade there restarts pveproxy and pvedaemon underneath every
     running guest. Updates on this box are a deliberate, supervised act.

@@ -47,3 +47,36 @@ uu_package_blacklist: []
 
 # Losing the kernel this box booted from is not worth the disk saving.
 uu_remove_unused_kernels: false
+
+# filterlog volume that is not worth storing, dropped only for lines on the WAN
+# interface (alloy_syslog_drop_filterlog_iface, vtnet0 by default). A label is
+# OPNsense's own automatic rule, so it is the same on every install of the same
+# release; check one with `pfctl -sr -v | grep <label>` on the firewall before
+# reusing it.
+#
+# 02f4bab031b57d1e30553ce08e0ec131 is the default deny, `block drop in log inet
+# all`. It is interface-agnostic (pfctl shows it with no `on <interface>`), so
+# every interface can fire it. On the WAN side it is home LAN broadcast and
+# discovery, which carries no decision, so it is dropped there. On the lease and
+# tenant interfaces it shows out-of-state TCP and other default-denied traffic,
+# so it is kept there.
+#
+# 6125cb207f65033775d1069fdf6d0ccf, "let out anything from the firewall host
+# itself", is NOT listed, on purpose. Its pf rule is `pass out log route-to
+# (vtnet0 10.10.0.1) inet from (vtnet0) to ! (vtnet0:network)`, which looks like
+# the firewall's own traffic (Unbound lookups, NTP). But pf translates NAT before
+# it filters an outgoing packet, so the OUTBOUND LEG OF EVERY TENANT AND LEASE
+# FLOW (source = the firewall's WAN address, with the translated source port) is
+# logged under this label too: 6 of 7 filter-log lines for a destination only a
+# test lease contacted carried it. That line is what matches an abuse report
+# (public IP, translated port, destination, time) to a VM, so it must reach Loki.
+# Keeping it costs about 1.5 lines a second. Do not add it to this list.
+alloy_syslog_drop_filterlog_rules:
+  - 02f4bab031b57d1e30553ce08e0ec131   # the default deny, `block drop in log inet all`: dropped on the WAN side only
+
+# OPNsense's automatic "block <virusprot> hosts" rule. A source that exceeds a
+# per-source connection limit is banned for up to an hour and this rule logs
+# every packet it sends meanwhile. Rate-limited here so a ban cannot flood Loki.
+alloy_syslog_ratelimit_filterlog_rules:
+  - add09fc915886757c300419fc2ecc1e6
+

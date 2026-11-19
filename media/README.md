@@ -42,6 +42,8 @@ compose.yaml    The stack: plex, plex-tunnel, gluetun, qbittorrent
 install.sh      Dry-run-first installer
 tests/          Compose, docs-consistency and installer tests
 docs/           MkDocs source for the published site
+  javascripts/  diagram-zoom.js: click a diagram to zoom and pan it
+  stylesheets/  diagram-zoom.css: styles for that viewer
 mkdocs.yml      Site configuration
 ```
 
@@ -55,6 +57,13 @@ mkdocs.yml      Site configuration
 | [Operations](docs/operations.md) | Updating images, checking the VPN, logs, rollback, state |
 | [Security](docs/security.md) | Exposure model and the reasons for each choice |
 | [Migration](docs/migration.md) | Moving an existing Plex and qBittorrent from LXC containers |
+
+A diagram on the site opens full screen when you click it. Scroll or pinch to
+zoom, drag to pan, `0` fits it to the screen, Esc closes it. The viewer is
+`docs/javascripts/diagram-zoom.js` and `docs/stylesheets/diagram-zoom.css`,
+both loaded by `mkdocs.yml`, and it applies to every diagram written as a
+`mermaid` fence. Material fetches Mermaid itself from unpkg, so diagrams, in the
+local preview too, need internet access.
 
 Preview the site locally:
 
@@ -71,7 +80,7 @@ Run from this directory:
 ```bash
 ./tests/run.sh                              # everything below
 ./tests/compose-test.sh                     # rendered compose file: ports, network, secret
-./tests/docs-consistency-test.sh            # docs against the code
+./tests/docs-consistency-test.sh            # docs against the code, and the files mkdocs.yml loads
 ./tests/install-test.sh                     # install.sh against fake docker and tailscale
 ```
 
