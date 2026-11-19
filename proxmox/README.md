@@ -44,13 +44,20 @@ whenever it changes in the repository.
 ```bash
 ./pve-guest.sh images             # what is cached and usable
 ./pve-guest.sh template           # read the plan
-./pve-guest.sh template --apply   # builds VMID 9000, tmpl-debian-13
+./pve-guest.sh template --apply   # builds VMID 9001, tmpl-ubuntu-26.04
 ```
 
-`images` must list a `debian-*-genericcloud-amd64.qcow2` under cloud images.
-If it doesn't, download one to `/var/lib/vz/template/iso` first. When it's
-done, `qm list` shows 9000, and every VM from now on is a clone of it. LXC
+`images` must list an `ubuntu-*-server-cloudimg-amd64.img` under cloud images.
+If it doesn't, download one to `/var/lib/vz/template/iso` first (the download
+command is in the work VM section below). When it's done, `qm list` shows 9001, and every VM from now on is a clone of it. LXC
 containers need no template step: they use the cached tarballs directly.
+
+Debian is optional, as a second template at its own VMID, which `vm` reaches
+with `--template 9000`:
+
+```bash
+./pve-guest.sh template --image debian-13-genericcloud-amd64.qcow2 --vmid 9000 --apply
+```
 
 ### 3. Firewall the hypervisor
 
@@ -223,14 +230,15 @@ handover, and stays out of the fleet: no Ansible, Alloy or Wazuh.
 
 1. **An Ubuntu template, once.** Download the cloud image (not the live
    server ISO) on the host, check it against `SHA256SUMS` from the same
-   directory, then build it next to the Debian one:
+   directory, then build it. This is the same template as step 2 of the setup, so
+   skip it if `qm list` already shows 9001:
 
    ```bash
    cd /var/lib/vz/template/iso
    wget https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img
    cd /root
-   ./pve-guest.sh template --image ubuntu-26.04-server-cloudimg-amd64.img --vmid 9001
-   ./pve-guest.sh template --image ubuntu-26.04-server-cloudimg-amd64.img --vmid 9001 --apply
+   ./pve-guest.sh template
+   ./pve-guest.sh template --apply
    ```
 
    That builds `tmpl-ubuntu-26.04`. The image can be deleted afterwards, as
@@ -310,15 +318,73 @@ forwards.
 ### Rebuild the template
 
 When the cloud image gets old, download a fresh one to
-`/var/lib/vz/template/iso`, then:
+`/var/lib/vz/template/iso`, then (use the new file's name):
 
 ```bash
-qm destroy 9000
-./pve-guest.sh template --apply
+qm destroy 9001
+./pve-guest.sh template --image ubuntu-26.04-server-cloudimg-amd64.img --vmid 9001 --apply
 ```
 
 Existing guests are full clones and don't depend on the template, so this is
 safe at any time.
+
+## Capacity
+
+```bash
+./pve-guest.sh capacity
+```
+
+Read-only. Prints every guest (VMs and containers, not templates) with its
+status, vCPU and configured RAM, then the totals for the running ones against
+the host's threads and RAM, for example `39 vCPU on 40 threads (0.97x)`. It is
+the same arithmetic `vm`, `lxc` and `tenant` use for their capacity check.
+
+## Backups
+
+No `vzdump` job is configured on the host: guests are not backed up by
+Proxmox, and this script does not create a backup job. Off-site data backups
+for Immich and Nextcloud are the job of the `s3-backup` module.
+
+To add a job later, list guests by VMID (never `--all`, so a tenant VM is not
+backed up by default) and check that it fits `hdd-primary` first: one round of
+every guest's written data was about 370 GiB on 2026-11-13 against about
+390 GiB free (`pvesm status`; written size per guest from
+`lvs -o lv_name,lv_size,data_percent pve`). Restore with `qmrestore` (VMs) or
+`pct restore` (containers) from a file under `/mnt/hdd_primary/dump/`.
+
+## Right-sizing
+
+Measured over seven days to 2026-11-13 (RAM is used by the guest minus its
+page cache; CPU is busy cores, average / p95 / peak). Most guests hold far
+more than they use. Host RAM is not under pressure, so this is about
+scheduler headroom (72 vCPU are allocated on 40 threads) and room to start a
+large VM, not about relieving a shortage.
+
+| Guest | Allocated vCPU / RAM | RAM used avg / peak | CPU avg / p95 / peak | Proposed |
+|---|---|---|---|---|
+| ubuntu-ai (202) | 16 / 32 GiB | 7.1 / 16.8 GiB | 0.33 / 1.34 / 12.1 | 8 vCPU, 28 GiB |
+| ubuntu-dev (203) | 20 / 32 GiB | 3.1 / 18.4 GiB | 0.37 / 0.61 / 16.4 | 12 vCPU, 24 GiB |
+| matrix (105) | 2 / 4 GiB | 1.0 / 1.0 GiB | 0.09 / 0.11 / 0.38 | 1 vCPU, 3 GiB |
+| sec-wazuh (110) | 4 / 8 GiB | 3.5 / 3.8 GiB | 0.14 / 0.19 / 1.18 | 2 vCPU, 6 GiB, fixed RAM (no balloon) |
+| sec-dns (111, LXC) | 2 / 512 MiB | 0.18 / 0.20 GiB | 0.22 / 0.44 / 1.37 | 1 vCPU, keep 512 MiB |
+| ingress (102, LXC) | 1 / 256 MiB | 0.13 / 0.14 GiB | 0.13 / 0.23 / 0.59 | 512 MiB (it was swapping) |
+| cloud-services (104) | 4 / 8 GiB | 3.4 / 4.7 GiB | 0.49 / 1.42 / 2.67 | keep |
+
+Applied together, running vCPU drops from 72 to about 52 and committed RAM
+from about 126 GiB to about 110 GiB. Notes:
+
+- VM cores, memory and NUMA changes are written to the VM's pending config and
+  take effect after a full stop and start (`qm shutdown` then `qm start`, or
+  `qm reboot`), not a reboot from inside the guest. Container cores and memory
+  apply immediately. `qm pending <vmid>` shows what is waiting.
+- ubuntu-ai is bound to NUMA node 0 with `cpus=0-15`; cutting its cores means
+  changing `numa0` too, and `numa0 memory` must equal the VM's `memory`.
+- Builds on ubuntu-dev and ubuntu-ai peak at 16 and 12 cores, so after the cut
+  they run longer rather than fail.
+- Ballooning does not reclaim anything while the host is below about 80% RAM
+  use, so a balloon floor on a big VM only adds risk. Prefer a fixed size.
+- The sizes above are measured, not a policy: re-check `capacity` and the
+  guests' own graphs before cutting further.
 
 ## How the hypervisor is protected
 
@@ -444,8 +510,8 @@ Grafana are not built yet; they are the next piece.
 
 | Kind | Source on the host | Default |
 |---|---|---|
-| VM template | cloud images (`.qcow2`, `.img`, `.raw`) in `/var/lib/vz/template/iso` or `/var/lib/vz/import` | newest `debian-*-genericcloud-amd64.qcow2`, built as `tmpl-debian-13` at VMID 9000 |
-| VM, tenant | a VM template, cloned in full | template 9000 |
+| VM template | cloud images (`.qcow2`, `.img`, `.raw`) in `/var/lib/vz/template/iso` or `/var/lib/vz/import` | newest `ubuntu-*-server-cloudimg-amd64.img`, built as `tmpl-ubuntu-26.04` at VMID 9001 (`TEMPLATE_VMID`); Debian with `--image` and `--vmid 9000` |
+| VM, tenant | a VM template, cloned in full | template 9001 (`TEMPLATE_VMID`, or `--template`) |
 | LXC | the tarballs in `/var/lib/vz/template/cache` (`local:vztmpl`) | newest `debian-13-standard` |
 
 Installer ISOs (Ubuntu live server, Kali, OPNsense, Windows) show up in
@@ -478,7 +544,7 @@ guest built from one can't be created unattended.
   stays key-only. Set it inside the guest, not with `qm set --cipassword`:
   any cloud-init change makes the next boot a new instance, with new host
   keys.
-- **Your VMs have no guest agent until you install one.** The Debian cloud
+- **Your VMs have no guest agent until you install one.** The cloud
   image doesn't ship `qemu-guest-agent`. Until you install it, Proxmox can't
   show the VM's IP. Tenant VMs have the agent turned off on purpose.
 - **Refuses rather than modifies.** A VMID or hostname already in use stops the
@@ -486,6 +552,15 @@ guest built from one can't be created unattended.
   rerun starts clean instead of skipping over a broken guest.
 - **Capacity is checked first.** A request for more RAM than the host has free,
   or more disk than the pool has free, is refused before anything is created.
+  It also adds up what the running guests already hold (read from their
+  config files, not their live use). More than `VCPU_RATIO_MAX` vCPU per
+  thread is a warning. RAM committed above host RAM minus `RAM_RESERVE_MB` is
+  refused, unless you pass `--force`. Stopped guests and templates are not
+  counted. A container with no `cores` limit counts as 0 vCPU.
+- **A missing template is named.** If the template is not there, or is not a
+  template, the error lists the templates that exist and says to pass
+  `--template <vmid>`. The default is VMID 9001; set `TEMPLATE_VMID` if yours
+  differs.
 
 ### Environment
 
@@ -502,4 +577,17 @@ guest built from one can't be created unattended.
 | `TENANT_DISK_MBPS` | `100` | MB/s each way per tenant disk |
 | `TENANT_DISK_IOPS` | `2000` | IOPS each way per tenant disk |
 | `CPU_TYPE` | `x86-64-v3` | CPU model for templates and VMs |
+| `TEMPLATE_VMID` | `9001` | the template `vm` and `tenant` clone, and where `template` builds |
+| `VCPU_RATIO_MAX` | `2.0` | warn above this many vCPU per host thread |
+| `RAM_RESERVE_MB` | `16384` | RAM kept out of guest commitments; `vm`, `lxc` and `tenant` refuse beyond it without `--force` |
 | `TENANT_CPUUNITS` | `50` | CPU weight; your guests have 100 |
+
+### Tests
+
+`proxmox/tests/test_pve_guest.sh` checks the template default and the capacity
+logic against fake `qm`, `pct`, `pvesm`, `pvesh`, `free` and `nproc` commands.
+It needs root, so run it in a container:
+
+```bash
+docker run --rm -v "$PWD":/repo:ro debian:13 bash /repo/proxmox/tests/test_pve_guest.sh
+```
