@@ -139,7 +139,20 @@ which today means the `metal` group.
 |---|---|
 | `fleet_pve_guest_nic_info` | always `1`; one series per guest NIC, labelled `device`, `guest`, `vmid`, `type`, `nic` and `bridge` |
 | `fleet_pve_guest_nics_total` | guest NICs named on this node |
-| `fleet_pve_guests_collection_timestamp_seconds` | when naming last ran |
+| `fleet_pve_guests_collection_timestamp_seconds` | when the last complete run finished; if a read fails the previous file is kept, so its age is how a failure shows |
+| `fleet_pve_tenant_conntrack_entries` | gauge: conntrack entries whose original source is a tenant or lease VM's address, labelled `vmid`, `guest`, `ip` and `segment` (`lease` or `work`) |
+| `fleet_pve_firewall_dropped_packets_total` | counter: packets the tenant and lease firewall groups dropped, labelled `chain`, `rule` (`private`, `private_in` or `smtp`) and `family` (`ipv4` or `ipv6`); sum over `family` unless you want the split |
+| `fleet_pve_tenant_policed_packets_total` | counter: packets dropped by a lease's packet-rate ceiling, labelled `vmid`, `guest` and `segment`; resets when the VM restarts, so use `rate()` or `increase()` |
+| `fleet_pve_tenant_packet_limit_active` | gauge: `1` while a running lease has its packet-rate ceiling, `0` when it lost it (Proxmox's hot NIC update deletes the filter), labelled `vmid`, `guest` and `segment` |
+| `fleet_pve_tenant_firewall_active` | gauge: `1` only when the Proxmox firewall is filtering a tenant or lease VM (datacenter firewall on, `firewall=1` on `net0`, `enable: 1` and the right group in its `.fw` file, and its tap chain exists), `0` when any of that fails, labelled `vmid`, `guest` and `segment` |
+
+The last five are about the VMs tagged `tenant` and are read by the tenant
+alert rules and the
+[Tenant Activity](../monitoring/dashboards.md#tenant-activity) dashboard. A
+stopped VM, or one without its address or filter, has no series, so an absent
+series is normal where no lease runs. The file is rewritten every 5 minutes, so
+a counter changes only at that step: query `rate()` and `increase()` over 15
+minutes or more, because a shorter window can hold no update and read 0.
 
 It carries no traffic itself. It names the traffic node_exporter already
 reports: Proxmox gives every guest NIC a device on the host, `tap<vmid>i<n>` for

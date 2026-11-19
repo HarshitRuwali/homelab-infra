@@ -13,6 +13,45 @@
 # reaches a firewall. What it lacks is a name. This role writes one info series
 # per guest NIC, keyed by that device and carrying the guest's name, VMID, type,
 # NIC and bridge, so the Guest Traffic dashboard can join the two.
+#
+# TENANT VMs. The same script, in the same file, also reports on the VMs tagged
+# `tenant`: the owner's own work VMs and, also tagged `lease`, VMs let to someone
+# else. The host is the only place their behaviour is visible from outside the
+# VM:
+#   fleet_pve_tenant_conntrack_entries{vmid,guest,ip,segment}
+#       gauge, conntrack entries whose original source is the VM's address,
+#       counted from the stream of `conntrack -L` (conntrack-tools; the Proxmox
+#       kernel has no /proc/net/nf_conntrack). The role does NOT install it: it
+#       fails the play, before installing anything, if /usr/sbin/conntrack is
+#       missing while this role is enabled.
+#       segment is "lease" when the VM carries the lease tag, otherwise "work".
+#       The address is read from [IPSET ipfilter-net0] in
+#       /etc/pve/firewall/<vmid>.fw; a VM without one gets no series.
+#   fleet_pve_tenant_policed_packets_total{vmid,guest,segment}
+#       counter, packets dropped by the packet-rate police filter (preference 5)
+#       on the ingress of the VM's tap device. Needs no address. A stopped VM,
+#       or a tap without that filter, produces no series.
+#   fleet_pve_tenant_packet_limit_active{vmid,guest,segment}
+#       gauge, 1 when that filter is on the tap and 0 when it is not, for every
+#       RUNNING VM carrying both tags tenant and lease (never a work VM, never a
+#       stopped one). A hot NIC update in Proxmox deletes the whole ingress
+#       qdisc, so a running lease can lose its ceiling; this is what notices.
+#   fleet_pve_tenant_firewall_active{vmid,guest,segment}
+#       gauge, for every RUNNING tenant VM of either segment: 1 only when the
+#       hypervisor firewall is fully in force for it, else 0. All of: the
+#       datacenter firewall enabled (pvesh get /cluster/firewall/options, read
+#       once per run), firewall=1 on net0, enable: 1 in its .fw file and a GROUP
+#       rule for its segment's group (tenant for work, lease for lease), and the
+#       chain tap<vmid>i0-OUT. Turning the firewall off removes the GROUP chains
+#       and the ipfilter together, so the drop counters go quiet; this notices.
+#   fleet_pve_firewall_dropped_packets_total{chain,family,rule}
+#       counter, packets dropped by GROUP-tenant-IN/OUT and GROUP-lease-IN/OUT,
+#       read from iptables (family ipv4) and ip6tables (family ipv6).
+#       rule is private (the private ranges, outbound), private_in (the same
+#       match, inbound) or smtp (destination port 25). The private set is
+#       PVEFW-0-private-v4 and PVEFW-0-private-v6 respectively. A chain that
+#       does not exist yet produces no series for that family.
+# The tag and group names are fixed in the script, not variables.
 pve_guest_metrics_enabled: false
 
 pve_guest_metrics_dir: "{{ alloy_textfile_dir }}"

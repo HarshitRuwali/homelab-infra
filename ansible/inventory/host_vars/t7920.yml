@@ -13,3 +13,7 @@ dell_fan_metrics_enabled: true
 # fan back to the firmware once it cools. The firmware's own curve holds it
 # near 1000 RPM with the package at 65 to 71 C; see roles/dell_fan_boost.
 dell_fan_boost_enabled: true
+
+# What the datacenter firewall dropped, with the rule and the guest, in Loki.
+# Needs the alloy user in the adm group (it is: pve-firewall.log is root:adm 640).
+alloy_pve_firewall_log: true

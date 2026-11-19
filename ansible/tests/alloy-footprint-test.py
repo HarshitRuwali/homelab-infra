@@ -393,6 +393,21 @@ with tempfile.TemporaryDirectory() as tmp:
     mod.PVESH = str(fake)
     mod.PVE_NODES_DIR = str(tmpd / "pve")
     mod.socket.gethostname = lambda: "n1.example"
+    # The tenant collection runs too: fake its tools so nothing real is called
+    # and nothing needs root. No guest here is a tenant, so no group chain
+    # exists (iptables exits 1 with its "no chain" message) and tc, conntrack
+    # and the firewall directory are never asked.
+    for tool in ("iptables", "ip6tables"):
+        (tmpd / tool).write_text("#!/bin/sh\necho 'iptables: No chain/target/match by that name.' >&2\nexit 1\n")
+        (tmpd / tool).chmod(0o755)
+    for tool in ("tc", "conntrack"):
+        (tmpd / tool).write_text("#!/bin/sh\necho unexpected tenant tool call >&2\nexit 3\n")
+        (tmpd / tool).chmod(0o755)
+    (tmpd / "sys-net").mkdir()
+    (tmpd / "fw").mkdir()
+    mod.IPTABLES, mod.IP6TABLES = str(tmpd / "iptables"), str(tmpd / "ip6tables")
+    mod.TC, mod.CONNTRACK = str(tmpd / "tc"), str(tmpd / "conntrack")
+    mod.SYS_NET, mod.FW_DIR = str(tmpd / "sys-net"), str(tmpd / "fw")
     check(mod.main() == 0, "pve script failed on good fixtures")
     out = (tmpd / "out" / pve["pve_guest_metrics_file"]).read_text()
     check(calls.read_text().count("x") == 1, "pvesh must be called once, got %d" % calls.read_text().count("x"))
