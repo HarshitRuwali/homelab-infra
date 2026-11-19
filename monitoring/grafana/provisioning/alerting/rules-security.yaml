@@ -60,7 +60,7 @@ groups:
               queryType: instant
               expr: |
                 sum by (alert_signature_id, alert_signature, alert_severity, src_ip, dest_ip) (
-                  count_over_time({host="opnsense"} |= "event_type" | json
+                  count_over_time({job="suricata"} |= "event_type" | json
                     | event_type="alert"
                     | alert_severity=~"1|2"
                     | alert_signature_id!~"2019102|2012811|2027757"

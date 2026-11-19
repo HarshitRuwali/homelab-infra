@@ -1,8 +1,9 @@
 ---
 # Names the per-guest network counters node_exporter already reports on a
-# Proxmox VE node, through the textfile collector Alloy already reads. See
-# defaults/main.yml for what it writes and why, and roles/smart_metrics for the
-# pattern it mirrors task for task.
+# Proxmox VE node, and counts what the tenant VMs hold open, what their packet
+# rate limit and the tenant firewall groups drop, through the textfile
+# collector Alloy already reads. See defaults/main.yml for what it writes and
+# why, and roles/smart_metrics for the pattern it mirrors task for task.
 
 - name: Report the resolved guest-metrics shape
   ansible.builtin.debug:
@@ -26,6 +27,28 @@
           pve_guest_metrics_enabled is true for {{ inventory_hostname }}, but
           /usr/bin/pvesh does not exist, so it is not a Proxmox VE node. Enable
           the role only in the group that holds PVE hosts.
+
+    # The exporter streams `conntrack -L` for the tenant VMs, and any read that
+    # fails keeps the previous file and exits 1, so a host without the tool
+    # would go quietly stale from the first run. Fail the play here instead.
+    # The role does not install it: host packages are not ours to install. The
+    # switch is the only condition this role has; no monitor_role names a
+    # hypervisor.
+    - name: Look for conntrack
+      ansible.builtin.stat:
+        path: /usr/sbin/conntrack
+      register: pve_guest_metrics_conntrack
+
+    - name: Fail if conntrack is not installed
+      ansible.builtin.assert:
+        that: pve_guest_metrics_conntrack.stat.exists
+        fail_msg: >-
+          pve_guest_metrics_enabled is true for {{ inventory_hostname }}, but
+          /usr/sbin/conntrack does not exist. The guest metrics exporter
+          streams conntrack -L and, without it, fails on every run and keeps
+          its previous file, so every guest metric goes stale. Install the
+          conntrack package on the host (apt install conntrack). This role
+          does not install it.
 
     - name: Ensure the textfile collector directory exists
       ansible.builtin.file:

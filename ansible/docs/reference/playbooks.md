@@ -215,6 +215,19 @@ collection for SSH, sudo and system logs. Add application file inputs through
 `ossec.conf`; express local log inputs in that variable rather than editing the
 managed file. Manager-shared configuration should be reviewed separately.
 
+Rootcheck is disabled on LXC guests (`ansible_virtualization_type == 'lxc'`) and
+stays on for VMs and bare metal; see `wazuh_rootcheck_enabled`. LXC guests
+share the host's `/proc` and `/dev`, so rootcheck's `/dev` scan flags LXC's own
+files (rule 510, level 7) on every scan.
+
+The agent's `wazuh-logcollector` shows a large RSS on hosts with big journals
+(about 230 MiB with a 510 MB journal). That figure is almost entirely
+file-backed pages of the memory-mapped journal files (`RssFile`), which are
+shared page cache the kernel reclaims under pressure, not heap. The role
+collects `journald` unfiltered on every host, so there is nothing
+host-specific to tune. Capping `SystemMaxUse` in `journald.conf` is the lever
+if it matters.
+
 After rollout, check `/var/ossec/bin/agent_control -l` on the manager and verify
 a known SSH or sudo event in Wazuh. A running agent alone does not prove either
 enrollment or log collection. Existing agents may continue using their existing

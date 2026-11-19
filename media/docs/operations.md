@@ -60,6 +60,42 @@ In the qBittorrent WebUI, Options, Connection, the listening port should show
 the same number. If the line is missing, the key was created without NAT-PMP
 (Port Forwarding) enabled, or gluetun has not reached a P2P server yet.
 
+## Resource limits, logs and health
+
+Every service has a memory cap and rotated logs, set in `compose.yaml`. The host
+has no swap and shares its RAM with other stacks, so the caps keep one runaway
+container from taking everything. The defaults come from 7-day peaks with
+headroom (see the table in [Setup](setup.md#1-review-the-settings)); raise one in
+`MEDIA_DIR/.env` and run `./install.sh --apply` if a service grows past it. A
+container that exceeds its cap is killed and restarted by
+`restart: unless-stopped`; `docker inspect -f '{{.State.OOMKilled}}' <name>`
+tells you if that was the reason.
+
+Logs use the `json-file` driver capped at 3 files of 10 MB per container.
+
+`qbittorrent` and `plex-tunnel` have healthchecks, as `plex` and `gluetun` do:
+qBittorrent's login page answers on its WebUI port, and `cloudflared tunnel
+ready` reports a live connection to Cloudflare. `docker compose -p media ps`
+shows the state. Docker does not restart an unhealthy container; the state is
+there for you and for monitoring. The tunnel's metrics endpoint listens on
+`127.0.0.1` only (`PLEX_TUNNEL_METRICS_PORT`).
+
+The tunnel runs on the host network and binds that port explicitly, so cloudflared
+cannot fall back to another one. If something else on the VM already listens on
+it (default `20241`), `plex-tunnel` fails to start and restart-loops, and remote
+Plex is down. Check with `ss -ltn | grep 20241`. To change it, set
+`PLEX_TUNNEL_METRICS_PORT` to a free port in `.env` and run
+`docker compose -p media up -d plex-tunnel`.
+
+### Plex: transcoding and nightly maintenance
+
+The VM has no `/dev/dri` (no GPU passed through), so Plex has no hardware
+transcoding. Any transcode runs in software on the VM's vCPUs, and `compose.yaml`
+adds no `devices:` for it. Plex's own nightly maintenance (Butler: library scan,
+media analysis, preview thumbnails) runs from 02:00 to 05:00 in `TZ`
+(Asia/Kolkata) and uses about one core for roughly an hour. That load is
+expected. It is not a transcode, and it is not a fault.
+
 ## Logs and status
 
 ```bash

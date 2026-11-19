@@ -7,12 +7,14 @@ How long data is kept, and the disk arithmetic that decided it.
 | Store | Setting | Where |
 |---|---|---|
 | Prometheus | `PROMETHEUS_RETENTION`, default `7d` | `.env` on the central node |
-| Loki | `LOKI_RETENTION_PERIOD`, default `720h` (30d) | `.env` on the central node; `retention_period` in `loki/loki-config.yml` for Compose |
+| Loki, direct LXC install | `LOKI_RETENTION_PERIOD`, default `720h` (30d) in `scripts/lxc-install.sh` | `.env` on the central node |
+| Loki, Docker Compose | `retention_period` in `loki/loki-config.yml`, committed as `720h` | the file itself; the Compose path does not read `LOKI_RETENTION_PERIOD` |
 | systemd journal (local) | `SystemMaxUse`, uncapped by default | `journald_system_max_use` per group |
 
 Prometheus was shortened from 30 days to 7. That was not a preference; it was
 arithmetic. Loki stays at 30 days because it is small: the live store holds
-about 355 MB, which fits the disk without trimming.
+about 355 MB, which fits the disk without trimming, and the tenant logs need
+the longer window ([below](#loki-retention-for-the-tenant-logs)).
 
 ## The measurement
 
@@ -56,20 +58,27 @@ box from 75% to 60% used.
 
 === "Loki"
 
+    Direct LXC install: set the value in `.env` on the central node, then
+    re-render the config. `lxc-update.sh` restarts Loki itself.
+
     ```bash
     # in .env on the central node (default 720h)
     LOKI_RETENTION_PERIOD=336h
     ```
 
-    Compose reads `retention_period` in `loki/loki-config.yml` instead.
-
     ```bash
     scripts/lxc-update.sh central --config-only
-    systemctl restart loki
     ```
 
+    A value already exported in the shell wins over `.env`, so unset it first
+    if the change does not appear in `/etc/loki/loki-config.yml`.
+
+    Docker Compose: edit `retention_period` under `limits_config` in
+    `loki/loki-config.yml` and restart with `scripts/monitoring.sh central
+    restart`.
+
     Retention only takes effect if the compactor is running with
-    `retention_enabled: true`.
+    `retention_enabled: true`; both configs set it.
 
 === "Local journal"
 
@@ -93,6 +102,40 @@ box from 75% to 60% used.
     a buffer between a write and its shipment, plus enough history to make
     `journalctl` useful over SSH. **Central retention is what you actually
     query.**
+
+## Loki retention for the tenant logs
+
+The firewall's filter log, Unbound's query log, `pfstats`, Suricata's alerts
+and the Proxmox firewall log record much of what the work VMs and the leased
+VMs did, though not all of it: the wiring page lists
+[what is not covered](https://harshitruwali.github.io/homelab-infra/security/wiring/#what-is-not-covered).
+For a leased VM they are the main record there is. An abuse report, a complaint
+from the other end of a connection, or a dispute with the tenant usually
+arrives days or weeks after the traffic, and a 7 day default has deleted the
+evidence by then. Loki therefore keeps 30 days.
+
+| | Value |
+|---|---|
+| Default in `scripts/lxc-install.sh` and `loki/loki-config.yml` | `720h` (30 days) |
+| Live install | `720h`, from `LOKI_RETENTION_PERIOD` in `.env` on the central node |
+| Applied with | `scripts/lxc-update.sh central --config-only` |
+| Prometheus | unchanged, `7d` |
+
+**Disk cost.** Measured on the live store with the tenant streams included:
+about 355 MB on 2026-11-13 and 531 MB on 2026-11-19, while the 30 days fill
+(the fleet ingests roughly 85 MB a day before Loki compresses it). Check free
+space before raising retention further, and measure again once 30 days of
+tenant logs exist:
+
+```bash
+du -sh /var/lib/loki
+df -h /var/lib/loki
+```
+
+!!! note "Retention is not the ingest age limit"
+    `reject_old_samples_max_age: 168h` in the same config is a separate limit:
+    it refuses lines older than 7 days at the door, for example during a
+    backfill. Raising retention does not change it.
 
 ## Ingest limits
 
