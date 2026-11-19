@@ -5,7 +5,7 @@
 # Pulls registry images and rebuilds local images against current base images
 # for every Docker Compose project on this host, then reapplies its full
 # recorded configuration. Changed images or configuration recreate containers.
-# Reclaim unused image layers only after a successful run.
+# Reclaim unused image layers and old build cache only after a successful run.
 #
 # WHY COMPOSE AND NOT WATCHTOWER
 # Watchtower recreates a container from the *running* container's config. That
@@ -37,6 +37,7 @@ PRUNE="{{ docker_update_prune | ternary('yes', 'no') }}"
 HEALTH_WAIT={{ docker_update_health_wait_seconds }}
 RETRY_DELAY={{ docker_update_pull_retry_delay_seconds }}
 MINOR_STEP_IMAGES="{{ docker_update_minor_step_images | join(' ') }}"
+BUILD_CACHE_MAX_AGE="{{ docker_update_build_cache_max_age }}"
 
 trap 'rm -f "$TMP_FILE"' EXIT
 
@@ -336,22 +337,56 @@ fi
 # Never `prune -a`. That deletes any image with no RUNNING container, which
 # includes the image of anything deliberately stopped, and turns a routine
 # cleanup into a multi-gigabyte re-download the next time you start it.
+#
+# Local image builds also leave BuildKit cache that no image prune touches.
+# `builder prune -f --filter until=AGE` removes only UNUSED cache entries older
+# than AGE; cache in use by a running build is kept. Never add `--all` or
+# `--keep-storage`-style options here.
 # ---------------------------------------------------------------------------
+
+# Bytes from a prune summary line. `docker image prune` prints
+# "Total reclaimed space: 0B"; BuildKit's `docker builder prune` prints
+# "Total:\t3.427GB". Docker's units are decimal (kB, MB, GB, TB).
+prune_bytes() {
+  printf '%s\n' "$1" | sed -E 's/^Total( reclaimed space)?:[[:space:]]*//' | awk '
+    /TB$/ {printf "%.0f", $0 * 1000000000000; exit}
+    /GB$/ {printf "%.0f", $0 * 1000000000; exit}
+    /MB$/ {printf "%.0f", $0 * 1000000; exit}
+    /kB$/ {printf "%.0f", $0 * 1000; exit}
+    /B$/  {printf "%.0f", $0; exit}
+    {print 0}'
+}
+
+# The summary line of a prune's output, or empty.
+prune_total_line() {
+  printf '%s\n' "$1" | grep -E '^Total( reclaimed space)?:' | tail -n 1 || true
+}
+
 reclaimed=0
 if [ "$PRUNE" = "yes" ] && [ "$failed" -eq 0 ]; then
+  prune_output=""
   if ! prune_output=$(docker image prune -f); then
     log "ERROR: image pruning failed"
     failed=1
   fi
-  reclaimed_raw=$(printf '%s\n' "$prune_output" | grep -oE 'Total reclaimed space: .*' || true)
+  reclaimed_raw=$(prune_total_line "$prune_output")
   log "${reclaimed_raw:-Total reclaimed space: 0B}"
   # Report bytes so the metric is aggregatable; parse the human string back.
-  reclaimed=$(echo "${reclaimed_raw#Total reclaimed space: }" | awk '
-    /GB$/ {printf "%d", $0 * 1000000000; exit}
-    /MB$/ {printf "%d", $0 * 1000000; exit}
-    /kB$/ {printf "%d", $0 * 1000; exit}
-    /B$/  {printf "%d", $0; exit}
-    {print 0}')
+  reclaimed=$(prune_bytes "$reclaimed_raw")
+  [ -n "$reclaimed" ] || reclaimed=0
+
+  if [ -n "$BUILD_CACHE_MAX_AGE" ]; then
+    cache_output=""
+    if ! cache_output=$(docker builder prune -f --filter "until=$BUILD_CACHE_MAX_AGE"); then
+      log "ERROR: build cache pruning failed"
+      failed=1
+    fi
+    cache_raw=$(prune_total_line "$cache_output")
+    log "build cache: ${cache_raw:-Total reclaimed space: 0B}"
+    cache_bytes=$(prune_bytes "$cache_raw")
+    [ -n "$cache_bytes" ] || cache_bytes=0
+    reclaimed=$((reclaimed + cache_bytes))
+  fi
 fi
 [ -n "$reclaimed" ] || reclaimed=0
 
@@ -386,7 +421,7 @@ finished=$(date +%s)
   echo "# TYPE fleet_docker_containers_recreated gauge"
   echo "fleet_docker_containers_recreated $containers_recreated"
 
-  echo "# HELP fleet_docker_image_bytes_reclaimed Bytes freed by pruning dangling images."
+  echo "# HELP fleet_docker_image_bytes_reclaimed Bytes freed by pruning dangling images and old build cache."
   echo "# TYPE fleet_docker_image_bytes_reclaimed gauge"
   echo "fleet_docker_image_bytes_reclaimed $reclaimed"
 
