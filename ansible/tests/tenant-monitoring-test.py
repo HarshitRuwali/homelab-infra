@@ -498,14 +498,17 @@ for p in panels.values():
         fail(f"dashboards.md does not list the panel {p.get('title')!r}")
 
 retention = read(MON / "docs" / "operations" / "retention.md")
-for needle in ("Default in `scripts/lxc-install.sh` | `168h`",
-               "Live install | `720h` (30 days), set by `LOKI_RETENTION_PERIOD`",
-               "about 185 MB", "## Loki retention for the tenant logs"):
+for needle in ("Default in `scripts/lxc-install.sh` and `loki/loki-config.yml` | `720h` (30 days)",
+               "Live install | `720h`, from `LOKI_RETENTION_PERIOD`",
+               "## Loki retention for the tenant logs"):
     if needle not in retention:
         fail(f"retention.md no longer mentions {needle}")
+# The tenant logs need 30 days: the default on both install paths must keep it.
 install_sh = read(MON / "scripts" / "lxc-install.sh")
-if "${LOKI_RETENTION_PERIOD:-168h}" not in install_sh:
-    fail("scripts/lxc-install.sh no longer defaults LOKI_RETENTION_PERIOD to 168h, which retention.md states")
+if "${LOKI_RETENTION_PERIOD:-720h}" not in install_sh:
+    fail("scripts/lxc-install.sh no longer defaults LOKI_RETENTION_PERIOD to 720h, which retention.md states")
+if "retention_period: 720h" not in read(MON / "loki" / "loki-config.yml"):
+    fail("loki/loki-config.yml no longer keeps 720h, which retention.md states")
 
 metrics_md = read(MON / "docs" / "reference" / "metrics.md")
 METRIC_LABELS = {

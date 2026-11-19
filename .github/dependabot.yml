@@ -1,0 +1,24 @@
+# Dependabot version updates.
+#
+# monitoring/: the Compose files pin image tags to the versions the apt
+# deployment runs (docs/getting-started/install.md). Dependabot opens one PR per
+# new minor or patch release so the pins never go stale unnoticed; major
+# versions are not proposed (they change defaults this stack depends on, such
+# as Prometheus 3.x) and are upgraded on purpose.
+#
+# PR titles must pass .github/scripts/conventional-commits.sh: the scope has to
+# be a registered module, so the prefix is set here (Dependabot's own "deps"
+# scope would be rejected), and updates are not grouped (a group's PR is titled
+# by the group name instead of the prefix).
+version: 2
+updates:
+  - package-ecosystem: "docker-compose"
+    directory: "/monitoring"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "fix(monitoring)"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+    open-pull-requests-limit: 5
