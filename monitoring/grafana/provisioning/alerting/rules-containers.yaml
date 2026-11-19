@@ -142,11 +142,15 @@ groups:
               editorMode: code
               instant: true
               range: false
+              # Aggregate each side by (host, name) BEFORE the join: a `--rm`
+              # container re-run under the same name leaves two series for
+              # that name for ~5 min (staleness), and an unaggregated
+              # `/ on (host, name)` then fails with "many-to-one matching".
               expr: |
-                100 * max by (host, name) (
-                  container_memory_working_set_bytes{name!=""}
+                100 * (
+                  max by (host, name) (container_memory_working_set_bytes{name!=""})
                     / on (host, name)
-                  (container_spec_memory_limit_bytes{name!=""} > 0)
+                  max by (host, name) (container_spec_memory_limit_bytes{name!=""} > 0)
                 )
           - refId: B
             datasourceUid: __expr__
@@ -338,8 +342,15 @@ groups:
       # Require fresh host metrics too. A remote-write gap makes every
       # container on that host appear to disappear at once; Host Down covers
       # that case and the individual container alerts would only add noise.
-      # s3-backup-runner-* is an intentionally short-lived `docker run --rm`
-      # helper; it must vanish after each successful backup.
+      # Only Compose-managed containers are watched. Every long-running service
+      # in the fleet is a Compose project; everything else is a one-off
+      # `docker run` that is meant to exit: the s3-backup runner and its
+      # restore-drill databases (drill-*), Iris training and test runs on
+      # ubuntu-ai (iris-wake-*, iris-mww-*, pixl-*), and auto-named throwaways.
+      # Excluding those by name never kept up: in the two weeks to 2026-11-08
+      # they were all 69 of the 69 firings of this rule. A new long-running
+      # service that is not a Compose project is invisible here, so start it
+      # with Compose.
       - uid: fleet-container-disappeared
         title: Container Disappeared
         condition: C
@@ -363,7 +374,7 @@ groups:
               expr: |
                 (
                   time() - max by (host, name) (
-                    max_over_time(container_last_seen{name!="",name!~"s3-backup-runner-.*",role!="workstation"}[1h])
+                    max_over_time(container_last_seen{name!="",role!="workstation",container_label_com_docker_compose_project!=""}[1h])
                   )
                 )
                 and on (host) max by (host) (up{job=~"integrations/unix|host-unix"} == 1)
