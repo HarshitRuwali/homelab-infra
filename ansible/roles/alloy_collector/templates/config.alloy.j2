@@ -56,7 +56,7 @@ prometheus.exporter.unix "host" {
 
   // Collectors that only repeat what the hypervisor already exports (an LXC
   // guest sees the host's sensors, ZFS, softnet and per-CPU stats), or that
-  // fail in a container. See alloy_unix_disable_collectors in the role
+  // fail on this host. See alloy_unix_disable_collectors in the role
   // defaults.
   disable_collectors = [{{ alloy_unix_disable_collectors | map('to_json') | join(', ') }}]
 {% endif %}
