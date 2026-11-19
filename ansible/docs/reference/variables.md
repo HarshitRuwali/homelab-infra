@@ -357,5 +357,6 @@ ansible-vault edit inventory/group_vars/all/vault.yml
 | `wazuh_log_sources` | journald | List of `location` / `log_format` mappings |
 | `wazuh_fim_directories` | `/etc`, `/bin`, `/sbin`, `/usr/bin`, `/usr/sbin`, `/root/.ssh` | Paths file integrity monitoring watches in real time |
 | `wazuh_fim_ignore` | Wazuh's stock ignores plus the Proxmox volatile files | List of `type` (`path` or `sregex`) / `value` entries FIM skips. `sregex` is OSSEC's simple regex: only `^`, `$` and `\|`, and `.` is a literal dot |
+| `wazuh_rootcheck_enabled` | `true`, `false` on LXC guests | Wazuh rootcheck. Off on LXC because it raises about 400 false level 7 alerts a day from LXC's own `/dev` and `/proc`; override per host or group |
 
 See [Wazuh rollout prerequisites](playbooks.md#wazuh-agents).

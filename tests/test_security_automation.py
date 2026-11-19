@@ -262,7 +262,7 @@ class AgentTemplateTests(unittest.TestCase):
             inventory_hostname='agent', wazuh_agent_group='homelab',
             wazuh_manager_ca_path='/var/ossec/etc/manager-ca.pem',
             wazuh_enrollment_password_path='/var/ossec/etc/enrollment.pass',
-            wazuh_fim_directories=['/etc'],
+            wazuh_rootcheck_enabled=True, wazuh_fim_directories=['/etc'],
             wazuh_fim_ignore=[{'type': 'path', 'value': '/etc/mtab'},
                               {'type': 'sregex', 'value': '^/etc/pve/priv/lock/|^/etc/pve/.|lrm_status$'}],
             wazuh_log_sources=[{'location': 'journald', 'log_format': 'journald'},
@@ -283,7 +283,7 @@ class AgentTemplateTests(unittest.TestCase):
             inventory_hostname='agent', wazuh_agent_group='homelab',
             wazuh_manager_ca_path='/var/ossec/etc/manager-ca.pem',
             wazuh_enrollment_password_path='/var/ossec/etc/enrollment.pass',
-            wazuh_fim_directories=defaults['wazuh_fim_directories'],
+            wazuh_rootcheck_enabled=True, wazuh_fim_directories=defaults['wazuh_fim_directories'],
             wazuh_fim_ignore=defaults['wazuh_fim_ignore'],
             wazuh_log_sources=defaults['wazuh_log_sources'])
         ignores = ET.fromstring(rendered).findall('syscheck/ignore')
@@ -298,6 +298,125 @@ class AgentTemplateTests(unittest.TestCase):
         # OSSEC sregex has no character classes or groups; one here would
         # silently never match.
         self.assertNotRegex(pve[0], r'[\[\]()+*?]')
+
+
+class RootcheckTemplateTests(unittest.TestCase):
+    def render(self, **extra):
+        environment = jinja2.Environment(undefined=jinja2.StrictUndefined)
+        template = environment.from_string((ROOT / 'ansible/roles/wazuh_agent/templates/ossec.conf.j2').read_text())
+        values = dict(wazuh_manager_address='manager.example',
+            wazuh_manager_event_port=1514, wazuh_manager_enrollment_port=1515,
+            inventory_hostname='agent', wazuh_agent_group='homelab',
+            wazuh_manager_ca_path='/var/ossec/etc/manager-ca.pem',
+            wazuh_enrollment_password_path='/var/ossec/etc/enrollment.pass',
+            wazuh_fim_directories=['/etc'], wazuh_fim_ignore=[],
+            wazuh_log_sources=[{'location': 'journald', 'log_format': 'journald'}])
+        values.update(extra)
+        return ET.fromstring(template.render(**values)).findtext('rootcheck/disabled')
+
+    def default_enabled(self, virtualization_type):
+        defaults = yaml.safe_load((ROOT / 'ansible/roles/wazuh_agent/defaults/main.yml').read_text())
+        environment = jinja2.Environment(undefined=jinja2.Undefined)
+        facts = {} if virtualization_type is None else {'ansible_virtualization_type': virtualization_type}
+        return environment.from_string(defaults['wazuh_rootcheck_enabled']).render(**facts)
+
+    def test_rootcheck_follows_the_flag(self):
+        self.assertEqual(self.render(wazuh_rootcheck_enabled=True), 'no')
+        self.assertEqual(self.render(wazuh_rootcheck_enabled=False), 'yes')
+        # -e wazuh_rootcheck_enabled=false arrives as a string.
+        self.assertEqual(self.render(wazuh_rootcheck_enabled='false'), 'yes')
+        self.assertEqual(self.render(wazuh_rootcheck_enabled='True'), 'no')
+
+    def test_default_disables_rootcheck_on_lxc_only(self):
+        self.assertEqual(self.default_enabled('lxc'), 'False')
+        for kind in ('kvm', 'docker', 'NA', '', None):
+            with self.subTest(kind=kind):
+                self.assertEqual(self.default_enabled(kind), 'True')
+
+
+class WazuhCleanupScriptTests(unittest.TestCase):
+    def script(self, directory):
+        text = (ROOT / 'security/install/configure-sec-wazuh-cleanup.sh').read_text()
+        marker = "write_file /usr/local/sbin/wazuh-vd-tmp-cleanup <<'EOF'\n"
+        body = text.split(marker)[1].split('\nEOF\n')[0]
+        path = directory / 'cleanup.sh'
+        path.write_text(body + '\n')
+        return path
+
+    def age(self, path, days):
+        stamp = path.stat().st_mtime - days * 86400
+        os.utime(path, (stamp, stamp))
+
+    def run_script(self, directory, *args, **env):
+        environment = dict(os.environ, TMP=str(directory / 'tmp'), ALERTS=str(directory / 'alerts'), **env)
+        return subprocess.run(['bash', str(self.script(directory)), *args],
+                              env=environment, text=True, capture_output=True)
+
+    def layout(self, directory):
+        alerts = directory / 'alerts' / '2026' / 'Jul'
+        recent = directory / 'alerts' / '2026' / 'Nov'
+        alerts.mkdir(parents=True); recent.mkdir(parents=True)
+        (directory / 'tmp' / 'dl').mkdir(parents=True)
+        files = {'old_json': alerts / 'ossec-alerts-01.json.gz', 'old_log': alerts / 'ossec-alerts-01.log.gz',
+                 'new': recent / 'ossec-alerts-10.json.gz', 'live': directory / 'alerts' / 'alerts.json',
+                 'other': alerts / 'keep.txt'}
+        for path in files.values():
+            path.write_text('x')
+        for key in ('old_json', 'old_log', 'other'):
+            self.age(files[key], 120)
+        self.age(files['new'], 10)
+        self.age(files['live'], 500)
+        return files
+
+    def test_prunes_only_old_alert_archives(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            files = self.layout(directory)
+            result = self.run_script(directory)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(files['old_json'].exists())
+            self.assertFalse(files['old_log'].exists())
+            self.assertTrue(files['new'].exists())
+            self.assertTrue(files['live'].exists())
+            self.assertTrue(files['other'].exists())
+            self.assertIn('removed 2 file(s) older than 90 days', result.stdout)
+
+    def test_dry_run_deletes_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            files = self.layout(directory)
+            result = self.run_script(directory, '--dry-run')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(all(path.exists() for path in files.values()))
+            self.assertIn('would remove 2 file(s)', result.stdout)
+
+    def test_retention_is_configurable_and_zero_keeps_everything(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            files = self.layout(directory)
+            self.run_script(directory, ALERT_RETENTION_DAYS='5')
+            self.assertFalse(files['new'].exists())
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            files = self.layout(directory)
+            result = self.run_script(directory, ALERT_RETENTION_DAYS='0')
+            self.assertTrue(files['old_json'].exists())
+            self.assertIn('retention disabled', result.stdout)
+
+    def test_rejects_bad_arguments_and_values(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            self.layout(directory)
+            self.assertEqual(self.run_script(directory, '--bogus').returncode, 2)
+            self.assertEqual(self.run_script(directory, ALERT_RETENTION_DAYS='x').returncode, 2)
+
+
+class WazuhDiskSpecTests(unittest.TestCase):
+    def test_wazuh_guest_disk_matches_docs(self):
+        script = (ROOT / 'security/provision-security-stack.sh').read_text()
+        self.assertIn('"sec-wazuh:vm:110:4:8192:40:ssd:trusted"', script)
+        reference = (ROOT / 'security/docs/reference/index.md').read_text()
+        self.assertIn('| `sec-wazuh` | VM | 110 | 4 | 8 GB | 40 GB |', reference)
 
 
 class DownloadTests(unittest.TestCase):
