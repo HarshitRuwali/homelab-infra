@@ -21,6 +21,8 @@ For how variable precedence works at all, see
 | `alloy_journal_max_age` | `12h` | lower to `1h` on hosts with huge journals |
 | `alloy_enable_docker` | `auto` | `auto` stats `/var/run/docker.sock` |
 | `alloy_enable_process` | `false` | per-process metrics; **opt-in on cardinality grounds** |
+| `alloy_process_keep_regex` | see file | the per-process metric names kept where `alloy_enable_process` is on; empty keeps all. The default keeps what the Host processes dashboard reads |
+| `alloy_process_drop_memtypes` | `virtual\|swapped\|proportionalResident\|proportionalSwapped` | `memtype` values of `namedprocess_namegroup_memory_bytes` dropped; empty keeps all |
 | `alloy_syslog_listener_port` | `""` | empty means no listener; `5514` in `group_vars/central` for the firewall's syslog (Suricata, filter log, resolver log, `pfstats`; any other program name is stored as `job="firewall-other"`) |
 | `alloy_syslog_drop_filterlog_rules` | `[]` | filterlog rule labels dropped on arrival at the listener, on one interface only (the next row); empty keeps everything; `group_vars/central` lists OPNsense's default deny |
 | `alloy_syslog_drop_filterlog_iface` | `vtnet0` | the interface the drop list applies to, as written in field 5 of a `filterlog` line: the firewall's WAN; must not be empty |
@@ -31,6 +33,44 @@ For how variable precedence works at all, see
 | `alloy_systemd_unit_exclude` | see file | |
 | `journald_system_max_use` | `""` | empty leaves journald's own default |
 | `collector_basic_auth_required` | `true` | `false` on the central node |
+| `alloy_gomemlimit_mib` | `auto` | Go memory limit in MiB: `auto` derives it from the host's memory, `0` turns it off (and removes the drop-in), a number fixes it |
+| `alloy_gomemlimit_percent` | `12` | share of host memory used by `auto` |
+| `alloy_gomemlimit_min_mib` | `96` | floor for `auto`, above the largest small-host heap measured |
+| `alloy_gomemlimit_max_mib` | `256` | ceiling for `auto` |
+| `alloy_memory_high_percent` | `150` | systemd `MemoryHigh` as a percentage of the limit; soft, never `MemoryMax` |
+| `alloy_lxc_disabled_collectors` | see file | unix-exporter collectors an LXC guest does not run, because the hypervisor already exports them |
+| `alloy_unix_disable_collectors` | the list above for hosts in the `lxc` group, else `[]` | the collectors actually disabled on this host; override per host |
+| `alloy_unix_drop_metrics_regex` | thermal-throttle counters for `lxc` hosts, else `""` | metric names dropped from the host-unix job |
+| `alloy_self_metrics_keep_regex` | see file | the Alloy self-metric families kept (`job="alloy"`); empty keeps all. Histogram buckets are always dropped when this is set |
+| `alloy_cadvisor_disabled_metrics` | see file | cAdvisor metric groups switched off; replaces Alloy's own default list, so it repeats it |
+| `alloy_cadvisor_drop_metrics_regex` | see file | cAdvisor families dropped after collection; empty disables |
+| `alloy_loki_max_entry_age` | `160h` | Docker log lines older than this are dropped before sending, just inside Loki's 168h limit; empty disables |
+
+!!! info "The memory limit and what it costs"
+    Without a limit Alloy's Go runtime kept 126 to 460 MiB resident per host
+    against 55 to 100 MiB of live heap (184 MiB on `cloud-services`). On the
+    same binary and config, `GOMEMLIMIT=60MiB` took resident anonymous memory
+    from 96 MiB to 52 MiB for about 1% of one core more CPU. The limit is soft:
+    over it, the runtime collects more often rather than failing. The drop-in
+    `/etc/systemd/system/alloy.service.d/20-memory.conf` adds `MemoryHigh`,
+    which throttles and reclaims but never kills. The value is read from
+    `/proc/meminfo` on the host, so no fact gathering is needed; inside an LXC
+    that is the container's own limit.
+
+!!! info "What an LXC guest does not export"
+    A guest shares the hypervisor's kernel, so ZFS, softnet, schedstat,
+    cpufreq, hwmon, disk and similar collectors report the **hypervisor's**
+    values, identical on every guest and already exported by the hypervisor.
+    Hosts in the `lxc` inventory group turn those collectors off. Dashboards
+    read `node_hwmon_*` only for hypervisor and Raspberry Pi hosts and
+    `node_disk_*` only on the hypervisor dashboard. To get a collector back on
+    one guest, set `alloy_unix_disable_collectors` in its `host_vars` without it.
+
+!!! note "Series that are never sent"
+    The host-unix job drops `node_systemd_unit_state` for the `activating` and
+    `deactivating` states (`active`, `inactive` and `failed` are queried), and
+    the systemd collector no longer emits `node_systemd_unit_start_time_seconds`
+    or `node_systemd_unit_tasks_*`. `node_systemd_service_restart_total` stays.
 
 !!! warning "`alloy_enable_process` is off by default for a measured reason"
     It emits about **1000 series per host** (measured on `ubuntu-dev`: 47
@@ -234,7 +274,10 @@ node_exporter on a Proxmox VE node already reports every guest NIC, because
 each one has a host-side device: `tap<vmid>i<n>` for a VM, `veth<vmid>i<n>` for
 a container. This role writes `fleet_pve_guest_nic_info`, the join key that
 names those counters, for the Guest Traffic dashboard. The same script also
-reports on the tenant VMs. The metric reference is in the monitoring docs, under
+reports on the tenant VMs. The guest list is one `pvesh` call; each guest's
+config is read from its file under `/etc/pve/nodes/<node>/`, because starting
+`pvesh` once per guest cost about 20 seconds of CPU per run. The metric
+reference is in the monitoring docs, under
 [Proxmox guest NICs](https://harshitruwali.github.io/homelab-infra/monitoring/reference/metrics/#proxmox-guest-nics).
 
 ### What it writes

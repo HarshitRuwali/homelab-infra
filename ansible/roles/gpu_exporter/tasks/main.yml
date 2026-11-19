@@ -39,6 +39,12 @@
 - name: Install the GPU exporter
   when: gpu_exporter_available | bool
   block:
+    # The playbooks gather no facts up front; only this host needs one.
+    - name: Gather the architecture fact
+      ansible.builtin.setup:
+        gather_subset:
+          - min
+
     - name: Map Ansible architecture to the exporter's release arch
       ansible.builtin.set_fact:
         gpu_exporter_arch: "{{ {'x86_64': 'amd64', 'aarch64': 'arm64'}[ansible_architecture] | default('') }}"

@@ -26,12 +26,38 @@
         else (alloy_enable_docker | bool)
       }}
 
+# --- Memory ceiling ------------------------------------------------------
+# Read /proc/meminfo rather than the memory fact so the play needs no fact
+# gathering. Inside an LXC it is the container's own limit (lxcfs).
+# `check_mode: false` because it is a read-only probe that the rendered
+# GOMEMLIMIT below depends on; skipped under --check it would render 0 and
+# show a bogus diff.
+- name: Read the memory this host can use
+  ansible.builtin.command: awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo
+  register: alloy_memtotal
+  changed_when: false
+  check_mode: false
+  when: (alloy_gomemlimit_mib | string) == 'auto'
+
+- name: Resolve the Alloy memory limit
+  ansible.builtin.set_fact:
+    alloy_gomemlimit_effective_mib: >-
+      {{
+        ([[(alloy_memtotal.stdout | int * alloy_gomemlimit_percent | int // 100),
+           alloy_gomemlimit_min_mib | int] | max,
+          alloy_gomemlimit_max_mib | int] | min)
+        if (alloy_gomemlimit_mib | string) == 'auto'
+        else (alloy_gomemlimit_mib | int)
+      }}
+
 - name: Report the resolved collector shape
   ansible.builtin.debug:
     msg: >-
       {{ inventory_hostname }}: role={{ monitor_role }}
       docker={{ alloy_docker_effective }}
       journal_max_age={{ alloy_journal_max_age }}
+      gomemlimit_mib={{ alloy_gomemlimit_effective_mib }}
+      unix_collectors_disabled={{ alloy_unix_disable_collectors | length }}
 
 # --- Directories ---------------------------------------------------------
 # /etc/alloy is DELIBERATELY ABSENT from this list. The alloy package's
@@ -55,8 +81,8 @@
     mode: "0755"
   loop:
     - "{{ alloy_textfile_dir }}"
-    # Holds the cAdvisor root drop-in below. Created unconditionally so the
-    # "remove it again" task has somewhere to look on non-Docker hosts.
+    # Holds the cAdvisor root drop-in and the memory drop-in below. Created
+    # unconditionally so the "remove it again" tasks have somewhere to look.
     - /etc/systemd/system/alloy.service.d
 
 # --- Permissions ---------------------------------------------------------
@@ -132,6 +158,35 @@
     path: /etc/systemd/system/alloy.service.d/10-cadvisor-root.conf
     state: absent
   when: not (alloy_docker_effective | bool)
+  notify: Restart alloy
+
+# --- Memory backstop -----------------------------------------------------
+# MemoryHigh only: the kernel throttles and reclaims the unit above it, it
+# never kills it. A collector that gets OOM-killed is a monitoring gap, a
+# collector that runs a little slowly is not, so there is no MemoryMax.
+- name: Cap Alloy memory softly with MemoryHigh
+  ansible.builtin.copy:
+    content: |
+      # Managed by ansible/roles/alloy_collector.
+      #
+      # Soft ceiling a little above GOMEMLIMIT ({{ alloy_gomemlimit_effective_mib }}MiB, set in
+      # {{ alloy_env_path }}). The kernel reclaims and throttles above it; it
+      # never kills the unit. To change it: alloy_gomemlimit_mib and
+      # alloy_memory_high_percent in the role defaults.
+      [Service]
+      MemoryHigh={{ (alloy_gomemlimit_effective_mib | int * alloy_memory_high_percent | int // 100) }}M
+    dest: /etc/systemd/system/alloy.service.d/20-memory.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: alloy_gomemlimit_effective_mib | int > 0
+  notify: Restart alloy
+
+- name: Remove the memory drop-in when the limit is off
+  ansible.builtin.file:
+    path: /etc/systemd/system/alloy.service.d/20-memory.conf
+    state: absent
+  when: alloy_gomemlimit_effective_mib | int == 0
   notify: Restart alloy
 
 # Alloy's WAL and storage path are created by the packaged unit as the alloy

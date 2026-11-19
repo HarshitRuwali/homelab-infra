@@ -17,3 +17,9 @@ dell_fan_boost_enabled: true
 # What the datacenter firewall dropped, with the rule and the guest, in Loki.
 # Needs the alloy user in the adm group (it is: pve-firewall.log is root:adm 640).
 alloy_pve_firewall_log: true
+
+# The thermal_zone collector fails on every scrape here ("collector failed ...
+# no data available", an error line every 15 s, 5,760 a day in the journal and
+# Loki). Nothing reads node_thermal_zone_*: CPU and board temperatures come
+# from hwmon (node_hwmon_temp_celsius), which stays on.
+alloy_unix_disable_collectors: [thermal_zone]
