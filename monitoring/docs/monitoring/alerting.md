@@ -172,9 +172,9 @@ inventory, so adding a host cannot leave a silent gap in down-detection.
     | `tenant-firewall-not-filtering` | critical | 10m | the Proxmox firewall is not filtering a tenant or lease VM (the gauge reads 0), so ipfilter, macfilter and the group rules do not apply to it |
     | `tenant-lease-suricata-alert` | critical | 0m | a **severity 1** Suricata alert on `vtnet5` in the last 10 min |
     | `tenant-lease-suricata-alerts` | warning | 0m | 3 or more Suricata alerts of any severity on `vtnet5` in the last 10 min; the git-over-SSH false positive lands here |
-    | `tenant-work-suricata-alerts` | warning | 0m | 5 or more Suricata alerts on `vtnet2` in the last 10 min |
+    | `tenant-work-suricata-alerts` | warning | 0m | 5 or more Suricata alerts on `vtnet2` in the last 10 min, the outbound SSH scan signature (sid 2003068) not counted |
     | `tenant-smtp-attempt` | critical | 0m | a tenant or lease VM tried port 25 and the Proxmox firewall dropped it (log, last 10 min) |
-    | `tenant-private-address-probing` | warning | 0m | over 20 **outbound** packets from tenant or lease VMs to private addresses dropped in 10 min (the OUT chains only), Tailscale's UDP 41641 excluded |
+    | `tenant-private-address-probing` | warning | 0m | over 20 **outbound** packets from tenant or lease VMs to private addresses dropped in 10 min (the OUT chains only), Tailscale's UDP 41641 (to and from that port) and MagicDNS `100.100.100.100` excluded |
     | `tenant-dns-nxdomain-storm` | warning | 0m | over 300 NXDOMAIN replies to work or lease clients in 5 min |
     | `tenant-new-flow-rate-high` | warning | 5m | over **3000** new flows a minute on the work and lease interfaces |
     | `tenant-conntrack-high` | warning | 10m | one tenant or lease VM holds over **20000** conntrack entries on the hypervisor |
@@ -448,10 +448,16 @@ uses `rate_counter`, which treats a drop as a reset, so a firewall reboot is not
 read as a hit and shows at most as one low sample.
 
 **Tailscale is excluded on purpose.** The work VM's Tailscale client probes
-LAN peers on UDP 41641 about every 5 seconds, which the Proxmox firewall
-drops and logs. `tenant-private-address-probing` and the Blocked Attempts
-panels filter out lines containing `DPT=41641 `, trailing space included, so
-the match ends at the end of the field.
+LAN peers on UDP 41641 about every 5 seconds, and from its own UDP 41641 it
+tries the private LAN endpoint a remote peer reports (a laptop on another
+network, any destination port). A Windows guest with Tailscale also sends
+some of its DNS queries for `100.100.100.100` (MagicDNS) out of the LAN
+adapter, about 25 every 10 minutes. The Proxmox firewall drops and logs all of
+it. `tenant-private-address-probing` and the Blocked Attempts panels filter
+out lines containing `DPT=41641 `, `PROTO=UDP SPT=41641 ` or
+`DST=100.100.100.100 `, trailing space included, so the match ends at the end
+of the field. A guest could hide a UDP
+probe behind source port 41641; the Proxmox log still has every line.
 
 **Proxmox rate-limits its own log.** Each log rule writes at most one line per
 second, so `tenant-smtp-attempt` and `tenant-private-address-probing` count

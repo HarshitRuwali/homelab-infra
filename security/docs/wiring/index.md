@@ -338,8 +338,11 @@ Proxmox rate-limits each log rule to one line per second, so a count of lines
 understates the packets. The exact counts are in Prometheus as
 `fleet_pve_firewall_dropped_packets_total`, from `ansible/roles/pve_guest_metrics`.
 The work VM's Tailscale client probes LAN peers on UDP 41641 about every 5
-seconds; those lines are benign, and a query about probing should exclude
-`DPT=41641 `.
+seconds, and from UDP 41641 it tries the private LAN endpoint a remote peer
+reports, and a Windows guest sends some MagicDNS queries for
+`100.100.100.100` out of its LAN adapter; those lines are benign, and a query
+about probing should exclude `DPT=41641 `, `PROTO=UDP SPT=41641 ` and
+`DST=100.100.100.100 `.
 
 ### NetFlow and Insight
 

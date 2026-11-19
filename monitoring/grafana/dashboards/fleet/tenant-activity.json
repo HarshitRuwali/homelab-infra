@@ -234,11 +234,11 @@
     },
     {
       "datasource": {"type": "loki", "uid": "loki"},
-      "description": "What the Proxmox firewall dropped, by rule chain: GROUP-tenant and GROUP-lease are the work and lease VM groups, in and out; a per-VM chain is a policy drop. Tailscale's UDP 41641 probing, benign and constant from the work VM, is left out. Proxmox logs at most one line a second per rule, so counts understate the attempts. An IN chain counts packets TO that VM, which another guest can cause, so only the OUT chains feed the alerts. Empty means nothing was dropped. Alerts: Tenant VM Probing Private Addresses and Tenant VM Attempted SMTP.",
+      "description": "What the Proxmox firewall dropped, by rule chain: GROUP-tenant and GROUP-lease are the work and lease VM groups, in and out; a per-VM chain is a policy drop. Tailscale's UDP 41641 probing (to port 41641, and from it to a remote peer's LAN endpoint) and MagicDNS queries to 100.100.100.100 that leave by the LAN adapter, benign and constant from the work VMs, are left out. Proxmox logs at most one line a second per rule, so counts understate the attempts. An IN chain counts packets TO that VM, which another guest can cause, so only the OUT chains feed the alerts. Empty means nothing was dropped. Alerts: Tenant VM Probing Private Addresses and Tenant VM Attempted SMTP.",
       "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1, "stacking": {"group": "A", "mode": "normal"}}}, "overrides": []},
       "gridPos": {"h": 8, "w": 10, "x": 0, "y": 53},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum by (chain) (count_over_time({job=\"pve-firewall\"} != \"DPT=41641 \" [$__auto]))", "refId": "A", "queryType": "range", "legendFormat": "{{chain}}"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "sum by (chain) (count_over_time({job=\"pve-firewall\"} != \"DPT=41641 \" != \"PROTO=UDP SPT=41641 \" != \"DST=100.100.100.100 \" [$__auto]))", "refId": "A", "queryType": "range", "legendFormat": "{{chain}}"}],
       "title": "Blocked Attempts by Chain",
       "type": "timeseries",
       "id": 17
@@ -249,7 +249,7 @@
       "fieldConfig": {"defaults": {"custom": {"align": "auto", "cellOptions": {"type": "auto"}}}, "overrides": []},
       "gridPos": {"h": 8, "w": 8, "x": 10, "y": 53},
       "options": {"showHeader": true, "sortBy": [{"desc": true, "displayName": "Drops"}]},
-      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "topk(20, sum by (chain, vmid) (count_over_time({job=\"pve-firewall\"} != \"DPT=41641 \" [$__range])))", "refId": "A", "queryType": "instant"}],
+      "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "editorMode": "code", "expr": "topk(20, sum by (chain, vmid) (count_over_time({job=\"pve-firewall\"} != \"DPT=41641 \" != \"PROTO=UDP SPT=41641 \" != \"DST=100.100.100.100 \" [$__range])))", "refId": "A", "queryType": "instant"}],
       "title": "Blocked Attempts by Chain and VM",
       "type": "table",
       "transformations": [{"id": "labelsToFields", "options": {"mode": "columns"}}, {"id": "merge", "options": {}}, {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"chain": 0, "vmid": 1, "Value": 2}, "renameByName": {"chain": "Chain", "vmid": "VMID", "Value": "Drops"}}}],

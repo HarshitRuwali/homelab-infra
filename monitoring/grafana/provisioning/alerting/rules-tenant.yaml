@@ -631,11 +631,13 @@ groups:
 
       # ---------------------------------------------------------------
       # Suricata on vtnet2, the work interface. Five or more in ten minutes,
-      # not any: a known false positive already exists here (ET SCAN Potential
-      # SSH Scan OUTBOUND, raised by git over SSH), and one stray alert on in-
-      # house VMs is not worth a message. If that one signature is the only
-      # thing firing, disable it by SID in OPNsense instead of raising this
-      # threshold.
+      # not any: one stray alert on in-house VMs is not worth a message. Sid
+      # 2003068 (ET SCAN Potential SSH Scan OUTBOUND) is left out: git over SSH
+      # and the work VM's SSH to its own servers raise it every day (it was
+      # every vtnet2 alert in the four days to 2026-11-13), and
+      # security-suricata-ssh-scan in rules-security.yaml already pages on it
+      # by volume, per source. The match includes the comma after the number
+      # so it cannot hit a longer SID.
       - uid: tenant-work-suricata-alerts
         title: Suricata Alerts on Work Segment
         condition: C
@@ -644,8 +646,8 @@ groups:
           severity: warning
           host: opnsense
         annotations:
-          summary: "Suricata raised 5 or more alerts on the work interface (vtnet2) in the last 10 minutes."
-          runbook: "Tenant Activity, Suricata Alerts by Interface and Signature. If it is only ET SCAN Potential SSH Scan OUTBOUND (git over SSH), disable that SID in OPNsense under Services > Intrusion Detection > Rules; anything else needs a look at the VM."
+          summary: "Suricata raised 5 or more alerts on the work interface (vtnet2) in the last 10 minutes (outbound SSH scan, sid 2003068, not counted)."
+          runbook: "Tenant Activity, Suricata Alerts by Interface and Signature, shows which signatures fired and from which VM; a signature that fires on ordinary work traffic every day belongs in the exclusion with a reason, anything else needs a look at the VM."
           __dashboardUid__: tenant-activity
           __panelId__: "13"
         noDataState: OK
@@ -659,7 +661,7 @@ groups:
               editorMode: code
               queryType: instant
               expr: |
-                sum(count_over_time({job="suricata"} |= "\"event_type\":\"alert\"" |~ "\"in_iface\":\"vtnet2\"" [10m]))
+                sum(count_over_time({job="suricata"} |= "\"event_type\":\"alert\"" |~ "\"in_iface\":\"vtnet2\"" != "\"signature_id\":2003068," [10m]))
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}
@@ -724,9 +726,16 @@ groups:
       # IN chain is traffic TO a VM, labelled with the receiving VM, and can
       # be caused by another guest (multicast, for one), so counting it would
       # name an innocent guest. The work VM's Tailscale client probes LAN
-      # peers on UDP 41641 about every five seconds, which is benign and would
-      # trip any threshold, so those lines are excluded (the trailing space in
-      # "DPT=41641 " ends the match at the end of the field). More than twenty
+      # peers on UDP 41641 about every five seconds, and from its own UDP
+      # 41641 it tries the private LAN endpoint a remote peer reports (a
+      # laptop on someone else's network, any port). A Windows guest with
+      # Tailscale also sends some DNS queries for 100.100.100.100 (MagicDNS)
+      # out of its LAN adapter, about 25 every ten minutes. All of it is benign
+      # and would trip any threshold, so lines with "DPT=41641 ", "PROTO=UDP
+      # SPT=41641 " or "DST=100.100.100.100 " are excluded (the trailing space
+      # ends the match at the end of the field). A guest could hide a UDP
+      # probe behind source port 41641; the raw pve-firewall stream in Loki
+      # still has every line. More than twenty
       # outbound drops in ten minutes is a deliberate probe, not a stray
       # packet. PVE rate-limits each log rule to a line a second, so this
       # understates the packets.
@@ -738,7 +747,7 @@ groups:
           severity: warning
           host: t7920
         annotations:
-          summary: "Tenant or lease VMs had more than 20 outbound packets to private addresses dropped in the last 10 minutes (Tailscale excluded)."
+          summary: "Tenant or lease VMs had more than 20 outbound packets to private addresses dropped in the last 10 minutes (Tailscale and MagicDNS excluded)."
           runbook: "Tenant Activity, Blocked Attempts by Chain and VM, gives the vmid of the guest that sent them; the pve-firewall log lines carry DST= and DPT= for where it was aiming. Stop the guest if it keeps going: qm stop <vmid>."
           __dashboardUid__: tenant-activity
           __panelId__: "17"
@@ -753,7 +762,7 @@ groups:
               editorMode: code
               queryType: instant
               expr: |
-                sum(count_over_time({job="pve-firewall", chain=~"GROUP-(tenant|lease)-OUT"} != "DPT=41641 " [10m]))
+                sum(count_over_time({job="pve-firewall", chain=~"GROUP-(tenant|lease)-OUT"} != "DPT=41641 " != "PROTO=UDP SPT=41641 " != "DST=100.100.100.100 " [10m]))
           - refId: B
             datasourceUid: __expr__
             model: {refId: B, type: reduce, expression: A, reducer: last}

@@ -82,7 +82,7 @@ VERBATIM = [
     r'sum(rate_counter({job="pfstats"} | regexp "vtnet5_ipkts=(?P<v>[0-9]+)" | unwrap v [5m]))',
     r'sum(rate_counter({job="pfstats"} | regexp "vtnet2_ipkts=(?P<v>[0-9]+)" | unwrap v [5m]))',
     r'sum(count_over_time({job="suricata"} |= "\"event_type\":\"alert\"" |~ "\"in_iface\":\"vtnet5\"" [10m]))',
-    r'sum(count_over_time({job="suricata"} |= "\"event_type\":\"alert\"" |~ "\"in_iface\":\"vtnet2\"" [10m]))',
+    r'sum(count_over_time({job="suricata"} |= "\"event_type\":\"alert\"" |~ "\"in_iface\":\"vtnet2\"" != "\"signature_id\":2003068," [10m]))',
     r'sum(count_over_time({job="pve-firewall", chain=~"GROUP-(tenant|lease)-OUT"} |= "DPT=25 " [10m]))',
     r'sum(count_over_time({job="unbound"} |= "NXDOMAIN" |~ " 10\\.10\\.(60|90)\\.[0-9]+ " [5m]))',
     r'sum(count_over_time({job="filterlog", iface=~"vtnet(2|5)", action="pass"} [1m]))',
@@ -97,7 +97,7 @@ SPEC = {
     "tenant-firewall-not-filtering": ("critical", "10m", "lt", 1, "OK",
                                       "min by (host, vmid, guest, segment) (fleet_pve_tenant_firewall_active)"),
     "tenant-private-address-probing": ("warning", "0m", "gt", 20, "OK",
-                                       'chain=~"GROUP-(tenant|lease)-OUT"} != "DPT=41641 " [10m]'),
+                                       'chain=~"GROUP-(tenant|lease)-OUT"} != "DPT=41641 " != "PROTO=UDP SPT=41641 " != "DST=100.100.100.100 " [10m]'),
     "tenant-guest-egress-high": ("warning", "0m", "gt", 10000000, "OK",
                                  'fleet_pve_guest_nic_info{bridge=~"vmbr(2|5)"}'),
     "tenant-smtp-dropped-counter": ("critical", "0m", "gt", 0, "OK",
@@ -111,7 +111,7 @@ SPEC = {
     "tenant-lease-suricata-alerts": ("warning", "0m", "gte", 3, "OK",
                                      r'|~ "\"in_iface\":\"vtnet5\"" [10m]'),
     "tenant-work-suricata-alerts": ("warning", "0m", "gte", 5, "OK",
-                                    r'|~ "\"in_iface\":\"vtnet2\"" [10m]'),
+                                    r'|~ "\"in_iface\":\"vtnet2\"" != "\"signature_id\":2003068," [10m]'),
 }
 
 errors = []
