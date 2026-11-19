@@ -147,7 +147,8 @@ inventory, so adding a host cannot leave a silent gap in down-detection.
 
     | uid | Severity | For | Fires when |
     |---|---|---|---|
-    | `security-suricata-alert` | ET severity 1 is critical, 2 is warning | 0m | Suricata on the firewall raised a severity 1 or 2 alert in the last 5 min, known-noise SIDs excluded, and outbound SSH to GitHub (sid 2003068) excluded |
+    | `security-suricata-alert` | ET severity 1 is critical, 2 is warning | 0m | Suricata on the firewall raised a severity 1 or 2 alert in the last 5 min, known-noise SIDs excluded, and the outbound SSH scan signature (sid 2003068) left to the next rule |
+    | `security-suricata-ssh-scan` | warning | 0m | one inside host tripped sid 2003068 (outbound SSH scan) 20 times, or towards 10 different destinations, in 15 min |
 
 ## Rule structure
 
@@ -341,6 +342,14 @@ discovery, the torrent client resolving `.tk` and `.to` trackers). They are
 listed with reasons in `rules-security.yaml`. Noise with no investigative
 value is better disabled in OPNsense by SID; exclude in the rule only what
 should stay visible on the dashboard.
+
+**Outbound SSH pages on volume.** Sid 2003068 fires on every fifth SYN to
+port 22 in 120 s, which git over SSH and SSH or Ansible from the dev and work
+VMs reach on a normal day. It has its own rule, `security-suricata-ssh-scan`,
+that pages once a source reaches 20 of those alerts or 10 different
+destinations in 15 minutes; a real scan or brute force gets there within
+minutes. Its message lists sources with their alert and destination counts,
+and every single hit stays on the dashboard.
 
 **Timing.** A new signature arrives about 30 seconds after the alert.
 Further flows of the **same** signature wait for the 15 minute group

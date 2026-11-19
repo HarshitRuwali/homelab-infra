@@ -107,9 +107,11 @@ Two signatures need attention on this network:
   **Rules**. It matches any `ssdp:all` discovery aimed at a home address, and
   Tailscale's port mapper on every sandbox guest probes the gateway that way
   every few minutes: about 3,000 alerts a day with nothing to investigate.
-- **sid 2003068** (`ET SCAN Potential SSH Scan OUTBOUND`) stays on. A `git push`
-  over SSH trips it, so the Matrix alert rule ignores it for GitHub's address
-  ranges only (`monitoring/grafana/provisioning/alerting/rules-security.yaml`).
+- **sid 2003068** (`ET SCAN Potential SSH Scan OUTBOUND`) stays on. Git over
+  SSH and ordinary SSH from the dev and work VMs trip it every day, so it has
+  its own alert rule that pages only on volume: one source with 20 alerts or
+  10 destinations in 15 minutes
+  (`monitoring/grafana/provisioning/alerting/rules-security.yaml`).
 
 On the central stack, Alloy accepts it:
 
