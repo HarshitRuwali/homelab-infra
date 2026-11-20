@@ -14,7 +14,7 @@ cannot run Alloy.
 | ER605 (home router) | SNMPv3 WAN counters | household internet totals | Prometheus `er605_*` | live, outside this repo |
 | ER605 web API | a poller like the TP-Link one | WAN totals, CPU per core, memory, every DHCP client and when it joined and left, its log | | planned |
 | Home LAN per-client usage | port mirror of the ER605 LAN ports to t7920 `nic0` | per-device bytes for every home device | | planned: needs one cable |
-| Wi-Fi access points | their web UIs | per-device signal and link rate | | planned: needs their passwords |
+| Wi-Fi access points | their web UIs | per-device signal and link rate | | planned: Archer C50 login verified, no clients at the time; Netgear R6220 was off |
 
 ## Network map
 
@@ -225,4 +225,8 @@ Planned:
    It must be the LAN side, because past the router's address translation
    every device looks like the router. When the access points move onto the
    switch, only the switch port needs mirroring.
-3. **Wi-Fi quality** from the two access points' web UIs.
+3. **Wi-Fi quality** from the two access points' web UIs. The Archer C50 (v6,
+   firmware build 211108) logs in with the `tplinkrouterc6u` library's
+   `TPLinkC50Client` and exposes a per-device association list with packet
+   counters, signal and rate; it had no clients when probed. Both access
+   points are powered on only when needed, so they would be polled when up.
