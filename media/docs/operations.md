@@ -62,7 +62,9 @@ the same number. If the line is missing, the key was created without NAT-PMP
 
 ## Resource limits, logs and health
 
-Every service has a memory cap and rotated logs, set in `compose.yaml`. The host
+Every service except Plex has a memory cap, and every service has rotated
+logs, set in `compose.yaml`. Plex is left uncapped because a transcode needs
+room and its peak is about 1 GiB, almost all page cache. The host
 has no swap and shares its RAM with other stacks, so the caps keep one runaway
 container from taking everything. The defaults come from 7-day peaks with
 headroom (see the table in [Setup](setup.md#1-review-the-settings)); raise one in
