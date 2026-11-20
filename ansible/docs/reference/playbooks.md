@@ -14,6 +14,7 @@ A reference list. For what a playbook or a role *is*, see
 | `update-metrics.yml` | `monitored` | nothing meaningful | the apt/reboot exporter, plus SMART and Proxmox guest names where `group_vars/metal` enables them |
 | `dell-fan-boost.yml` | `metal` | `fleet-dell-fan-boost`, if its script or unit changed; stopping it puts the fans back on automatic | a CPU fan the firmware runs too slowly; inert except where `dell_fan_boost_enabled` is set |
 | `tplink-router.yml` | `monitored` | `tplink-router-poll`, if its script, library or unit changed | per-client traffic from a TP-Link router; inert except where `tplink_router_poll_enabled` is set |
+| `opnsense-exporter.yml` | `monitored` | the `opnsense-exporter` container, when its compose file changed | OPNsense API metrics; inert except where `opnsense_exporter_enabled` is set |
 | `dashboards.yml` | `central` | only if the provider config changed | Grafana dashboards; prunes ones deleted from git |
 | `central-alerting.yml` | `central` | **`grafana-server`** | alert rules, Matrix relay |
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
@@ -146,7 +147,24 @@ poller host's address changes. A DHCP reservation for the poller host prevents
 that. The router does not send RFC 3164 syslog (no timestamp or hostname), so
 Alloy's syslog listener rejects it; that is why the poller receives it.
 
-### `unattended_upgrades`
+### `opnsense_exporter`
+
+`opnsense-exporter` (AthennaMind, pinned) in a container on a Docker host on
+the firewall's LAN, reading the OPNsense API with a read-only key. The central
+Alloy scrapes it (`alloy_extra_scrape_targets`).
+
+| Does | Note |
+|---|---|
+| Runs the container as `nobody`, read-only, every capability dropped | `docker compose` file in `/opt/opnsense-exporter` |
+| Mounts the API key and secret read-only from `/etc/opnsense-exporter` | placed by hand, owner 65534, mode 0400; the role checks and stops otherwise |
+| Disables the collectors for features the firewall does not run | `opnsense_exporter_disable` |
+| Waits for real API data before it reports success | per-interface byte counters, not `opnsense_up`, which is always 0 on OPNsense 26.7 |
+
+The firewall side is not Ansible: `files/opnsense/` holds the four scripts that
+created the API user, enabled node_exporter, opened port 9100 to monitor-lxc
+and turned on Unbound's extended statistics. How to run them:
+[Routers and firewall](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/routers/#opnsense).
+
 
 Applied by **group membership only**. Ends with a validation gate:
 `unattended-upgrade --dry-run --debug`, asserting no `Traceback` and no

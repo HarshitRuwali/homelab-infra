@@ -22,6 +22,7 @@ For how variable precedence works at all, see
 | `alloy_enable_docker` | `auto` | `auto` stats `/var/run/docker.sock` |
 | `alloy_enable_process` | `false` | per-process metrics; **opt-in on cardinality grounds** |
 | `alloy_syslog_listener_port` | `""` | empty means no listener; `5514` in `group_vars/central` for the firewall's Suricata output |
+| `alloy_extra_scrape_targets` | `[]` | devices that cannot run Alloy, scraped by this host: `job`, `address`, `host`, `role`, optional `instance`, `interval`, `timeout`. `group_vars/central` lists the firewall's two exporters |
 | `alloy_fs_mount_points_exclude` | see file | |
 | `alloy_fs_types_exclude` | see file | |
 | `alloy_systemd_unit_exclude` | see file | |
@@ -133,6 +134,22 @@ host has no `/proc/i8k` or no manual control on the chosen channel.
 
 The router's MAC and address are site details, so they live in the local
 inventory, not in `host_vars` in git.
+
+## OPNsense API exporter
+
+`roles/opnsense_exporter/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `opnsense_exporter_enabled` | `false` | **the switch**; set it in the host's inventory entry |
+| `opnsense_exporter_image` | `ghcr.io/athennamind/opnsense-exporter:0.0.19` | pinned; flags change between releases |
+| `opnsense_exporter_address` | `10.10.50.1` | the firewall's LAN address, where its API listens on port 80 |
+| `opnsense_exporter_protocol` | `http` | |
+| `opnsense_exporter_instance` | `opnsense` | the `opnsense_instance` label |
+| `opnsense_exporter_listen` | `""` | `address:port` on this host; required, and scraped by the central Alloy |
+| `opnsense_exporter_disable` | `[wireguard, openvpn, ipsec, carp, kea-dhcpv6]` | collectors for features the firewall does not run |
+| `opnsense_exporter_home` | `/opt/opnsense-exporter` | the compose file |
+| `opnsense_exporter_secret_dir` | `/etc/opnsense-exporter` | `api_key` and `api_secret`, owner 65534, mode 0400, placed by hand |
 
 ## Proxmox guest NIC names
 

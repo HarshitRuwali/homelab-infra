@@ -58,6 +58,7 @@ def check(cond, msg):
         errors.append(msg)
 
 
+sys.dont_write_bytecode = True  # no __pycache__ next to the role's files
 spec = importlib.util.spec_from_file_location("poller", SCRIPT)
 poller = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(poller)

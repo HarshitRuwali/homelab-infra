@@ -1,0 +1,16 @@
+---
+# OPNsense API metrics: opnsense-exporter in a container on a LAN Docker host.
+#
+#   ansible-playbook playbooks/opnsense-exporter.yml --limit ubuntu-dev --check --diff
+#   ansible-playbook playbooks/opnsense-exporter.yml --limit ubuntu-dev
+#
+# Inert unless the host's inventory entry sets opnsense_exporter_enabled and
+# opnsense_exporter_listen. The API key files are placed by hand, and the
+# firewall is prepared by the scripts in roles/opnsense_exporter/files/opnsense/.
+# The central Alloy scrapes it: alloy_extra_scrape_targets in group_vars/central.
+
+- name: Deploy the OPNsense API exporter
+  hosts: monitored
+  become: true
+  roles:
+    - opnsense_exporter

@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+# opnsense-exporter: OPNsense API metrics for Prometheus. The key and secret are
+# files placed by hand in {{ opnsense_exporter_secret_dir }}, mounted read-only.
+services:
+  opnsense-exporter:
+    image: {{ opnsense_exporter_image }}
+    container_name: opnsense-exporter
+    restart: unless-stopped
+    network_mode: host
+    user: "65534:65534"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      OPS_API_KEY_FILE: /run/secrets/api_key
+      OPS_API_SECRET_FILE: /run/secrets/api_secret
+    volumes:
+      - {{ opnsense_exporter_secret_dir }}/api_key:/run/secrets/api_key:ro
+      - {{ opnsense_exporter_secret_dir }}/api_secret:/run/secrets/api_secret:ro
+    command:
+      - --opnsense.protocol={{ opnsense_exporter_protocol }}
+      - --opnsense.address={{ opnsense_exporter_address }}
+      - --exporter.instance-label={{ opnsense_exporter_instance }}
+      - --web.listen-address={{ opnsense_exporter_listen }}
+{% for c in opnsense_exporter_disable %}
+      - --exporter.disable-{{ c }}
+{% endfor %}

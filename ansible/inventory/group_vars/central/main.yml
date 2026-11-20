@@ -16,6 +16,24 @@ alloy_enable_docker: false
 # roles/alloy_collector/defaults/main.yml for why the port is not 1514.
 alloy_syslog_listener_port: 5514
 
+# The firewall's metrics. OPNsense is FreeBSD and outside Ansible, so this
+# host scrapes it: the os-node_exporter plugin on its LAN address (a LAN rule
+# lets only this host reach port 9100), and the opnsense-exporter container
+# on ubuntu-dev, which reads the OPNsense API with a read-only key. Job names
+# are not integrations/unix, so the Linux host alerts and fleet dashboards do
+# not pick the firewall up by accident. See monitoring/docs/monitoring/routers.md.
+alloy_extra_scrape_targets:
+  - job: opnsense-node
+    address: 10.10.50.1:9100
+    host: opnsense
+    role: firewall
+  - job: opnsense-api
+    address: 10.10.50.125:9201
+    host: opnsense
+    role: firewall
+    interval: 30s
+    timeout: 25s
+
 # The central LXC usually sits on the same private LAN as the other Proxmox
 # guests, so a controller outside that network needs the same ProxyJump the
 # lan_guests group uses. Set `lan_use_jump_host: false` when running from a

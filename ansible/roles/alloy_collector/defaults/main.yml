@@ -43,6 +43,12 @@ alloy_enable_docker: auto
 # debugging. See security/docs/wiring/index.md.
 alloy_syslog_listener_port: ""
 
+# Extra Prometheus targets this host scrapes and ships: devices that cannot
+# run Alloy. Each item: job, address (host:port), host and role (the labels
+# the series carry), optionally instance, interval and timeout. Set in
+# group_vars/central for the firewall's exporters.
+alloy_extra_scrape_targets: []
+
 # NOTE ON BACKSLASHES: these strings land inside double quotes in the
 # generated .alloy file, and Alloy uses Go string escaping there. A lone `\.`
 # is an "unknown escape sequence" and `alloy fmt` rejects the whole config.

@@ -36,6 +36,9 @@
 - name: Deploy the TP-Link router poller
   ansible.builtin.import_playbook: tplink-router.yml
 
+- name: Deploy the OPNsense API exporter
+  ansible.builtin.import_playbook: opnsense-exporter.yml
+
 - name: Deploy the Grafana dashboards
   ansible.builtin.import_playbook: dashboards.yml
 

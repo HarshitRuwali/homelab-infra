@@ -1,0 +1,93 @@
+---
+# opnsense-exporter in a container. See defaults/main.yml for the per-host
+# settings and the key files.
+
+- name: Report the resolved opnsense-exporter shape
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: opnsense_exporter_enabled={{ opnsense_exporter_enabled }}"
+
+- name: Install the OPNsense API exporter
+  when: opnsense_exporter_enabled | bool
+  block:
+    - name: Check the per-host settings
+      ansible.builtin.assert:
+        that:
+          - opnsense_exporter_listen is regex('^[0-9.]+:[0-9]+$')
+        fail_msg: "{{ inventory_hostname }} enables opnsense_exporter but needs opnsense_exporter_listen (address:port)."
+
+    - name: Check the API key files
+      ansible.builtin.stat:
+        path: "{{ opnsense_exporter_secret_dir }}/{{ item }}"
+      loop: [api_key, api_secret]
+      register: opnsense_exporter_secrets
+
+    - name: Fail unless both key files exist and only the container user can read them
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.stat.path | default(item.item) }} must exist, owned by 65534, mode 0400.
+          Place it by hand; see roles/opnsense_exporter/defaults/main.yml.
+      loop: "{{ opnsense_exporter_secrets.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+      when: >-
+        not item.stat.exists or item.stat.uid != 65534 or item.stat.mode != '0400'
+
+    - name: Ensure the exporter directory exists
+      ansible.builtin.file:
+        path: "{{ opnsense_exporter_home }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Write the compose file
+      ansible.builtin.template:
+        src: compose.yml.j2
+        dest: "{{ opnsense_exporter_home }}/compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: docker compose --file %s config --quiet
+      register: opnsense_exporter_compose
+
+    - name: Start or update the exporter
+      ansible.builtin.command:
+        argv: [docker, compose, --file, "{{ opnsense_exporter_home }}/compose.yml", up, --detach]
+      register: opnsense_exporter_up
+      changed_when: (opnsense_exporter_up.stdout ~ opnsense_exporter_up.stderr) is search('\\b(Started|Created|Recreated)\\b')
+      when: not ansible_check_mode
+
+    # Per-interface byte counters only appear when the API answered with the
+    # key, so they prove the address, the key and the privileges in one read.
+    # Not opnsense_up: on OPNsense 26.7 it stays 0. The exporter's health check
+    # wants /api/core/system/status metadata.system.status to be the number 2,
+    # and 26.7 returns the string "OK" (checked against 0.0.19, 2026-11-20).
+    - name: Wait for the exporter to read the OPNsense API
+      ansible.builtin.uri:
+        url: "http://{{ opnsense_exporter_listen }}/metrics"
+        return_content: true
+      register: opnsense_exporter_metrics
+      until: opnsense_exporter_metrics.content | default('') is search('(?m)^opnsense_interfaces_received_bytes_total\\{')
+      retries: 12
+      delay: 5
+      when: not ansible_check_mode
+
+- name: Remove the exporter where it is not enabled
+  when: not (opnsense_exporter_enabled | bool)
+  block:
+    - name: Check for a leftover exporter
+      ansible.builtin.stat:
+        path: "{{ opnsense_exporter_home }}/compose.yml"
+      register: opnsense_exporter_leftover
+
+    - name: Stop the leftover exporter
+      ansible.builtin.command:
+        argv: [docker, compose, --file, "{{ opnsense_exporter_home }}/compose.yml", down]
+      changed_when: true
+      when: opnsense_exporter_leftover.stat.exists and not ansible_check_mode
+
+    - name: Remove the leftover compose directory
+      ansible.builtin.file:
+        path: "{{ opnsense_exporter_home }}"
+        state: absent
+      when: opnsense_exporter_leftover.stat.exists
