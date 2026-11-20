@@ -33,6 +33,9 @@
 - name: Deploy the Dell fan boost
   ansible.builtin.import_playbook: dell-fan-boost.yml
 
+- name: Deploy the TP-Link router poller
+  ansible.builtin.import_playbook: tplink-router.yml
+
 - name: Deploy the Grafana dashboards
   ansible.builtin.import_playbook: dashboards.yml
 

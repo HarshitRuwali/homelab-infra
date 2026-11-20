@@ -82,6 +82,7 @@ tests/                         consistency checks, run by hand; see the header o
 | `collectors.yml` | the Alloy collector on every monitored host |
 | `update-metrics.yml` | apt and reboot-required textfile exporter |
 | `dell-fan-boost.yml` | runs the Dell CPU fan at full speed while its package is hot, where `host_vars` enables it |
+| `tplink-router.yml` | polls a TP-Link router for per-client traffic from a host on its LAN, where the host's inventory entry enables it |
 | `unattended-upgrades.yml` | package patching policy |
 | `docker-updates.yml` | container image update script, unit and timer |
 | `force-updates.yml` | install every pending package **now**; still never reboots |
@@ -104,6 +105,7 @@ Full reference: [Playbooks](docs/reference/playbooks.md).
 | `pve_guest_metrics` | names each Proxmox guest's NIC counters, PVE hosts only |
 | `gpu_exporter` | NVIDIA GPU telemetry, autodetected off the host |
 | `dell_fan_boost` | a fan boost controller for a Dell workstation's CPU fan, per host only |
+| `tplink_router_poll` | per-client traffic from a TP-Link router (DEV2 web API) as textfile metrics, per host only |
 | `unattended_upgrades` | apt patching policy, applied by group membership only |
 | `docker_updates` | container image update timer |
 | `grafana_dashboards` | the committed dashboard JSON |

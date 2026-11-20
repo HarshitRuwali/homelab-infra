@@ -109,6 +109,31 @@ bare metal in general. The role fails loudly if the host has no `/proc/i8k`.
 The role refuses to install unless off < on < guard, and fails loudly if the
 host has no `/proc/i8k` or no manual control on the chosen channel.
 
+## TP-Link router poller
+
+`roles/tplink_router_poll/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `tplink_router_poll_enabled` | `false` | **the switch**; set it in the host's inventory entry, not in git |
+| `tplink_router_poll_name` | `""` | the `router` label, for example `blr`; required |
+| `tplink_router_poll_url` | `http://192.168.0.1` | the router's web address on the LAN |
+| `tplink_router_poll_username` | `admin` | the web login name |
+| `tplink_router_poll_expected_mac` | `""` | the router's LAN MAC; required, and the password is only sent to it |
+| `tplink_router_poll_interval` | `60` | seconds; each poll is a full login of about 1.2 s |
+| `tplink_router_poll_syslog_port` | `0` | UDP port for the router's own log; `0` is off. The router's remote log setting must point here |
+| `tplink_router_poll_keep_days` | `365` | days of raw JSONL kept on the host; the usage ledger is never pruned |
+| `tplink_router_poll_library` | `tplinkrouterc6u==5.41.0` | pinned; the API is undocumented and encrypted |
+| `tplink_router_poll_home` | `/opt/tplink-router-poll` | script and virtualenv |
+| `tplink_router_poll_secret_dir` | `/etc/tplink-router-poll` | holds `password`, root:root 0600, placed by hand |
+| `tplink_router_poll_data_dir` | `/var/lib/tplink-router-poll` | the JSONL days, the ledger `usage.db` and its daily `usage-snapshot.db` |
+| `tplink_router_poll_textfile` | `{{ alloy_textfile_dir }}/tplink-router-{{ tplink_router_poll_name }}.prom` | the metrics file Alloy reads |
+| `tplink_router_poll_mirror_from` | `""` | set on a **receiving** host to the poller host's inventory name; it then pulls the data dir nightly |
+| `tplink_router_poll_mirror_dir` | `~/.local/share/tplink-router-<name>` | where the receiving host keeps the copy |
+
+The router's MAC and address are site details, so they live in the local
+inventory, not in `host_vars` in git.
+
 ## Proxmox guest NIC names
 
 `roles/pve_guest_metrics/defaults/main.yml`

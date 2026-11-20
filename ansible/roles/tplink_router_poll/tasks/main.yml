@@ -1,0 +1,147 @@
+---
+# TP-Link router per-client traffic, polled from a host on its LAN. See
+# defaults/main.yml for the per-host settings and the password file.
+
+- name: Report the resolved TP-Link poller shape
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: tplink_router_poll_enabled={{ tplink_router_poll_enabled }}"
+
+- name: Install the TP-Link router poller
+  when: tplink_router_poll_enabled | bool
+  block:
+    - name: Check the per-host settings
+      ansible.builtin.assert:
+        that:
+          - tplink_router_poll_name is regex('^[a-z0-9-]+$')
+          - tplink_router_poll_expected_mac | lower is regex('^([0-9a-f]{2}:){5}[0-9a-f]{2}$')
+        fail_msg: >-
+          {{ inventory_hostname }} enables tplink_router_poll but needs
+          tplink_router_poll_name (lowercase letters, digits, dashes) and
+          tplink_router_poll_expected_mac (the router's LAN MAC) in its inventory entry.
+
+    - name: Check for the router password file
+      ansible.builtin.stat:
+        path: "{{ tplink_router_poll_secret_dir }}/password"
+      register: tplink_router_poll_secret
+
+    - name: Fail if the router password file is missing
+      ansible.builtin.fail:
+        msg: >-
+          {{ tplink_router_poll_secret_dir }}/password is missing on {{ inventory_hostname }}.
+          Create it root-only (see roles/tplink_router_poll/defaults/main.yml); it is never
+          managed by Ansible.
+      when: not tplink_router_poll_secret.stat.exists
+
+    - name: Fail if the router password file is readable by others
+      ansible.builtin.fail:
+        msg: "{{ tplink_router_poll_secret_dir }}/password must be root:root 0600."
+      when: >-
+        tplink_router_poll_secret.stat.pw_name != 'root' or
+        tplink_router_poll_secret.stat.mode not in ['0600', '0400']
+
+    - name: Ensure the poller directory exists
+      ansible.builtin.file:
+        path: "{{ tplink_router_poll_home }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    # A virtualenv, not system packages: pycryptodome and requests stay out of
+    # the host's Python. python3-venv ships with Debian-family Python already
+    # on the workstations this targets.
+    - name: Install the router client library into a virtualenv
+      ansible.builtin.pip:
+        name: "{{ tplink_router_poll_library }}"
+        virtualenv: "{{ tplink_router_poll_home }}/venv"
+        virtualenv_command: python3 -m venv
+      notify: Restart tplink-router-poll
+
+    - name: Install the poller script
+      ansible.builtin.copy:
+        src: tplink-router-poll.py
+        dest: "{{ tplink_router_poll_home }}/tplink-router-poll.py"
+        owner: root
+        group: root
+        mode: "0755"
+        validate: /usr/bin/python3 -m py_compile %s
+      notify: Restart tplink-router-poll
+
+    - name: Ensure the textfile collector directory exists
+      ansible.builtin.file:
+        path: "{{ tplink_router_poll_textfile | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the poller systemd service
+      ansible.builtin.template:
+        src: tplink-router-poll.service.j2
+        dest: /etc/systemd/system/tplink-router-poll.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart tplink-router-poll
+
+    - name: Enable and start the poller
+      ansible.builtin.systemd:
+        name: tplink-router-poll.service
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    - name: Flush handlers so the first poll runs before the check
+      ansible.builtin.meta: flush_handlers
+
+    # One full poll is a login plus nine reads, about 1.2 s; 20 s covers a
+    # slow router and the first start of the virtualenv.
+    - name: Wait for the first metrics file
+      ansible.builtin.wait_for:
+        path: "{{ tplink_router_poll_textfile }}"
+        search_regex: 'tplink_router_poll_timestamp_seconds'
+        timeout: 20
+      when: not ansible_check_mode
+
+    - name: Read the first poll result
+      ansible.builtin.command: grep -E '^tplink_router_poll_(success|skipped)' {{ tplink_router_poll_textfile }}
+      register: tplink_router_poll_first
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Report the first poll result
+      ansible.builtin.debug:
+        msg: "{{ tplink_router_poll_first.stdout_lines }}"
+      when: not ansible_check_mode
+
+- name: Remove the TP-Link router poller where it is not enabled
+  when: not (tplink_router_poll_enabled | bool)
+  block:
+    - name: Check for a leftover poller service
+      ansible.builtin.stat:
+        path: /etc/systemd/system/tplink-router-poll.service
+      register: tplink_router_poll_unit
+
+    - name: Stop and disable the leftover poller
+      ansible.builtin.systemd:
+        name: tplink-router-poll.service
+        enabled: false
+        state: stopped
+      when: tplink_router_poll_unit.stat.exists and not ansible_check_mode
+
+    - name: Remove the leftover poller files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/tplink-router-poll.service
+        - "{{ tplink_router_poll_home }}"
+      when: tplink_router_poll_unit.stat.exists
+
+- name: Mirror a poller host's data here
+  when: tplink_router_poll_mirror_from | default('') | length > 0
+  ansible.builtin.include_tasks:
+    file: mirror.yml
+    apply:
+      become: false

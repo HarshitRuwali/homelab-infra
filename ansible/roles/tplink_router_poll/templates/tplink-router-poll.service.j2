@@ -1,0 +1,47 @@
+# {{ ansible_managed }}
+# Polls the TP-Link router "{{ tplink_router_poll_name }}" every {{ tplink_router_poll_interval }} s:
+# textfile metrics for Alloy, plus a daily JSONL copy in {{ tplink_router_poll_data_dir }}.
+[Unit]
+Description=TP-Link router {{ tplink_router_poll_name }} per-client traffic poller
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={{ tplink_router_poll_home }}/venv/bin/python {{ tplink_router_poll_home }}/tplink-router-poll.py \
+  --router {{ tplink_router_poll_url }} \
+  --name {{ tplink_router_poll_name }} \
+  --username {{ tplink_router_poll_username }} \
+  --expected-mac {{ tplink_router_poll_expected_mac }} \
+  --textfile {{ tplink_router_poll_textfile }} \
+  --data-dir {{ tplink_router_poll_data_dir }} \
+  --keep-days {{ tplink_router_poll_keep_days }} \
+  --interval {{ tplink_router_poll_interval }} \
+  --syslog-port {{ tplink_router_poll_syslog_port }}
+# The password reaches the process as a file under $CREDENTIALS_DIRECTORY,
+# never on the command line or in the environment.
+LoadCredential=password:{{ tplink_router_poll_secret_dir }}/password
+Restart=always
+RestartSec=30
+
+# Root only so it can write into the root-owned textfile directory; every
+# capability is dropped and the filesystem is read-only apart from the two
+# paths it writes.
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+StateDirectory={{ tplink_router_poll_data_dir | basename }}
+ReadWritePaths={{ tplink_router_poll_textfile | dirname }}
+MemoryMax=192M
+
+[Install]
+WantedBy=multi-user.target

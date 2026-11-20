@@ -1,0 +1,56 @@
+---
+# Per-client traffic from a TP-Link router with the "DEV2" web API (Archer C5
+# v6 and its siblings), polled from a host on that router's LAN. See
+# files/tplink-router-poll.py for what is read and how.
+#
+# OFF BY DEFAULT, ENABLED PER HOST. Set these in the host's inventory entry,
+# not in git: the MAC and the router's LAN address are site details.
+#
+#   tplink_router_poll_enabled: true
+#   tplink_router_poll_name: blr                    # the `router` label
+#   tplink_router_poll_expected_mac: "aa:bb:cc:dd:ee:ff"
+#
+# The router password is NOT managed here. Put it on the host once, root-only:
+#
+#   sudo sh -c 'umask 077; install -d -m 0700 /etc/tplink-router-poll; cat > /etc/tplink-router-poll/password'
+#
+# The role fails if it is missing rather than installing a service that can
+# never log in.
+tplink_router_poll_enabled: false
+
+tplink_router_poll_name: ""
+tplink_router_poll_url: http://192.168.0.1
+tplink_router_poll_username: admin
+# The router's LAN MAC. The password is only sent when the address above
+# answers with this MAC, so a laptop on another network never offers it.
+tplink_router_poll_expected_mac: ""
+
+# 60 s: each poll is a full login (RSA and AES handshake, about 1.2 s on an
+# Archer C5) and the router allows one admin session, so polling faster would
+# mostly crowd the web UI. Per-client usage per minute is plenty.
+tplink_router_poll_interval: 60
+
+# UDP port for the router's own log. 0 is off. The router's "remote log"
+# setting must point at this host and port; the poller checks that every
+# poll (tplink_router_log_forwarding) but never changes it. See the role
+# docs for the router setting.
+tplink_router_poll_syslog_port: 0
+# Raw samples: about 4.6 KB a poll with ten clients, so a few MB a day
+# before the day is gzipped. The usage ledger (usage.db) is never pruned.
+tplink_router_poll_keep_days: 365
+
+# Pinned: the client speaks an undocumented, encrypted firmware API, and a new
+# release can change how a model logs in.
+tplink_router_poll_library: tplinkrouterc6u==5.41.0
+
+tplink_router_poll_home: /opt/tplink-router-poll
+tplink_router_poll_secret_dir: /etc/tplink-router-poll
+tplink_router_poll_data_dir: /var/lib/tplink-router-poll
+tplink_router_poll_textfile: "{{ alloy_textfile_dir }}/tplink-router-{{ tplink_router_poll_name }}.prom"
+
+# Nightly batch copy to ANOTHER host. Set on the receiving host (for example
+# ubuntu-dev) to the inventory name of the poller host; it then pulls that
+# host's data dir into tplink_router_poll_mirror_dir every night with a user
+# timer. Empty disables it.
+tplink_router_poll_mirror_from: ""
+tplink_router_poll_mirror_dir: "{{ tplink_router_poll_mirror_home }}/.local/share/tplink-router-{{ hostvars[tplink_router_poll_mirror_from].tplink_router_poll_name | default('router') }}"

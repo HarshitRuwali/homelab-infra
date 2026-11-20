@@ -13,6 +13,7 @@ A reference list. For what a playbook or a role *is*, see
 | `collectors.yml` | `monitored` | `alloy`, `systemd-journald` | Alloy config, container metrics, journal caps |
 | `update-metrics.yml` | `monitored` | nothing meaningful | the apt/reboot exporter, plus SMART and Proxmox guest names where `group_vars/metal` enables them |
 | `dell-fan-boost.yml` | `metal` | `fleet-dell-fan-boost`, if its script or unit changed; stopping it puts the fans back on automatic | a CPU fan the firmware runs too slowly; inert except where `dell_fan_boost_enabled` is set |
+| `tplink-router.yml` | `monitored` | `tplink-router-poll`, if its script, library or unit changed | per-client traffic from a TP-Link router; inert except where `tplink_router_poll_enabled` is set |
 | `dashboards.yml` | `central` | only if the provider config changed | Grafana dashboards; prunes ones deleted from git |
 | `central-alerting.yml` | `central` | **`grafana-server`** | alert rules, Matrix relay |
 | `unattended-upgrades.yml` | `autoupdate` | nothing | patching policy |
@@ -85,6 +86,65 @@ package temperature.
 
 Stop it with `systemctl stop fleet-dell-fan-boost`; the fans go back to the
 firmware's curve at once.
+
+### `tplink_router_poll`
+
+A poller, `tplink-router-poll.service`, on a host that sits on a TP-Link
+router's LAN. Every 60 s it logs in to the router's web API, reads the client
+list and the traffic counters, and logs out. The "Router TPLink Blr" dashboard
+reads what it writes.
+
+| Does | Note |
+|---|---|
+| Checks the router's MAC before sending the password | `tplink_router_poll_expected_mac`; a laptop on another network with the same gateway address skips the poll |
+| Skips a poll while someone is logged in to the router's web page | the router allows one admin session; the poller never logs a person out |
+| Reads only | `go` and `gl` operations of the `DEV2` API, plus login and logout |
+| Writes `tplink-router-<name>.prom` | the `tplink_router_*` metrics; Alloy ships them, buffering while the link is down |
+| Keeps a daily JSONL copy in `/var/lib/tplink-router-poll` | one line per poll, older days gzipped, `tplink_router_poll_keep_days` kept |
+| Keeps a usage ledger, `usage.db`, forever | SQLite: bytes per client per UTC hour, every connection's start, end and bytes, every name and IP a client had, and the router's log |
+| Prints usage, connection and router log lines to the journal | Alloy ships them to Loki (30 days), which the dashboard's History row reads |
+| Receives the router's own log on `tplink_router_poll_syslog_port` | only from the router's address; checks every poll that the router still points here |
+| Copies its data nightly to another host | where that host sets `tplink_router_poll_mirror_from`; a user timer, `tplink-router-mirror.timer` |
+| Runs from a virtualenv in `/opt/tplink-router-poll` | `tplinkrouterc6u`, pinned; no system packages |
+
+The password is not managed by Ansible. Put it on the host once, root-only,
+before the first run; the role stops with the command to use if it is missing:
+
+```bash
+sudo sh -c 'umask 077; install -d -m 0700 /etc/tplink-router-poll; cat > /etc/tplink-router-poll/password'
+```
+
+systemd hands it to the process with `LoadCredential`, so it never appears on a
+command line or in the environment.
+
+**The ledger.** Usage comes from the per-client Wi-Fi counters. Each poll books
+the change since the previous one to that UTC hour (`kind` `measured`). What a
+client already had on its counter when first seen, or across a gap of more than
+15 minutes in polling, is booked to the hour it was found (`kind` `carried`). A
+counter that goes down means the client reconnected and opens a new connection.
+A client missing for more than 5 minutes closes its connection at the last poll
+it was seen. Read it on the poller host:
+
+```bash
+P=/opt/tplink-router-poll
+sudo $P/venv/bin/python $P/tplink-router-poll.py --report day --since 2026-11-01
+sudo $P/venv/bin/python $P/tplink-router-poll.py --report hour --client corex --csv
+sudo $P/venv/bin/python $P/tplink-router-poll.py --report sessions   # visits; ~ marks an estimated start
+sudo $P/venv/bin/python $P/tplink-router-poll.py --report log        # the router's own log
+```
+
+`--report month` sums by month. If `usage.db` is lost, the service rebuilds it
+from the JSONL days at its next start (`--rebuild-ledger` does it on demand).
+
+**The router's log.** The router keeps its log only in RAM. Point its remote
+log at the poller host once, in the router's system log settings (the API
+object `DEV2_SYSLOG_CFG`): remote log on, server the poller host's address,
+port `tplink_router_poll_syslog_port`, level Info. The poller never changes
+router settings. It reads that setting
+every poll and reports `tplink_router_log_forwarding`, which drops to 0 when the
+poller host's address changes. A DHCP reservation for the poller host prevents
+that. The router does not send RFC 3164 syslog (no timestamp or hostname), so
+Alloy's syslog listener rejects it; that is why the poller receives it.
 
 ### `unattended_upgrades`
 

@@ -1,0 +1,62 @@
+---
+# The nightly batch copy of a poller host's data (JSONL days and the ledger
+# snapshot) to this host, so the record survives losing the poller host.
+# Runs as the login user: a user timer that pulls over SSH with that user's
+# key, so the poller host needs no credentials for this one.
+
+- name: Look up the login user's home directory
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ ansible_user }}"
+
+# Facts come from the play's become user (root), so not ansible_env.HOME.
+- name: Resolve the mirror source and the login user's home
+  ansible.builtin.set_fact:
+    tplink_router_poll_mirror_src: "{{ hostvars[tplink_router_poll_mirror_from] }}"
+    tplink_router_poll_mirror_home: "{{ ansible_facts.getent_passwd[ansible_user][4] }}"
+
+- name: Check the mirror source polls a router
+  ansible.builtin.assert:
+    that:
+      - tplink_router_poll_mirror_src.tplink_router_poll_enabled | default(false) | bool
+      - tplink_router_poll_mirror_src.tplink_router_poll_name | default('') | length > 0
+    fail_msg: >-
+      tplink_router_poll_mirror_from is {{ tplink_router_poll_mirror_from }}, which does not
+      have tplink_router_poll_enabled and tplink_router_poll_name set.
+
+- name: Ensure the mirror and user unit directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ tplink_router_poll_mirror_dir }}"
+    - "{{ tplink_router_poll_mirror_home }}/.config/systemd/user"
+
+- name: Install the mirror service
+  ansible.builtin.template:
+    src: tplink-router-mirror.service.j2
+    dest: "{{ tplink_router_poll_mirror_home }}/.config/systemd/user/tplink-router-mirror.service"
+    mode: "0644"
+
+- name: Install the mirror timer
+  ansible.builtin.template:
+    src: tplink-router-mirror.timer.j2
+    dest: "{{ tplink_router_poll_mirror_home }}/.config/systemd/user/tplink-router-mirror.timer"
+    mode: "0644"
+
+- name: Enable the mirror timer
+  ansible.builtin.systemd:
+    name: tplink-router-mirror.timer
+    scope: user
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Run the first copy now
+  ansible.builtin.systemd:
+    name: tplink-router-mirror.service
+    scope: user
+    state: started
+  when: not ansible_check_mode
