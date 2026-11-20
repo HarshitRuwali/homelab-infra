@@ -51,13 +51,15 @@ all:
   vars:
     monitoring_domain: monitor.your-domain.tld   # builds the ingest URLs
     lan_jump_host: <host on both networks>       # for lan_guests
-    grafana_admin_user: <matches GF_SECURITY_ADMIN_USER>
 ```
 
-!!! warning "Do not assume the Grafana admin is `admin`"
+!!! note "The Grafana admin login is read from the box"
     `lxc-install.sh` writes whatever `GRAFANA_ADMIN_USER` was set to in
-    `.env`, which is often a real username. The `grafana_alerting` role
-    authenticates with it, so a wrong value fails the readback assert.
+    `.env` into `/etc/default/grafana-monitoring`, often a real username rather
+    than `admin`. The `grafana_alerting` and `grafana_dashboards` roles read it
+    from there for their API readback, so the inventory does not repeat it.
+    Set `grafana_admin_user` only to override it. The password still comes
+    from `vault_grafana_admin_password`.
 
 Because it is not in git, `hosts.local.yml` must be copied to **each**
 controller you run from, alongside the vault password and SSH key.

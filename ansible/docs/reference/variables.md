@@ -288,7 +288,7 @@ here.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `grafana_admin_user` | `admin` | **override this**; `lxc-install.sh` writes a real username |
+| `grafana_admin_user` | `""` | empty reads `GF_SECURITY_ADMIN_USER` from `grafana_env_file` on the box, which `lxc-install.sh` wrote; set it only to override |
 | `grafana_api_url` | `http://127.0.0.1:3000` | |
 | `central_host_label` | from `host_vars` | must match `MONITOR_HOSTNAME` |
 | `grafana_alerting_static_files` | 11 files | `rules-availability.yaml` is templated, not listed |

@@ -1,0 +1,31 @@
+---
+# The Grafana admin login for the API calls. grafana_admin_user wins when set;
+# empty (the default) reads GF_SECURITY_ADMIN_USER from the env file that
+# monitoring/scripts/lxc-install.sh wrote, so the login has one source of truth
+# instead of a default ("admin") that is wrong on most installs. Read-only, so
+# it also runs under --check. Kept identical in grafana_alerting and
+# grafana_dashboards (ansible/tests/grafana-admin-user-test.py checks).
+
+- name: Read the Grafana env file for the admin login
+  ansible.builtin.slurp:
+    src: "{{ grafana_env_file }}"
+  register: grafana_env_slurp
+  when: grafana_admin_user | default('') | length == 0
+  no_log: true
+
+- name: Resolve the Grafana admin login
+  ansible.builtin.set_fact:
+    grafana_api_user: >-
+      {{ grafana_admin_user
+         if grafana_admin_user | default('') | length > 0
+         else (grafana_env_slurp.content | b64decode
+               | regex_search('(?m)^GF_SECURITY_ADMIN_USER=["\x27]?([^"\x27\s]+)', '\1')
+               | default([''], true) | first) }}
+
+- name: Fail without a Grafana admin login
+  ansible.builtin.assert:
+    that:
+      - grafana_api_user | length > 0
+    fail_msg: >-
+      No Grafana admin login: set grafana_admin_user, or GF_SECURITY_ADMIN_USER
+      in {{ grafana_env_file }} on {{ inventory_hostname }}.
