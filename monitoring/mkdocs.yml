@@ -122,6 +122,7 @@ nav:
       - Collectors: monitoring/collectors.md
       - Container metrics: monitoring/container-metrics.md
       - Dashboards: monitoring/dashboards.md
+      - Routers and firewall: monitoring/routers.md
       - Alerting: monitoring/alerting.md
 
   - Operations:

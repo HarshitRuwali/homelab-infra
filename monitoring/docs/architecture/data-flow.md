@@ -38,6 +38,10 @@ External labels `host` and `role` are attached by Alloy from
     Prometheus: old series keep the old label forever and nothing joins them.
     `monitor-lxc` pins its value in `host_vars/` for exactly this reason.
 
+Devices that cannot run Alloy (the firewall, the routers) are covered in
+[Routers and firewall](../monitoring/routers.md#telemetry-flow): they are
+scraped by the central Alloy or polled by a host on their LAN.
+
 ## The textfile bridge
 
 Anything a shell script can compute becomes a Prometheus metric by writing a

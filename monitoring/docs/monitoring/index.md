@@ -17,6 +17,11 @@ What is collected, where it is displayed, and what alerts on it.
     The seven fleet dashboards, the per-host Servers folder, and what each
     panel is for.
 
+- :material-router-network: **[Routers and firewall](routers.md)**
+
+    The TP-Link router, OPNsense and the ER605: the network map, what each
+    device reports, and what is still planned.
+
 - :material-bell-alert: **[Alerting](alerting.md)**
 
     The rules, the Matrix relay, and how to test the chain.
@@ -34,11 +39,14 @@ What is collected, where it is displayed, and what alerts on it.
 | Container update results | textfile collector | alerts only |
 | systemd journal | `loki.source.journal` | Services and Logs |
 | Container stdout/stderr | `loki.source.docker` | Services and Logs |
+| Per-client router traffic, connections, router log (remote site) | `tplink-router-poll`, textfile and journal | Router TPLink Blr |
+| OPNsense host, interfaces, firewall, gateways, services | node_exporter plugin and `opnsense-exporter`, scraped by the central Alloy | Prometheus jobs `opnsense-node`, `opnsense-api`; see [Routers and firewall](routers.md) |
 
 ## What is deliberately not collected
 
-- **OPNsense.** Would need the `os-node_exporter` plugin, scraped rather than
-  pushed.
+- **Per-client usage on the home LAN.** The ER605 forwards most traffic in
+  hardware past its own counters; a port mirror is planned. See
+  [Routers and firewall](routers.md#er605-home-router).
 - **The central LXC being down.** Grafana dies with it. Needs an external
   dead-man's-switch.
 
@@ -49,7 +57,7 @@ Every series carries these, applied by Alloy as external labels:
 | Label | Source | Notes |
 |---|---|---|
 | `host` | `MONITOR_HOSTNAME` | **never rename**, it forks history |
-| `role` | `MONITOR_ROLE` | `server`, `workstation`, `pi`, `router`, `service`, `central`, `hypervisor` |
+| `role` | `MONITOR_ROLE` | `server`, `workstation`, `pi`, `router`, `service`, `central`, `hypervisor`; `firewall` for OPNsense, set on its scrape targets and syslog |
 | `job` | set by the exporter | `integrations/unix`, `integrations/cadvisor`, `alloy` |
 
 `role` is genuinely useful in rules. Two exclude `role="workstation"`, which

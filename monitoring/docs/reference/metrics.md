@@ -314,7 +314,20 @@ sum by (name, mac) (sum_over_time({host="skullsaints", unit="tplink-router-poll.
     hardware, past the counters its statistics page uses. A wired client would
     not appear in the Wi-Fi counters at all; none was connected.
 
-## Stock metrics worth knowing
+## OPNsense
+
+Scraped by the central Alloy from the firewall's LAN (`alloy_extra_scrape_targets`
+in `ansible/inventory/group_vars/central`), with `host="opnsense"`,
+`role="firewall"`. How it is set up: [Routers and firewall](../monitoring/routers.md#opnsense).
+
+| Job | Source | Notable series |
+|---|---|---|
+| `opnsense-node` | the `os-node_exporter` plugin, `10.10.50.1:9100` | `node_cpu_seconds_total`, `node_memory_*`, `node_network_*`, `node_filesystem_*`, `node_load1` (FreeBSD names differ from Linux in places) |
+| `opnsense-api` | `opnsense-exporter`, `10.10.50.125:9201` | `opnsense_interfaces_{received,transmitted}_bytes_total`, `opnsense_firewall_{in,out}_ipv{4,6}_{pass,block}_packets`, `opnsense_pf_states_{current,limit}`, `opnsense_gateways_info`, `opnsense_gateways_monitor_info`, `opnsense_services_status`, `opnsense_firmware_*`, `opnsense_arp_table_entries`, `opnsense_protocol_tcp_connection_count_by_state`, `opnsense_unbound_dns_*` |
+
+`opnsense_up` reads 0 on OPNsense 26.7 even when everything works; see
+[the warning](../monitoring/routers.md#opnsense).
+
 
 | Metric | Used by |
 |---|---|
