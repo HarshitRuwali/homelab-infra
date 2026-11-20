@@ -149,6 +149,46 @@ except the physical NICs.
     another, so it usually tops **Busiest Guest Now** and shows traffic on both
     bridges. It is doing exactly that much work.
 
+## Router TPLink Blr
+
+`uid: router-tplink-blr`: per-client traffic on the TP-Link router on
+skullsaints' LAN, a different network from the home LAN. Data comes from
+`ansible/roles/tplink_router_poll` on skullsaints; see
+[the metrics](../reference/metrics.md#tp-link-router).
+
+| Panel | Query intent |
+|---|---|
+| Poller, Last poll | whether the poller is reading the router, and how long ago it ran |
+| Clients online, Downloaded, Uploaded | totals over the time picker, from the Wi-Fi counters |
+| Usage per client in the selected range | download, upload and total per client, largest first |
+| Hourly usage per client, Daily usage per client | stacked bars, download plus upload |
+| Download / Upload rate per client | five-minute averages in bits per second |
+| Clients | every client the router knows, with IP, MAC, band and whether it is online |
+| Signal, Link rate, Retransmissions per client | Wi-Fi quality |
+| Internet, Router CPU, Router memory used | the router itself |
+| Router's own internet counter vs Wi-Fi clients | for comparison only; the router's counter misses hardware-forwarded traffic |
+| Router log forwarding | whether the router's own log still reaches skullsaints |
+| History, 30 days (Loki) | usage per client and per day over up to 30 days, every connection and disconnection, and the router's log |
+
+The `$client` picker filters the per-client panels by MAC. Two devices can share
+a hostname, so every legend shows the MAC as well.
+
+!!! info "Gaps are expected"
+    The poller skips a minute while someone is logged in to the router's web
+    page, and nothing is collected while skullsaints is off or on another
+    network. Alloy on skullsaints buffers what it has collected while the link
+    to central is down and sends it on reconnect. Usage totals use
+    `increase()`, which adds across counter restarts. A gap just loses the
+    traffic inside it.
+
+!!! info "How far back"
+    The live panels read Prometheus, which keeps 7 days. The History row reads
+    Loki, which keeps 30. Beyond that, the usage ledger on skullsaints
+    (`/var/lib/tplink-router-poll/usage.db`) keeps every hour and every
+    connection for good, and is copied to ubuntu-dev nightly
+    (`~/.local/share/tplink-router-blr`). Read it with `--report`; see
+    [the role](https://harshitruwali.github.io/homelab-infra/ansible/reference/playbooks/#tplink_router_poll).
+
 ## Suricata Alerts
 
 `uid: suricata-alerts`: what the IDS on the firewall is flagging. Suricata runs

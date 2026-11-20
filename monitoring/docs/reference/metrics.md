@@ -260,6 +260,60 @@ CPU 1's package is hot.
 | `fleet_dell_fan_boost_package_celsius` | the package temperature the boost follows |
 | `fleet_dell_fan_boost_timestamp_seconds` | when the controller last ran; stale means it is down, and the fans are then on automatic |
 
+## TP-Link router
+
+Written to `tplink-router-<name>.prom` every 60 s by `tplink-router-poll`, from
+`ansible/roles/tplink_router_poll`, on a host on the router's LAN. Every series
+carries `router` (the poller's `--name`); client series also carry `mac`,
+`name` and `ip`, and Wi-Fi series `band`. The [Router TPLink Blr](../monitoring/dashboards.md#router-tplink-blr)
+dashboard reads them.
+
+| Metric | Meaning |
+|---|---|
+| `tplink_router_poll_success` | 1 if the last poll read the router |
+| `tplink_router_poll_skipped` | 1 if the last poll was skipped on purpose; `reason` is `busy` (someone is logged in to the web page) or `wrong_network` (the router MAC did not match) |
+| `tplink_router_poll_timestamp_seconds`, `tplink_router_poll_duration_seconds` | when the poller last ran and how long it took; stale means the host is off or cannot reach central |
+| `tplink_router_info` | model, hardware and firmware labels, value 1 |
+| `tplink_router_uptime_seconds` | the router's uptime; every counter below restarts at zero when it reboots |
+| `tplink_router_cpu_percent`, `tplink_router_memory_bytes{state}` | router load |
+| `tplink_router_wan_online{family}` | 1 while the internet connection is up |
+| `tplink_router_wan_bytes_total{direction}` | the router's own internet counter; it misses traffic forwarded in hardware, so compare, do not bill from it |
+| `tplink_router_client_info` | every client the router knows, value 1 while active |
+| `tplink_router_client_bytes_total`, `tplink_router_client_packets_total` | the router's per-IP traffic statistics, both directions together; reads lower than the Wi-Fi counters |
+| `tplink_router_wifi_client_bytes_total{direction}` | **the usage figure**: bytes per Wi-Fi client, `download` is router to client; restarts when the client reconnects |
+| `tplink_router_wifi_client_packets_total{direction}`, `tplink_router_wifi_client_retransmissions_total` | Wi-Fi packets and resends |
+| `tplink_router_wifi_client_signal_dbm`, `tplink_router_wifi_client_link_rate_bits{direction}` | link quality per client |
+| `tplink_router_log_forwarding{server,port}` | 1 while the router's remote log points at the poller host; 0 means its log is not arriving |
+| `tplink_router_log_messages_total{severity}`, `tplink_router_log_rejected_total` | router log lines received since the poller started, and datagrams from any other address, dropped |
+
+Usage per client over a range, robust to the counter restarts:
+
+```promql
+sum by (name, mac) (increase(tplink_router_wifi_client_bytes_total{router="blr"}[$__range]))
+```
+
+The poller also writes logfmt lines to its journal, which Alloy ships to Loki
+under `{host="<poller host>", unit="tplink-router-poll.service"}`:
+
+| Line | Fields |
+|---|---|
+| `usage` | `kind` (`measured` or `carried`), `download_bytes`, `upload_bytes`, `seconds`, `mac`, `name`, `ip`, `band`; one per client with traffic, per poll |
+| `session_start`, `session_end` | `start`, and for the end `end`, `seconds` and the session's bytes; plus the client labels |
+| `router_log` | `severity`, `facility`, `msg`: a line from the router's own log |
+
+Usage per client over the time picker, up to Loki's 30 days:
+
+```logql
+sum by (name, mac) (sum_over_time({host="skullsaints", unit="tplink-router-poll.service"} |~ "^usage " | logfmt | unwrap download_bytes [$__range]))
+```
+
+!!! note "Why the Wi-Fi counters and not the router's statistics"
+    Measured 2026-11-20 on an Archer C5 v6.8: a 20.2 MB download moved the
+    client's Wi-Fi `download` counter by 22.7 MB, the router's internet counter
+    by 8.1 MB, and it never caught up. The router forwards most traffic in
+    hardware, past the counters its statistics page uses. A wired client would
+    not appear in the Wi-Fi counters at all; none was connected.
+
 ## Stock metrics worth knowing
 
 | Metric | Used by |
