@@ -1,5 +1,5 @@
 site_name: AI Box Model Queue
-site_description: Serializing proxy for inference requests sharing a single-GPU LM Studio host.
+site_description: "Proxy in front of the AI box's llama.cpp llama-server: model serialization, tool-schema cleaning, reasoning off-switch."
 site_author: Harshit Ruwali
 site_url: https://harshitruwali.github.io/homelab-infra/aibox-model-queue/
 
