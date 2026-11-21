@@ -101,6 +101,67 @@ def run_checks(browser, base):
           f"the page retries on its own and opens the note (after {time.monotonic() - t0:.1f} s, poll is 10 s)")
     page.close()
 
+    run_obsidian_checks(browser, base)
+
+
+def obsbar(page):
+    return page.eval("document.getElementById('obsbar').classList.contains('hidden') ? '' : "
+                     "document.getElementById('obsbar').textContent")
+
+
+def run_obsidian_checks(browser, base):
+    """The page cannot launch the app in the test browser (no handler for obsidian:), so every
+    attempt must fall back to this page; "the app opened" is simulated with a blur event."""
+    deep = base + "/#vault%2Fsub%2FDeep%20Note.md"
+    print("obsidian")
+    page = browser.new_page()
+    page.navigate(deep)
+    title_is(page, "Deep Note")
+    href = page.eval("document.getElementById('obs').href")
+    check(href == "obsidian://open?vault=vault&file=sub%2FDeep%20Note.md", f"the Obsidian button links the note ({href})")
+    check(page.eval("document.getElementById('obsmode').textContent") == "Off", "the device setting starts off")
+    page.eval("localStorage.setItem('vault-obsidian-names', JSON.stringify({vault: 'My Vault'})); updateObs()")
+    href = page.eval("document.getElementById('obs').href")
+    check(href == "obsidian://open?vault=My%20Vault&file=sub%2FDeep%20Note.md", f"a per-device vault name is used ({href})")
+    page.eval("localStorage.removeItem('vault-obsidian-names'); updateObs()")
+
+    # The button opened the app (the page lost focus): the page offers to remember it.
+    page.eval("document.getElementById('obs').click(); setTimeout(() => dispatchEvent(new Event('blur')), 50)", gesture=True)
+    offer = page.wait(lambda: "from now on" in obsbar(page), 3)
+    check(offer, f"after the app opened, the page offers to open links there ({obsbar(page)!r})")
+    page.eval("[...document.querySelectorAll('#obsbar button')].find(b => b.textContent === 'Yes').click()", gesture=True)
+    check(page.eval("localStorage.getItem('vault-obsidian')") == "on"
+          and page.eval("document.getElementById('obsmode').textContent") == "On", "Yes turns the setting on")
+    # The button did not open the app: it says so.
+    page.eval("document.getElementById('obs').click()", gesture=True)
+    check(page.wait(lambda: "did not open" in obsbar(page), 6), "a button press that opens nothing says so")
+
+    # With the setting on, a link opens the app; here nothing opens, so the page stays and says so.
+    page.navigate("about:blank")
+    page.navigate(deep)
+    check(title_is(page, "Deep Note"), "with the setting on, the linked note still renders here")
+    shown = page.wait(lambda: "did not open" in obsbar(page), 6)
+    check(shown and page.eval("location.protocol") == "http:" and "Stop trying" in obsbar(page),
+          f"the attempt falls back to this page ({obsbar(page)!r})")
+    # A reload of the same link does not try again.
+    page.call("Page.reload")
+    title_is(page, "Deep Note")
+    page.b.pump(5)
+    check(obsbar(page) == "", "reloading the same link does not try again")
+    # A file changed in the last 10 minutes stays here: the device may not have it yet.
+    page.navigate("about:blank")
+    page.navigate(base + "/#vault%2Fsub%2FFresh.md")
+    title_is(page, "Fresh")
+    check(page.wait(lambda: "may not have reached" in obsbar(page), 3), "a just-changed file stays here, with a note why")
+    # Artifacts have no Obsidian button and are never sent there.
+    page.navigate("about:blank")
+    page.navigate(base + "/#vault%2Fart.html")
+    title_is(page, "art.html")
+    page.b.pump(5)
+    check(page.eval("document.getElementById('obs').classList.contains('hidden')") and obsbar(page) == "",
+          "an HTML artifact has no Obsidian button and stays here")
+    page.close()
+
 
 def main():
     mode, base = sys.argv[1], sys.argv[2].rstrip("/")

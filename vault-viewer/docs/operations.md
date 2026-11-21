@@ -151,6 +151,7 @@ artifacts-pdf:local` removes it; see
 | PDF button reports Chromium's sandbox is not usable | The kernel restricts unprivileged user namespaces and the AppArmor profile is missing. Install it with the two commands [below](#install-the-apparmor-profile). See [The AppArmor profile](pdf-export.md#the-apparmor-profile). |
 | Not sure which of the above it is | `python3 ~/.local/bin/artifacts --check-pdf-runtime` renders a tiny page and prints `ok` or the reason. |
 | PDF button reports a failed render | Read the service log; see [PDF export](pdf-export.md#limits) for the limits. |
+| The viewer says `Obsidian did not open` | The device has no Obsidian app, or the app has no vault by that name. Check the name the app shows for the vault and set it with **Vault** at the bottom of the sidebar. On a device without the app, switch **Open links in Obsidian** off there. See [Opening files in Obsidian](index.md#opening-files-in-obsidian). |
 | Service stops when you log out or after a reboot | Enable lingering; see [Survive logout and reboot](#survive-logout-and-reboot). |
 
 ### Install the AppArmor profile

@@ -157,6 +157,18 @@ A note can therefore place text on the clipboard when you click in it, which it
 could already do inside its own frame. If nothing works, the button selects the
 code and asks for the copy shortcut.
 
+## Opening the Obsidian app
+
+The viewer page opens `obsidian://open` links in two cases only: when you
+press its **Obsidian** button, and, on a device where you switched on
+**Open links in Obsidian**, once for the file named in the URL the page was
+opened with. That file must be one the page listed itself in `/api/tree`, so a
+crafted link cannot name a path outside the vault or one that does not exist.
+Messages from a note's frame only select files in the viewer; they never open
+the app. The link carries the vault name and the file's path inside the vault,
+nothing else. The setting and the vault name are kept in the browser's
+`localStorage` and never reach the server.
+
 ## File access
 
 - Only files under a vault root are served. Ids are resolved after following

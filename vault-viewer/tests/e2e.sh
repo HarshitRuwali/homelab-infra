@@ -8,7 +8,8 @@
 #
 # Checks: the page loads with the note path in the URL hash written with plain
 # or %2F-encoded slashes, says it is loading until the file list arrives, and
-# shows a refused file list and retries on its own.
+# shows a refused file list and retries on its own; the Obsidian button, the
+# per-device "open links in Obsidian" setting and its fallback to this page.
 #
 # Bench: opens NOTE (a vault id such as personal/agent-notes/x.md) in a fresh
 # browser context RUNS times (default 3) per hash form and prints one JSON line
@@ -50,6 +51,10 @@ trap cleanup EXIT
 mkdir -p "$TMP/vault/sub"
 printf '# README\n\nHome note.\n' > "$TMP/vault/README.md"
 printf '# Deep Note\n\nA note in a subfolder, with a space in its name.\n' > "$TMP/vault/sub/Deep Note.md"
+printf '# Fresh\n\nJust written.\n' > "$TMP/vault/sub/Fresh.md"
+printf '<!doctype html><title>Art</title><p>An artifact.</p>\n' > "$TMP/vault/art.html"
+# Older than the viewer's 10-minute "may not have synced yet" window; Fresh.md is inside it.
+touch -d '1 hour ago' "$TMP/vault/README.md" "$TMP/vault/sub/Deep Note.md"
 
 PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')"
 python3 "$PROGRAM" --bind 127.0.0.1 --port "$PORT" "$TMP/vault" 2>"$TMP/server.log" &

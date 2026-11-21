@@ -245,8 +245,8 @@ class Page:
         if r.get("errorText"):
             raise RuntimeError("navigation failed: " + r["errorText"])
 
-    def eval(self, expr, session=None, context_id=None):
-        params = {"expression": expr, "returnByValue": True}
+    def eval(self, expr, session=None, context_id=None, gesture=False):
+        params = {"expression": expr, "returnByValue": True, "userGesture": gesture}
         if context_id:
             params["contextId"] = context_id
         r = self.call("Runtime.evaluate", params, session)

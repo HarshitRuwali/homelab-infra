@@ -22,6 +22,10 @@ input. See [Security](security.md) for the model.
 - **Exports PDF.** Notes and text files download as a print-styled A4 PDF,
   rendered by a sandboxed headless Chromium on the host, with no network. See
   [PDF export](pdf-export.md).
+- **Hands off to the Obsidian app.** Notes and images have an **Obsidian**
+  button that opens them in the app on the device you are using. A device
+  can also open every vault link in the app; see
+  [Opening files in Obsidian](#opening-files-in-obsidian).
 - **Stays read-only.** There is no route that writes, renames or deletes.
 
 Keyboard shortcuts in the viewer:
@@ -32,8 +36,38 @@ Keyboard shortcuts in the viewer:
 | `[` | Show or hide the sidebar |
 | `r` | Reload the current file |
 | `p` | Download the current note as PDF |
+| `o` | Open the current note or image in the Obsidian app |
 | `Alt` + `Left` | Back |
 | `Esc` | Clear search, close the drawer or the full-screen diagram |
+
+## Opening files in Obsidian
+
+The **Obsidian** button (**App** on a phone) opens the current note or image
+with an `obsidian://open` link. HTML artifacts, text files and archives have no
+button: Obsidian does not show them, so they stay in the viewer. The device
+needs the Obsidian app with a copy of the vault, for example synced through
+Nextcloud.
+
+A web page cannot tell whether an app is installed, so each device remembers
+it in the browser:
+
+1. Press **Obsidian** once. If the app opens, the viewer asks whether to open
+   vault links in Obsidian on this device from now on. If nothing opens within
+   4 seconds, it says so.
+2. With the setting on, a link to the viewer, such as one an agent posts in
+   chat, opens the file in Obsidian. The viewer page shows the same file
+   behind the app, so if the app does not open, the file is already in front
+   of you and the viewer says why. Reloading the same link stays in the
+   viewer, and moving between files inside the viewer never leaves it.
+3. A file changed in the last 10 minutes opens in the viewer, with a note: it
+   may not have synced to this device yet, and Obsidian cannot open a file it
+   does not have. Its **Open in Obsidian** button tries anyway.
+
+The setting is at the bottom of the sidebar: **Open links in Obsidian**
+switches it on or off, and **Vault** sets the vault's name in Obsidian on this
+device. The name defaults to the vault folder's name (`personal` for
+`~/obsidian/personal`); change it when the app knows the vault by another name.
+Both are stored in this browser only and never sent to the server.
 
 ## Prerequisites
 

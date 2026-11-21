@@ -2,7 +2,8 @@
 
 A read-only web viewer for an Obsidian vault, served on a host's Tailscale
 address. Notes with wikilinks, embeds, callouts and backlinks, Mermaid
-diagrams, HTML artifacts and images, with search, live reload and PDF export.
+diagrams, HTML artifacts and images, with search, live reload, PDF export and
+an **Obsidian** button that opens the file in the app.
 One stdlib Python program run as a systemd user service. The vault is written
 by agents, so the server treats everything in it as untrusted.
 

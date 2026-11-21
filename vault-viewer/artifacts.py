@@ -1673,6 +1673,12 @@ PAGE = r"""<!doctype html>
   #closezoom { position:absolute; top:12px; right:14px; z-index:3; background:#2b2b31; }
   .empty { position:absolute; inset:0; display:grid; place-items:center; color:var(--dim); text-align:center; padding:40px; }
   .hidden { display:none !important; }
+  #obsbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:7px 14px; border-bottom:1px solid var(--line); background:#28233a; font-size:13px; }
+  #obsbar span { flex:1; min-width:220px; }
+  #obs .app { display:none; }
+  aside footer { border-top:1px solid var(--line); padding:8px 14px; display:flex; flex-wrap:wrap; gap:6px; align-items:center; color:var(--dim); font-size:12px; }
+  aside footer span { flex:1; }
+  aside footer button { font-size:12px; padding:3px 8px; }
   #scrim { display:none; }
   /* Phones: the sidebar becomes a drawer over the page (opened with the menu
      button, closed by picking a file or tapping outside it). */
@@ -1688,6 +1694,7 @@ PAGE = r"""<!doctype html>
     .bar { gap:6px; padding:6px 8px; min-height:52px; }
     .bar .meta, #reload { display:none; }
     button, a.btn { padding:8px 11px; font-size:14px; min-width:38px; }
+    #obs .long { display:none; } #obs .app { display:inline; }
   }
   @media (hover: none) { #zin, #zout { display:none; } }  /* pinch instead */
 </style></head>
@@ -1699,6 +1706,9 @@ PAGE = r"""<!doctype html>
       <input id="q" placeholder="Search names and text (/)" autocomplete="off" spellcheck="false">
     </header>
     <div id="list"></div>
+    <footer><span>Open links in Obsidian</span>
+      <button id="obsmode" title="On this device, open vault links in the Obsidian app instead of this page">Off</button>
+      <button id="obsvault" title="The vault's name in Obsidian on this device">Vault&hellip;</button></footer>
   </aside>
   <main>
     <div class="bar">
@@ -1713,8 +1723,10 @@ PAGE = r"""<!doctype html>
       </span>
       <button id="reload" title="Reload (r)">Reload</button>
       <button id="pdf" class="hidden" title="Download as PDF (p)">PDF</button>
+      <a class="btn hidden" id="obs" title="Open in the Obsidian app (o)"><span class="long">Obsidian</span><span class="app">App</span> &#8599;</a>
       <a class="btn" id="open" target="_blank" rel="noopener" title="Open the raw file in a new tab">Raw &#8599;</a>
     </div>
+    <div id="obsbar" class="hidden" role="status"></div>
     <div id="stage">
       <div class="empty" id="empty"><div id="emptymsg">Loading the file list&hellip;</div></div>
       <div class="empty hidden" id="dl"><div><div id="dlname"></div><p>Archives are not previewed.</p><a class="btn" id="dllink" download>Download</a></div></div>
@@ -1882,6 +1894,7 @@ function show(it, opts = {}) {
   $("title").textContent = label(it);
   $("meta").textContent = metaFor(it);
   $("open").href = "/raw/" + enc(it.id);
+  updateObs();
   $("pdf").classList.toggle("hidden", it.kind !== "note" && it.kind !== "text");
   const isImg = it.kind === "svg" || it.kind === "image", isArc = it.kind === "archive";
   $("dl").classList.toggle("hidden", !isArc);
@@ -1929,7 +1942,115 @@ function select(it, anchor, how) {
     else history.pushState({ depth: (st.depth || 0) + 1 }, "", hash);
   }
   if (phone.matches) toggleSidebar(false);
+  $("obsbar").classList.add("hidden");
   show(it, { anchor }); render();
+}
+
+// The Obsidian app. A web page cannot tell whether an app is installed, so
+// each device remembers it: when the Obsidian button has opened the app, the
+// page offers to open vault links there from then on. A link then opens the
+// app, and this page, already showing the file, stays behind it as the
+// fallback. Nothing here reaches the server; the setting and the vault name
+// live in this browser's storage.
+const OBS_KINDS = new Set(["note", "image", "svg"]);  // files Obsidian shows itself
+const OBS_FRESH = 600;  // s: a newer file may not have synced to the device yet
+const store = (s) => ({
+  get(k) { try { return s.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { v === null ? s.removeItem(k) : s.setItem(k, v); } catch (e) { /* private mode */ } },
+});
+const local = store(localStorage), session = store(sessionStorage);
+const obsMode = () => local.get("vault-obsidian");  // "on", "off", or null: not asked yet
+function obsNames() {
+  try { const n = JSON.parse(local.get("vault-obsidian-names") || "{}"); return n && typeof n === "object" ? n : {}; }
+  catch (e) { return {}; }
+}
+function vaultOf(it) {
+  const root = it.id.split("/")[0], name = obsNames()[root];
+  return typeof name === "string" && name ? name : root;
+}
+const obsUrl = (it) => "obsidian://open?vault=" + encodeURIComponent(vaultOf(it)) +
+  "&file=" + encodeURIComponent(it.id.split("/").slice(1).join("/"));
+
+function updateObs() {
+  const ok = current && OBS_KINDS.has(current.kind);
+  $("obs").classList.toggle("hidden", !ok);
+  if (ok) $("obs").href = obsUrl(current);
+  $("obsmode").textContent = obsMode() === "on" ? "On" : "Off";
+}
+function setObsMode(mode) { local.set("vault-obsidian", mode); updateObs(); }
+
+// A message above the file, with buttons; any button also closes it.
+function notice(msg, actions = []) {
+  const bar = $("obsbar");
+  bar.replaceChildren();
+  const s = document.createElement("span");
+  s.textContent = msg;
+  bar.append(s);
+  for (const [text, fn] of [...actions, ["Dismiss", null]]) {
+    const b = document.createElement("button");
+    b.textContent = text;
+    b.onclick = () => { bar.classList.add("hidden"); if (fn) fn(); };
+    bar.append(b);
+  }
+  bar.classList.remove("hidden");
+}
+
+// True when the page loses focus or is hidden within MS: the app took over.
+function launched(ms) {
+  return new Promise((resolve) => {
+    const vis = () => { if (document.visibilityState === "hidden") finish(true); };
+    const yes = () => finish(true);
+    const t = setTimeout(() => finish(false), ms);
+    function finish(v) {
+      clearTimeout(t);
+      removeEventListener("blur", yes); removeEventListener("pagehide", yes);
+      document.removeEventListener("visibilitychange", vis);
+      resolve(v);
+    }
+    addEventListener("blur", yes); addEventListener("pagehide", yes);
+    document.addEventListener("visibilitychange", vis);
+  });
+}
+
+function didNotOpen(it, actions) {
+  notice(`Obsidian did not open, so the file is shown here. Is the app installed on this device, with a vault named "${vaultOf(it)}"?`,
+    [...actions, ["Vault name…", askVault]]);
+}
+
+// The link itself opens the app; this only watches whether it did.
+$("obs").onclick = () => {
+  const it = current;
+  launched(4000).then((ok) => {
+    if (!ok) didNotOpen(it, []);
+    else if (obsMode() === null)
+      notice("Obsidian opened. Open vault links in Obsidian on this device from now on?",
+        [["Yes", () => setObsMode("on")], ["No", () => setObsMode("off")]]);
+  });
+};
+
+// Called once, for the file named in the URL the page was opened with.
+function autoObsidian(it) {
+  if (obsMode() !== "on" || !OBS_KINDS.has(it.kind)) return;
+  if (session.get("vault-obsidian-tried") === it.id) return;  // reloading the same link stays here
+  session.set("vault-obsidian-tried", it.id);
+  const age = Date.now() / 1000 - it.mtime;
+  if (age < OBS_FRESH) {
+    return notice(`Changed ${Math.max(1, Math.round(age / 60))} min ago, so it may not have reached Obsidian on this device yet. Showing it here.`,
+      [["Open in Obsidian", () => $("obs").click()]]);
+  }
+  location.href = obsUrl(it);
+  launched(4000).then((ok) => { if (!ok) didNotOpen(it, [["Stop trying on this device", () => setObsMode("off")]]); });
+}
+
+function askVault() {
+  const root = (current || items[0] || { id: "" }).id.split("/")[0];
+  if (!root) return;
+  const v = prompt(`The vault's name in Obsidian on this device (the files under "${root}"):`, vaultOf({ id: root + "/" }));
+  if (v === null) return;
+  const names = obsNames();
+  if (v.trim() && v.trim() !== root) names[root] = v.trim(); else delete names[root];
+  local.set("vault-obsidian-names", JSON.stringify(names));
+  updateObs();
 }
 
 function goHome(how) {
@@ -1970,7 +2091,7 @@ async function refresh() {
       const it = byId.get(decodeURIComponent(location.hash.slice(1)));
       firstLoad = false;
       $("emptymsg").textContent = "Pick a note or an artifact on the left.";
-      if (it) select(it, "", "replace"); else goHome("replace");
+      if (it) { select(it, "", "replace"); autoObsidian(it); } else goHome("replace");
     } else if (current && !overlay) {
       const now = byId.get(current.id);
       if (now && now.mtime !== current.mtime) { current = now; show(now, { keep: true }); }
@@ -2035,6 +2156,8 @@ $("toggle").onclick = () => toggleSidebar();
 $("scrim").onclick = () => toggleSidebar(false);
 $("reload").onclick = () => current && show(current, { keep: true });
 $("pdf").onclick = downloadPdf;
+$("obsmode").onclick = () => setObsMode(obsMode() === "on" ? "off" : "on");
+$("obsvault").onclick = askVault;
 $("zin").onclick = () => zoomAt(1.25); $("zout").onclick = () => zoomAt(0.8); $("zfit").onclick = fit;
 const wrap = $("imgwrap");
 wrap.addEventListener("wheel", (e) => {
@@ -2085,6 +2208,7 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "[") toggleSidebar();
   else if (e.key === "r") current && show(current, { keep: true });
   else if (e.key === "p" && !e.ctrlKey && !e.metaKey && !e.altKey) downloadPdf();
+  else if (e.key === "o" && !e.ctrlKey && !e.metaKey && !e.altKey) { if (!$("obs").classList.contains("hidden")) $("obs").click(); }
   else if (e.altKey && e.key === "ArrowLeft") $("back").click();
   else if (!$("imgwrap").classList.contains("hidden")) {
     if (e.key === "+" || e.key === "=") zoomAt(1.25);
@@ -2092,6 +2216,7 @@ document.addEventListener("keydown", (e) => {
     else if (e.key === "0") fit();
   }
 });
+updateObs();
 refresh();
 // Poll every 10 s, not while the tab is hidden; catch up as soon as it is shown again.
 setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 10000);
