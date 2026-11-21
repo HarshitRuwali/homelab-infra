@@ -101,7 +101,7 @@ Full reference: [Playbooks](docs/reference/playbooks.md).
 | `alloy_collector` | Grafana Alloy, the collector on every monitored host |
 | `update_metrics` | pending-package and reboot-required textfile exporter |
 | `smart_metrics` | SMART disk health, bare metal only |
-| `pve_guest_metrics` | names each Proxmox guest's NIC counters, PVE hosts only |
+| `pve_guest_metrics` | names each Proxmox guest's NIC counters and reports tenant VMs' connections, packet-rate drops and firewall drops, PVE hosts only |
 | `gpu_exporter` | NVIDIA GPU telemetry, autodetected off the host |
 | `dell_fan_boost` | a fan boost controller for a Dell workstation's CPU fan, per host only |
 | `unattended_upgrades` | apt patching policy, applied by group membership only |

@@ -21,7 +21,11 @@ For how variable precedence works at all, see
 | `alloy_journal_max_age` | `12h` | lower to `1h` on hosts with huge journals |
 | `alloy_enable_docker` | `auto` | `auto` stats `/var/run/docker.sock` |
 | `alloy_enable_process` | `false` | per-process metrics; **opt-in on cardinality grounds** |
-| `alloy_syslog_listener_port` | `""` | empty means no listener; `5514` in `group_vars/central` for the firewall's Suricata output |
+| `alloy_syslog_listener_port` | `""` | empty means no listener; `5514` in `group_vars/central` for the firewall's syslog (Suricata, filter log, resolver log, `pfstats`; any other program name is stored as `job="firewall-other"`) |
+| `alloy_syslog_drop_filterlog_rules` | `[]` | filterlog rule labels dropped on arrival at the listener, on one interface only (the next row); empty keeps everything; `group_vars/central` lists OPNsense's default deny |
+| `alloy_syslog_drop_filterlog_iface` | `vtnet0` | the interface the drop list applies to, as written in field 5 of a `filterlog` line: the firewall's WAN; must not be empty |
+| `alloy_syslog_ratelimit_filterlog_rules` | `[]` | filterlog rule labels whose lines are kept at a few a second (rate 5, burst 20) and dropped beyond that; empty keeps everything; `group_vars/central` lists OPNsense's `<virusprot>` ban rule |
+| `alloy_pve_firewall_log` | `false` | ships `/var/log/pve-firewall.log` to Loki as `job="pve-firewall"`; `host_vars/t7920.yml` turns it on |
 | `alloy_fs_mount_points_exclude` | see file | |
 | `alloy_fs_types_exclude` | see file | |
 | `alloy_systemd_unit_exclude` | see file | |
@@ -51,6 +55,113 @@ For how variable precedence works at all, see
 
     Write `\\.` so the file contains `\\.`, which Alloy unescapes to the `\.`
     the regex engine wants. Keep these single-quoted in YAML.
+
+### Firewall logs in Loki
+
+Two log inputs, both off until a host asks for them. They add log streams, not
+metrics. The firewall's rule counters are metrics and come from the hypervisor,
+under [Proxmox guest NIC names](#proxmox-guest-nic-names).
+
+**OPNsense, over syslog.** The firewall cannot run Alloy, so it sends syslog to
+the listener `alloy_syslog_listener_port` opens (central node only). Each
+stream's `job` is the sender's syslog program name when that is one of
+`suricata` (as before), `filterlog`, `unbound` and `pfstats`; a sender with any
+other program name gets `job="firewall-other"`. All carry `source="opnsense"`,
+`host="opnsense"` and `role="firewall"`. A `filterlog` line also gets `iface`
+and `action`, read from the fifth and seventh fields of its CSV, so one
+segment's passes or blocks can be selected without scanning the rest. Each is
+only taken when it is a value the firewall can write: `iface` one of `vtnet0` to
+`vtnet99`, `lo0`, `enc0`, `pflog0`, `igb0` to `igb99` or `em0` to `em99`, and
+`action` one of `pass`, `block`, `match`, `rdr`, `nat`, `binat`, `scrub`,
+`rdr-anchor` or `nat-anchor`. A line whose field is anything else is still
+stored, with no such label.
+
+!!! warning "The listener cannot authenticate its senders"
+    It is plain TCP syslog: anyone who can reach the port can connect and write
+    any program name. Only the four names above become a `job`, so a stranger
+    cannot mint streams by inventing names, but that bounds the `job` values;
+    it does not prove who sent a line, and a sender that calls itself
+    `filterlog` is stored as `filterlog`. The `iface` and `action` labels are
+    read from the line itself, so they are no more trustworthy than the sender;
+    only the fixed sets above can become a label, so they do not multiply
+    streams. A forged line can still carry a valid interface and so escape the
+    WAN-only drop, or be dropped by it. Keep the port reachable from the
+    firewall only.
+
+`alloy_syslog_drop_filterlog_rules` is a list of rule labels, the fourth field
+of a `filterlog` line. A line carrying one is dropped before it is stored, but
+only when it is on the interface `alloy_syslog_drop_filterlog_iface` names
+(`vtnet0`, the WAN). A rule label does not name an interface, and the one
+listed is OPNsense's default deny, which every interface can fire; dropping it
+everywhere would hide what it catches on the lease and tenant segments.
+`iface` is read from the line before this stage, so the value must be the
+interface name exactly as `filterlog` writes it, and not empty. The labels are
+joined with `|` into one regular expression, so write each as it is printed.
+The list only has an effect where the listener is on, and an empty list keeps
+every line.
+
+```yaml
+# inventory/group_vars/central/main.yml
+alloy_syslog_drop_filterlog_rules:
+  - 02f4bab031b57d1e30553ce08e0ec131   # the default deny, `block drop in log inet all`: dropped on the WAN side only
+```
+
+`02f4bab0...` is `block drop in log inet all`, an OPNsense automatic rule, so it
+is the same on every install of the same release; check a label with `pfctl -sr
+-v | grep <label>` on the firewall before reusing it. It shows no `on
+<interface>` there, which is how to tell an interface-agnostic rule. On the WAN
+it is home LAN broadcast and discovery, so it is dropped; on the lease and
+tenant interfaces it shows out-of-state TCP and other default-denied traffic,
+so it is kept. OPNsense's own filter log still keeps every line for 31 days.
+
+!!! danger "Do not add `6125cb207f65033775d1069fdf6d0ccf` to the drop list"
+    Its rule is labelled "let out anything from the firewall host itself" and
+    is `pass out log route-to (vtnet0 10.10.0.1) inet from (vtnet0) to !
+    (vtnet0:network)`. That reads like the firewall's own traffic, Unbound
+    lookups and NTP, but pf translates NAT before it filters an outgoing
+    packet, so the outbound leg of **every tenant and lease flow** (source the
+    firewall's WAN address, with the translated source port) is logged under
+    this label too. That line is what matches an abuse report (public IP,
+    translated port, destination, time) to a VM, so it has to reach Loki. It
+    adds about 1.5 lines a second. A test fails if it is listed.
+
+`alloy_syslog_ratelimit_filterlog_rules` takes the same kind of list, but keeps
+a rule's lines instead of dropping them: a line carrying one of these labels
+passes only while the stream stays within a limit of 5 a second, after an
+initial burst of 20, and the excess is dropped. Use it for a rule that fires on
+every packet of a misbehaving source, where some lines are worth having and
+hundreds a second are not. It applies after the drop list, uses the same
+`|`-joined match on the fourth field, and, unlike the drop list, is not limited
+to one interface. It likewise only has an effect where the listener is on. An
+empty list keeps every line.
+
+```yaml
+# inventory/group_vars/central/main.yml
+alloy_syslog_ratelimit_filterlog_rules:
+  - add09fc915886757c300419fc2ecc1e6
+```
+
+That label is OPNsense's automatic `block <virusprot> hosts` rule. A source that
+exceeds a per-source connection limit is banned for up to an hour, and this rule
+logs every packet it sends meanwhile; the limit keeps a ban from flooding Loki.
+As with the drop list, OPNsense's own filter log still has every line.
+
+**Proxmox firewall, from a file.** With `alloy_pve_firewall_log: true`, Alloy
+tails `/var/log/pve-firewall.log` and ships it as `job="pve-firewall"`. The
+datacenter firewall's rules carry a log level, and what they drop lands in that
+file, one line per event. `chain` (which rule fired) and `vmid` (which guest,
+from the `PHYSIN=` or `PHYSOUT=` tap device) become labels; the rest of the
+line is read at query time. The timestamp is taken from the line, so a backlog
+after an Alloy restart lands at the right time. The Alloy user must be able to
+read the file, which is `root:adm 640`; the role already adds it to `adm`.
+
+```yaml
+# inventory/host_vars/t7920.yml
+alloy_pve_firewall_log: true
+```
+
+Only a Proxmox host has the file, so set it in that host's `host_vars`, not
+in a group.
 
 ## SMART disk health
 
@@ -122,14 +233,135 @@ host has no `/proc/i8k` or no manual control on the chosen channel.
 node_exporter on a Proxmox VE node already reports every guest NIC, because
 each one has a host-side device: `tap<vmid>i<n>` for a VM, `veth<vmid>i<n>` for
 a container. This role writes `fleet_pve_guest_nic_info`, the join key that
-names those counters, for the Guest Traffic dashboard. The metric reference is
-in the monitoring docs, under
+names those counters, for the Guest Traffic dashboard. The same script also
+reports on the tenant VMs. The metric reference is in the monitoring docs, under
 [Proxmox guest NICs](https://harshitruwali.github.io/homelab-infra/monitoring/reference/metrics/#proxmox-guest-nics).
+
+### What it writes
+
+One file, `fleet-pve-guests.prom`, written atomically by
+`/usr/local/bin/fleet-pve-guests` every 5 minutes and at boot.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `fleet_pve_guest_nic_info` | gauge, always `1` | `device`, `guest`, `vmid`, `type`, `nic`, `bridge` | one series per guest NIC; the join key for `node_network_*` |
+| `fleet_pve_tenant_conntrack_entries` | gauge | `vmid`, `guest`, `ip`, `segment` | conntrack entries whose **original source** is the tenant VM's address |
+| `fleet_pve_tenant_policed_packets_total` | counter | `vmid`, `guest`, `segment` | packets the packet-rate limit on the tenant VM's tap has dropped |
+| `fleet_pve_tenant_packet_limit_active` | gauge | `vmid`, `guest`, `segment` | `1` when the packet-rate limit is on the tap of a running lease VM, `0` when it has been lost; lease VMs only |
+| `fleet_pve_tenant_firewall_active` | gauge | `vmid`, `guest`, `segment` | `1` only when the hypervisor firewall is fully in force for a running tenant VM, `0` when any part is missing |
+| `fleet_pve_firewall_dropped_packets_total` | counter | `chain`, `family`, `rule` | packets the `tenant` and `lease` firewall groups dropped, per address family (`ipv4` or `ipv6`) |
+| `fleet_pve_guest_nics_total` | gauge | none | guest NICs named on this node; written even when it is `0` |
+| `fleet_pve_guests_collection_timestamp_seconds` | gauge | none | when the last complete collection finished |
+
+**Tenant VMs.** A VM whose Proxmox config has the tag `tenant` is a tenant VM,
+whether it is the owner's own work VM or one let to someone else, and gets one
+`fleet_pve_tenant_conntrack_entries` series. Containers are never tenants, so a
+tag on one is ignored. `segment` is `lease` when the VM also has the tag
+`lease`, otherwise `work`. The address is the first one in
+`[IPSET ipfilter-net0]` in `/etc/pve/firewall/<vmid>.fw`; a VM with no firewall
+file or no entry there gets no series. A VM with no tracked connections reads
+`0`. A connection counts for the host that opened it: an SSH session from
+OPNsense into a tenant counts for OPNsense's address, not the tenant's.
+
+The table comes from `/usr/sbin/conntrack -L` (the `conntrack` package,
+conntrack-tools), because the hypervisor's Proxmox kernel (7.0.14-pve) has no
+`/proc/net/nf_conntrack`. The role does not install it; it fails the play
+instead when `/usr/sbin/conntrack` is missing on a host where
+`pve_guest_metrics_enabled` is true, because without it every run would fail
+and every metric in the file would go stale. Install the `conntrack` package on
+the hypervisor first. The output is streamed a line at a time and never held,
+so a table of a million entries in a flood costs no more memory than a small
+one, and it is run once for all tenants, however many there are, and only when
+at least one has an address. A successful exit with no entries is an empty
+table and every tenant reads `0`. A missing binary, a nonzero exit or a run
+longer than 60 seconds is a failed read.
+
+**Packet-rate limit.** The hookscript for leased VMs puts a `matchall` police
+filter at preference 5 on the ingress of the VM's tap, `tap<vmid>i0`, which is
+the guest-to-host direction. `fleet_pve_tenant_policed_packets_total` is the
+number of packets that filter has dropped, so a value that keeps rising means a
+tenant is hitting the ceiling. It needs no address, and every VM with the
+`tenant` tag is a candidate, `segment` as above. A VM gets no series while it
+is stopped, or if its tap has no preference-5 police filter (it was started
+before the limit existed, say); neither is an error.
+
+`fleet_pve_tenant_packet_limit_active` is the other side of that: it says
+whether the filter is there at all. It is written for every **running** VM with
+**both** tags `tenant` and `lease`, and for no other: a work VM is not capped,
+so its absence of a limit is normal, and a stopped VM has no tap, so it gets no
+series. It is `1` when the preference-5 police filter is on the tap and `0`
+when it is not. The `0` matters because Proxmox's hot NIC update deletes the
+whole ingress qdisc, so a running lease can lose its ceiling while everything
+else looks normal, and a tap without the filter produces no
+`fleet_pve_tenant_policed_packets_total` series to notice. A tap with no
+ingress qdisc lists nothing to `tc`, which reads the same as a tap whose
+qdisc has no preference-5 filter: `0`. It comes from the same `tc` listing as
+the counter, so it adds no call. Proxmox's own bandwidth
+limit is a different police filter at preference 50 on the same qdisc, and is
+ignored. The filter lives on the tap, so the counter restarts from zero when
+the VM does. The value is the `dropped` figure in the filter's action
+statistics, read from the text of
+`tc -s filter show dev tap<vmid>i0 parent ffff:` and not from `tc -j`, because
+the JSON shape of a police action's statistics has not been checked against
+this host's iproute2.
+
+**Firewall in force.** `fleet_pve_tenant_firewall_active` is written for every
+**running** VM with the tag `tenant`, in either segment, and is `1` only when
+all of these hold, otherwise `0`:
+
+1. the datacenter firewall is on: `enable` in `pvesh get
+   /cluster/firewall/options`, read once per run, and only when a tenant VM is
+   running (a cluster that never set it counts as off);
+2. net0 of the VM has `firewall=1`;
+3. its `/etc/pve/firewall/<vmid>.fw` has `enable: 1` under `[OPTIONS]` and an
+   active `GROUP` rule for the segment's group: `tenant` for segment `work`,
+   `lease` for segment `lease`. A rule switched off with a leading `|`, a
+   different group, or a group name that only begins the same does not count;
+4. the chain `tap<vmid>i0-OUT` exists in iptables, which is only asked about
+   once the rest holds.
+
+It matters because every way of turning the firewall off removes the `GROUP-*`
+chains, the ipfilter and the macfilter together: `pve-firewall stop`, the
+datacenter option, a `qm set --net0` without `firewall=1`, a VM file with
+`enable: 0` or none at all. The drop counters below then read as quiet, since a
+chain that is not there is silence, and nothing else says a tenant VM is
+running unfiltered. A missing firewall file or chain is `0`, not an error. A
+stopped VM, which has no tap, gets no series.
+
+**Firewall drops.** The counters come from `iptables -w 5 -nvxL` and
+`ip6tables -w 5 -nvxL` on `GROUP-tenant-IN`, `GROUP-tenant-OUT`,
+`GROUP-lease-IN` and `GROUP-lease-OUT`, and the `family` label says which
+(`ipv4` or `ipv6`). `-x` keeps the packet counts exact, since without it a
+large one prints as `1234K`. A group's chains exist only while some VM uses the
+group, so a chain that is not there, in either family, yields no series for
+that family and is not an error. Two rules with one `rule` label in one chain
+and family add up, and a drop that matches none of the labels below is not
+reported.
+
+| `rule` | What it counts |
+|---|---|
+| `private` | a DROP whose match is the datacenter `private` set, in an `-OUT` chain |
+| `private_in` | the same match, in an `-IN` chain |
+| `smtp` | a DROP with destination port 25, in either chain |
+
+The private set has one name per family: `PVEFW-0-private-v4` in `iptables`
+and `PVEFW-0-private-v6` in `ip6tables`. Each family counts only its own, so
+the IPv6 drops that the `fe80::/10` and `fc00::/7` entries cause are included,
+and an `ipv4` series never includes an IPv6 match.
+
+**When a read fails.** If `pvesh`, a guest's config, a tenant VM's firewall
+file (other than a missing one), `conntrack -L`, the datacenter firewall
+option, a running tenant VM's `tc` listing or an `iptables` or `ip6tables`
+listing cannot be read, the script prints why to stderr, exits 1 and leaves the previous file in place. `fleet_pve_guests_collection_timestamp_seconds` then
+goes stale, which is the signal, rather than a `0` that looks like a quiet
+tenant. Check with `journalctl -u fleet-pve-guests.service -n 50`.
 
 !!! note "It checks the switch rather than trusting it"
     Enabled on a host without `/usr/bin/pvesh`, the role fails the play with a
     message saying so, instead of installing a timer that fails every five
-    minutes on a host that cannot answer.
+    minutes on a host that cannot answer. It does the same for
+    `/usr/sbin/conntrack`, the one prerequisite it will not install itself:
+    install the `conntrack` package on the hypervisor, then run the play again.
 
 !!! danger "Same Jinja trap as the SMART exporter"
     `templates/fleet-pve-guests.j2` is a Python script rendered as Jinja, so it
@@ -249,7 +481,7 @@ here.
 | `grafana_admin_user` | `admin` | **override this**; `lxc-install.sh` writes a real username |
 | `grafana_api_url` | `http://127.0.0.1:3000` | |
 | `central_host_label` | from `host_vars` | must match `MONITOR_HOSTNAME` |
-| `grafana_alerting_static_files` | 11 files | `rules-availability.yaml` is templated, not listed |
+| `grafana_alerting_static_files` | every committed rules file, plus contact points, templates, policies and mute timings | `rules-availability.yaml` is templated, not listed |
 
 ## Site-wide
 

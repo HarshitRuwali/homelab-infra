@@ -7,10 +7,12 @@ How long data is kept, and the disk arithmetic that decided it.
 | Store | Setting | Where |
 |---|---|---|
 | Prometheus | `PROMETHEUS_RETENTION`, default `7d` | `.env` on the central node |
-| Loki | `retention_period`, default `168h` (7d) | `loki/loki-config.yml` |
+| Loki, direct LXC install | `LOKI_RETENTION_PERIOD`, default `168h` (7d) in `scripts/lxc-install.sh` | `.env` on the central node; the live install sets `720h` (30 days), see [below](#loki-retention-for-the-tenant-logs) |
+| Loki, Docker Compose | `retention_period` in `loki/loki-config.yml`, committed as `720h` | the file itself; the Compose path does not read `LOKI_RETENTION_PERIOD` |
 | systemd journal (local) | `SystemMaxUse`, uncapped by default | `journald_system_max_use` per group |
 
-Both were shortened from 30 days. That was not a preference; it was arithmetic.
+The 7 day defaults were shortened from 30 days. That was not a preference; it
+was arithmetic.
 
 ## The measurement
 
@@ -54,19 +56,27 @@ box from 75% to 60% used.
 
 === "Loki"
 
-    ```yaml
-    # loki/loki-config.yml
-    limits_config:
-      retention_period: 336h
+    Direct LXC install: set the value in `.env` on the central node, then
+    re-render the config. `lxc-update.sh` restarts Loki itself.
+
+    ```bash
+    # in .env on the central node
+    LOKI_RETENTION_PERIOD=720h
     ```
 
     ```bash
     scripts/lxc-update.sh central --config-only
-    systemctl restart loki
     ```
 
+    A value already exported in the shell wins over `.env`, so unset it first
+    if the change does not appear in `/etc/loki/loki-config.yml`.
+
+    Docker Compose: edit `retention_period` under `limits_config` in
+    `loki/loki-config.yml` and restart with `scripts/monitoring.sh central
+    restart`.
+
     Retention only takes effect if the compactor is running with
-    `retention_enabled: true`.
+    `retention_enabled: true`; both configs set it.
 
 === "Local journal"
 
@@ -90,6 +100,45 @@ box from 75% to 60% used.
     a buffer between a write and its shipment, plus enough history to make
     `journalctl` useful over SSH. **Central retention is what you actually
     query.**
+
+## Loki retention for the tenant logs
+
+The firewall's filter log, Unbound's query log, `pfstats`, Suricata's alerts
+and the Proxmox firewall log record much of what the work VMs and the leased
+VMs did, though not all of it: the wiring page lists
+[what is not covered](https://harshitruwali.github.io/homelab-infra/security/wiring/#what-is-not-covered).
+For a leased VM they are the main record there is. An abuse report, a complaint
+from the other end of a connection, or a dispute with the tenant usually
+arrives days or weeks after the traffic, and a 7 day default has deleted the
+evidence by then. The live install therefore runs Loki at 30 days.
+
+| | Value |
+|---|---|
+| Default in `scripts/lxc-install.sh` | `168h` (7 days) |
+| Live install | `720h` (30 days), set by `LOKI_RETENTION_PERIOD` in `.env` on the central node |
+| Applied with | `scripts/lxc-update.sh central --config-only` |
+| Prometheus | unchanged, `7d` |
+
+The default stays at 7 days on purpose: a fresh install of this repository has
+no leased VMs and a small disk. Raise it where the lease logs exist.
+
+**Disk cost.** Before the tenant logs were added, 7 days of Loki for the whole
+fleet was about 185 MB on disk. A linear extrapolation to 30 days is about
+790 MB for that same data (185 MB times 30 over 7), not a measurement. The new
+streams are not measured yet: the firewall sends about 55 MB a day of syslog
+before the two automatic rules in `alloy_syslog_drop_filterlog_rules` are
+dropped at ingest, and Loki compresses it, so the stored size is smaller. Check
+free space before raising retention and measure after a week:
+
+```bash
+du -sh /var/lib/loki
+df -h /var/lib/loki
+```
+
+!!! note "Retention is not the ingest age limit"
+    `reject_old_samples_max_age: 168h` in the same config is a separate limit:
+    it refuses lines older than 7 days at the door, for example during a
+    backfill. Raising retention does not change it.
 
 ## Ingest limits
 

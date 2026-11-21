@@ -264,8 +264,9 @@ loki.source.docker "containers" {
 {% if alloy_syslog_listener_port | default('') | string | length > 0 %}
 
 // --- Syslog from devices that cannot run Alloy ---------------------------
-// Suricata runs on the firewall, which is FreeBSD and outside Ansible's
-// reach, so its EVE alerts arrive as syslog instead of being scraped. Only
+// The firewall is FreeBSD and outside Ansible's reach, so what it knows
+// arrives as syslog instead of being scraped: Suricata's EVE alerts, its
+// filter log, the resolver's query log and a per-minute pfstats line. Only
 // the host with alloy_syslog_listener_port set opens this; see
 // group_vars/central and security/docs/wiring/index.md.
 //
@@ -274,11 +275,137 @@ loki.source.docker "containers" {
 // firewall's alerts were stored as host="main-server", role="central", as if
 // the monitoring box had raised them. Labels on the stream take precedence
 // over external_labels, which is what makes this override work.
+loki.relabel "firewall_syslog" {
+  // The syslog program name becomes `job`, for the four programs the firewall
+  // runs. Suricata keeps job="suricata", the value every dashboard and rule
+  // already selects; the others (filterlog, unbound, pfstats) get their own
+  // job instead of being stored as Suricata.
+  //
+  // Only those four. The listener cannot tell who is connecting and the
+  // program name is whatever the sender writes, so copying it unchecked would
+  // let anyone who can reach the port create streams without limit. Any other
+  // name leaves the listener's static job="firewall-other" in place. The
+  // allowed names bound the number of streams; they do not prove who sent a
+  // line.
+  rule {
+    source_labels = ["__syslog_message_app_name"]
+    regex         = "^(suricata|filterlog|unbound|pfstats)$"
+    target_label  = "job"
+    replacement   = "$1"
+  }
+
+  forward_to = []
+}
+
 loki.source.syslog "firewall" {
   listener {
     address  = "0.0.0.0:{{ alloy_syslog_listener_port }}"
     protocol = "tcp"
-    labels   = {job = "suricata", source = "opnsense", host = "opnsense", role = "firewall"}
+    labels   = {job = "firewall-other", source = "opnsense", host = "opnsense", role = "firewall"}
+  }
+
+  relabel_rules = loki.relabel.firewall_syslog.rules
+  forward_to    = [loki.process.firewall_syslog.receiver]
+}
+
+loki.process "firewall_syslog" {
+  // filterlog is CSV: rule,sub,anchor,label,INTERFACE,reason,ACTION,dir,...
+  // Interface and action become labels so a query can select one segment's
+  // passes or blocks without scanning the rest. This comes FIRST: the drop
+  // below selects on iface, and a stage can only select on a label an earlier
+  // stage has set.
+  //
+  // Each field is only taken when it is a value the firewall can write. The
+  // listener cannot tell who is connecting, and a label built from whatever a
+  // sender puts in the line would let anyone who can reach the port mint
+  // streams without limit. A line whose field is anything else is still
+  // stored, with no such label. One stage per field, so a bad interface does
+  // not cost the line its action. The allowed interfaces are vtnet0 to vtnet99,
+  // lo0, enc0, pflog0, igb0 to igb99 and em0 to em99; the allowed actions are
+  // pass, block, match, rdr, nat, binat, scrub, rdr-anchor and nat-anchor.
+  stage.match {
+    selector = `{job="filterlog"}`
+
+    stage.regex {
+      expression = `^[^,]*,[^,]*,[^,]*,[^,]*,(?P<iface>vtnet[0-9]{1,2}|lo0|enc0|pflog0|igb[0-9]{1,2}|em[0-9]{1,2}),`
+    }
+
+    stage.regex {
+      expression = `^[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,[^,]*,(?P<action>pass|block|match|rdr|nat|binat|scrub|rdr-anchor|nat-anchor),`
+    }
+
+    stage.labels {
+      values = {iface = "", action = ""}
+    }
+  }
+
+{% if alloy_syslog_drop_filterlog_rules | default([]) | length > 0 %}
+  // filterlog lines that carry no decision worth keeping, matched by the rule
+  // label in field 4 (see group_vars/central for what each one is), and only
+  // on the interface named in alloy_syslog_drop_filterlog_iface. A rule label
+  // does not name an interface, and the rule listed there is OPNsense's default
+  // deny, which every interface can fire: dropped everywhere it would hide
+  // what it catches on every other segment.
+  stage.match {
+    selector = `{job="filterlog", iface="{{ alloy_syslog_drop_filterlog_iface }}"} |~ ",({{ alloy_syslog_drop_filterlog_rules | join('|') }}),"`
+    action   = "drop"
+  }
+
+{% endif %}
+{% if alloy_syslog_ratelimit_filterlog_rules | default([]) | length > 0 %}
+  // A source banned for exceeding a connection limit keeps retrying, and the
+  // firewall logs every blocked packet: hundreds of lines a second. Keep the
+  // first few of each second and drop the rest; the OPNsense log has them all.
+  stage.match {
+    selector = `{job="filterlog"} |~ ",({{ alloy_syslog_ratelimit_filterlog_rules | join('|') }}),"`
+
+    stage.limit {
+      rate  = 5
+      burst = 20
+      drop  = true
+    }
+  }
+
+{% endif %}
+  forward_to = [loki.write.central.receiver]
+}
+{% endif %}
+
+{% if alloy_pve_firewall_log | default(false) | bool %}
+
+// --- Proxmox firewall log --------------------------------------------------
+// The datacenter firewall's rules carry a log level, and pvefw-logger writes
+// what they drop to this file, one line per event, rate-limited by iptables to
+// one a second per rule. The line starts with "<vmid-ish> <level> <chain> <time>"
+// and carries IN=, OUT=, PHYSIN=tapNNNi0, SRC=, DST=, PROTO=, DPT=. `chain`
+// (which rule fired) and `vmid` (which guest) become labels; everything else is
+// read at query time with | logfmt or | regexp. The timestamp comes from the
+// line, so a backlog after a restart lands at the right time.
+local.file_match "pve_firewall" {
+  path_targets = [{"__path__" = "/var/log/pve-firewall.log", job = "pve-firewall"}]
+}
+
+loki.source.file "pve_firewall" {
+  targets    = local.file_match.pve_firewall.targets
+  forward_to = [loki.process.pve_firewall.receiver]
+}
+
+loki.process "pve_firewall" {
+  stage.regex {
+    expression = `^\d+ \d+ (?P<chain>\S+) (?P<ts>\d{2}/\w{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}) `
+  }
+
+  stage.timestamp {
+    source = "ts"
+    format = "02/Jan/2006:15:04:05 -0700"
+  }
+
+  stage.regex {
+    expression = `PHYS(?:IN|OUT)=tap(?P<vmid>\d+)i\d+`
+  }
+
+  stage.labels {
+    values = {chain = "", vmid = ""}
   }
 
   forward_to = [loki.write.central.receiver]

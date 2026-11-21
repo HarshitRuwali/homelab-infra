@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Managed by ansible/roles/pve_guest_metrics. Do not edit by hand.
 #
-# Writes one info series per Proxmox guest NIC to
-# {{ pve_guest_metrics_dir }}/{{ pve_guest_metrics_file }}, for the
+# Writes one info series per Proxmox guest NIC, and five families about tenant
+# VMs, to {{ pve_guest_metrics_dir }}/{{ pve_guest_metrics_file }}, for the
 # node_exporter textfile collector that Alloy already reads.
 #
 # WHY: Proxmox gives every running guest NIC a device on the host, tap<vmid>i<n>
@@ -19,7 +19,51 @@
 # and pending sections that look like the live config. The API returns the
 # running configuration (--current) in a stable JSON shape, which is the same
 # reason roles/smart_metrics reads smartctl --json.
+#
+# TENANT VMs. A VM tagged "tenant" sits behind the tenant firewall group. The
+# tag covers the owner's own work VMs (segment "work") and VMs let to someone
+# else, which also carry the tag "lease" (segment "lease"). This is where
+# questions get answered that nothing else on the host can:
+#   fleet_pve_tenant_conntrack_entries   how many connections a tenant holds
+#       open, counted from the stream of `conntrack -L` by ORIGINAL source
+#       address (the first src= on a line; the second is the far end). The
+#       address is the one its firewall file pins with ipfilter, the
+#       [IPSET ipfilter-net0] section of /etc/pve/firewall/<vmid>.fw. The
+#       table is streamed once for every tenant, not once per tenant, a line
+#       at a time because it can hold a million entries in a flood. A tenant
+#       with no address gets no series. This kernel has no
+#       /proc/net/nf_conntrack, which is why the netlink tool is used.
+#   fleet_pve_tenant_policed_packets_total   packets the packet-rate limit has
+#       dropped, read from the police filter at preference 5 on the ingress of
+#       the VM's tap device (tap<vmid>i0, which is the guest-to-host direction).
+#       It needs no address. A VM that is stopped, or whose tap has no such
+#       filter, gets no series; the counter restarts when the VM does, because
+#       the tap and its filter are recreated.
+#   fleet_pve_tenant_packet_limit_active   1 when that filter is on the tap, 0
+#       when it is not, for every RUNNING lease VM (both tags) and for no one
+#       else: a work VM is never capped, and a stopped VM has no tap. Proxmox's
+#       hot NIC update deletes the whole ingress qdisc, so a running lease can
+#       lose its ceiling with nothing else noticing, since a tap without the
+#       filter produces no policed-packets series. It comes from the same tc
+#       listing as the counter. A tap with no ingress qdisc lists nothing, which
+#       reads as filter absent.
+#   fleet_pve_tenant_firewall_active   1 for a RUNNING tenant VM (either
+#       segment) only when the hypervisor firewall is fully in force for it,
+#       else 0: the datacenter firewall option enable is 1 (read once per run),
+#       the VM's net0 has firewall=1, its /etc/pve/firewall/<vmid>.fw has
+#       enable: 1 under [OPTIONS] and a GROUP rule for its segment's group
+#       (tenant for work, lease for lease), and the chain tap<vmid>i0-OUT
+#       exists. With the firewall off the GROUP chains, ipfilter and macfilter
+#       all vanish, and the counters below read as silence, so this is what
+#       notices. A missing firewall file or chain is 0, not an error; a stopped
+#       VM gets no series.
+#   fleet_pve_firewall_dropped_packets_total   what the groups dropped, read
+#       from the packet counters of GROUP-tenant-IN/OUT and GROUP-lease-IN/OUT
+#       (iptables -nvxL, and ip6tables for the IPv6 half, told apart by the
+#       family label). A chain exists only while some VM uses the group, so a
+#       missing chain, in either family, is silence, not an error.
 
+import ipaddress
 import json
 import os
 import re
@@ -27,16 +71,56 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 OUT_DIR = "{{ pve_guest_metrics_dir }}"
 OUT_FILE = "{{ pve_guest_metrics_file }}"
 
 PVESH = "/usr/bin/pvesh"
+IPTABLES = "/usr/sbin/iptables"
+IP6TABLES = "/usr/sbin/ip6tables"
+TC = "/usr/sbin/tc"
+SYS_NET = "/sys/class/net"
+CONNTRACK = "/usr/sbin/conntrack"
+CONNTRACK_TIMEOUT = 60
+FW_DIR = "/etc/pve/firewall"
 NET_KEY = re.compile(r"^net(\d+)$")
 # The host-side device prefix Proxmox uses for each guest type.
 PREFIX = {"qemu": "tap", "lxc": "veth"}
 API_ERRORS = (OSError, ValueError, subprocess.SubprocessError)
+
+# Tenant VMs: the tag that selects them, the tag that marks one as let to
+# someone else, and the firewall groups they sit behind.
+TENANT_TAG = "tenant"
+LEASE_TAG = "lease"
+FW_GROUPS = ("tenant", "lease")
+# The firewall group a VM must be in, by segment: the owner's own VMs use the
+# tenant group, a lease uses the lease group.
+SEGMENT_GROUP = {"work": "tenant", "lease": "lease"}
+IPFILTER_SET = re.compile(r"^\[IPSET\s+ipfilter-net0\]", re.IGNORECASE)
+# The first "src=" of a conntrack line is the ORIGINAL direction's source; the
+# second, in the reply tuple, is the far end and must not be counted. A line
+# without one (the summary conntrack prints, a blank) matches nothing.
+CT_SRC = re.compile(r" src=(\S+)")
+# What iptables prints for a chain that does not exist (exit status 1).
+NO_CHAIN = "No chain/target/match by that name"
+# What tc prints when the device went away between looking and asking.
+NO_DEVICE = "Cannot find device"
+# The packet-rate limit is a police filter at this preference on the tap's
+# ingress. Proxmox's own bandwidth limit is another police filter on the same
+# qdisc at preference 50, which must not be read as this one: pref 5 is not
+# pref 50. The counter is on the action: "Sent 0 bytes 0 pkt (dropped 0, ...)".
+POLICE_PREF = re.compile(r"\bpref\s+5\b")
+POLICE_DROPPED = re.compile(r"\(dropped\s+(\d+),")
+# A DROP that matches the datacenter ipset of private ranges, which has one
+# name per address family, and a DROP on the SMTP port. dpt:25 must not match
+# dpt:2525.
+PRIVATE_SET = {
+    "ipv4": re.compile(r"match-set PVEFW-0-private-v4(?:\s|$)"),
+    "ipv6": re.compile(r"match-set PVEFW-0-private-v6(?:\s|$)"),
+}
+SMTP_PORT = re.compile(r"\bdpt:25(?!\d)")
 
 
 def pvesh(path, *args):
@@ -62,6 +146,242 @@ def bridge_of(netspec):
     return ""
 
 
+def tags_of(cfg):
+    """'tenant;lease' -> {'tenant', 'lease'}. Tags are matched whole, in lower case."""
+    return set(t.lower() for t in re.split(r"[;, ]+", str(cfg.get("tags") or "")) if t)
+
+
+def read_fw_file(vmid):
+    """The text of the VM's firewall file, or None when it has none. Other read
+    errors propagate: a file that cannot be read is not a VM without one."""
+    try:
+        with open(os.path.join(FW_DIR, str(vmid) + ".fw")) as fh:
+            return fh.read()
+    except FileNotFoundError:
+        return None
+
+
+def fw_lines(text):
+    """(section, line) for each non-blank line of a firewall file, comments cut.
+    The section is the upper-case text of its header: OPTIONS, RULES, ..."""
+    section = ""
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("["):
+            section = line.strip("[] \t").upper()
+            continue
+        yield section, line
+
+
+def fw_enabled(text):
+    """True when the file's [OPTIONS] section says enable: 1. Without the line
+    the firewall is off for that VM."""
+    for section, line in fw_lines(text):
+        m = re.match(r"enable:\s*(\S+)$", line, re.IGNORECASE)
+        if section == "OPTIONS" and m:
+            return m.group(1) == "1"
+    return False
+
+
+def fw_has_group(text, group):
+    """True when [RULES] has an active GROUP rule for the group. A rule that
+    is switched off starts with a pipe and so never matches."""
+    pattern = re.compile(r"GROUP\s+" + re.escape(group) + r"(?:\s|$)")
+    return any(section == "RULES" and pattern.match(line) for section, line in fw_lines(text))
+
+
+def nic_has_firewall(netspec):
+    """'virtio=BC:24:11:00:00:01,bridge=vmbr2,firewall=1' -> True."""
+    for part in str(netspec or "").split(","):
+        key, _, value = part.partition("=")
+        if key == "firewall":
+            return value == "1"
+    return False
+
+
+def tenant_address(text):
+    """The one address pinned by [IPSET ipfilter-net0] in a VM's firewall file
+    text, or None when the text or the entry is missing."""
+    if text is None:
+        return None
+    in_set = False
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if line.startswith("["):
+            in_set = bool(IPFILTER_SET.match(line))
+            continue
+        if not in_set or not line:
+            continue
+        # A negated entry ("!10.0.0.5") fails the address check and is skipped.
+        entry = line.split()[0]
+        if entry.endswith("/32"):
+            entry = entry[:-3]
+        try:
+            return str(ipaddress.IPv4Address(entry))
+        except ValueError:
+            continue
+    return None
+
+
+def conntrack_counts(addresses):
+    """One pass over `conntrack -L`: entries per original source address, for
+    the addresses asked about. The output is streamed a line at a time and
+    never held, so a table of a million entries costs no more memory than an
+    empty one, and it is read once whatever the number of tenants.
+
+    A successful exit with no entries is a valid empty table and counts as
+    zero. A missing binary, a nonzero exit or a run longer than
+    CONNTRACK_TIMEOUT seconds raises, like every other read here. The summary
+    conntrack prints goes to stderr, which is sent to a file so a full pipe
+    can never stall the stream."""
+    counts = dict((a, 0) for a in addresses)
+    expired = []
+    with tempfile.TemporaryFile("w+") as err:
+        proc = subprocess.Popen([CONNTRACK, "-L"], stdout=subprocess.PIPE, stderr=err,
+                                universal_newlines=True)
+
+        def expire():
+            expired.append(True)
+            proc.kill()
+
+        timer = threading.Timer(CONNTRACK_TIMEOUT, expire)
+        timer.start()
+        try:
+            for line in proc.stdout:
+                m = CT_SRC.search(line)
+                if m and m.group(1) in counts:
+                    counts[m.group(1)] += 1
+            status = proc.wait()
+        finally:
+            timer.cancel()
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            proc.stdout.close()
+        if expired:
+            raise subprocess.TimeoutExpired([CONNTRACK, "-L"], CONNTRACK_TIMEOUT)
+        if status != 0:
+            err.seek(0)
+            raise subprocess.SubprocessError(
+                "conntrack -L exited " + str(status) + ": " + err.read().strip()[:300])
+    return counts
+
+
+def chain_listing(binary, chain):
+    """`<binary> -nvxL <chain>` output, or None when the chain does not exist.
+    The binary is iptables or ip6tables, which print the same thing. -x keeps
+    the packet counters exact; without it a large one reads as 1234K, which a
+    counter cannot be built from. -w waits for the xtables lock that
+    pve-firewall holds while it recompiles, instead of failing."""
+    p = subprocess.run(
+        [binary, "-w", "5", "-nvxL", chain],
+        capture_output=True, text=True, timeout=30,
+    )
+    if p.returncode == 1 and NO_CHAIN in p.stderr:
+        return None
+    if p.returncode != 0:
+        raise subprocess.SubprocessError(
+            os.path.basename(binary) + " -L " + chain + " exited " + str(p.returncode) + ": " + p.stderr.strip())
+    return p.stdout
+
+
+def parse_drops(listing, direction, family="ipv4"):
+    """Packets dropped per rule label in one chain listing: private (the
+    private ranges of the family, outbound), private_in (the same match,
+    inbound) and smtp (port 25). Rules that do not drop, and drops that match
+    none of these, are not reported. Two rules with one label add up."""
+    out = {}
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) < 3 or not fields[0].isdigit() or fields[2] != "DROP":
+            continue
+        if PRIVATE_SET[family].search(line):
+            rule = "private" if direction == "OUT" else "private_in"
+        elif SMTP_PORT.search(line):
+            rule = "smtp"
+        else:
+            continue
+        out[rule] = out.get(rule, 0) + int(fields[0])
+    return out
+
+
+def parse_policed(listing):
+    """Packets dropped by the pref-5 police filter in `tc -s filter show` text,
+    or None when there is no such filter. tc may print a filter as a header
+    line and then again with its handle, so the text is split into one block
+    per "filter" line and only a block at pref 5 with a police action counts."""
+    total = None
+    for block in re.split(r"^(?=filter\s)", listing, flags=re.MULTILINE):
+        if not POLICE_PREF.search(block.split("\n", 1)[0]) or "police" not in block:
+            continue
+        m = POLICE_DROPPED.search(block)
+        if m:
+            total = (total or 0) + int(m.group(1))
+    return total
+
+
+def tap_limit(vmid):
+    """(running, dropped) for the packet-rate limit on the VM's first tap.
+    running is False when the VM has no tap, or lost it before tc ran. dropped
+    is what the pref-5 police filter has dropped, or None when the tap has no
+    such filter, which includes a tap with no ingress qdisc at all (tc lists
+    nothing for it). The text of `tc -s filter show` is parsed, not `tc -j`:
+    the JSON shape of a police action's statistics has not been checked against
+    this host's iproute2. The device is looked up in sysfs first, so a stopped
+    VM is silence and does not depend on tc's wording for a missing device."""
+    tap = PREFIX["qemu"] + str(vmid) + "i0"
+    if not os.path.exists(os.path.join(SYS_NET, tap)):
+        return False, None
+    p = subprocess.run(
+        [TC, "-s", "filter", "show", "dev", tap, "parent", "ffff:"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if p.returncode != 0:
+        if NO_DEVICE in p.stderr:
+            return False, None
+        raise subprocess.SubprocessError(
+            "tc filter show " + tap + " exited " + str(p.returncode) + ": " + p.stderr.strip())
+    return True, parse_policed(p.stdout)
+
+
+def firewall_drops():
+    """[(chain, family, rule, packets)] over the tenant and lease groups, in
+    both address families, sorted. A chain that is missing in one family is
+    silence for that family only."""
+    drops = []
+    for family, tool in (("ipv4", IPTABLES), ("ipv6", IP6TABLES)):
+        for group in FW_GROUPS:
+            for direction in ("IN", "OUT"):
+                chain = "GROUP-" + group + "-" + direction
+                listing = chain_listing(tool, chain)
+                if listing is None:
+                    continue
+                for rule, packets in parse_drops(listing, direction, family).items():
+                    drops.append((chain, family, rule, packets))
+    return sorted(drops)
+
+
+def datacenter_firewall_enabled():
+    """The datacenter firewall's enable option, from the cluster API. Not set
+    means off, which is Proxmox's default."""
+    return str(pvesh("/cluster/firewall/options").get("enable", 0)).lower() in ("1", "true")
+
+
+def firewall_active(vm, facts, datacenter_on):
+    """True when the hypervisor firewall is fully in force for a running tenant
+    VM: the datacenter firewall on, firewall=1 on net0, the VM's own firewall
+    enabled with a rule for the group its segment belongs to, and the chain
+    Proxmox builds for its tap in place. Any missing part is False, and the
+    chain is only asked about once the rest holds."""
+    if not datacenter_on or not facts["nic_firewall"] or facts["fw"] is None:
+        return False
+    if not fw_enabled(facts["fw"]) or not fw_has_group(facts["fw"], SEGMENT_GROUP[vm["segment"]]):
+        return False
+    return chain_listing(IPTABLES, PREFIX["qemu"] + vm["vmid"] + "i0-OUT") is not None
+
+
 def main():
     node = socket.gethostname().split(".")[0]
     try:
@@ -73,7 +393,11 @@ def main():
         return 1
 
     samples = []
+    tenant_vms = []
+    tenant_facts = {}
+    tenants = []
     failed = []
+    unread = []
     for g in guests:
         gtype, vmid = g.get("type"), g.get("vmid")
         # Templates never run, so they never have a device to name. Guests on
@@ -88,6 +412,27 @@ def main():
             failed.append(str(vmid))
             continue
         name = cfg.get("name") or cfg.get("hostname") or g.get("name") or str(vmid)
+        # Tenant VMs are VMs: a container shares the host's kernel and is never
+        # let to anyone, so a tag on one is not a tenant.
+        tags = tags_of(cfg)
+        if gtype == "qemu" and TENANT_TAG in tags:
+            segment = "lease" if LEASE_TAG in tags else "work"
+            tenant_vms.append({"guest": name, "segment": segment, "vmid": str(vmid)})
+            try:
+                fw_text = read_fw_file(vmid)
+            except API_ERRORS as e:
+                print("firewall file of " + str(vmid) + " failed: " + str(e), file=sys.stderr)
+                unread.append(str(vmid))
+                fw_text = None
+            address = tenant_address(fw_text)
+            tenant_facts[str(vmid)] = {"fw": fw_text, "nic_firewall": nic_has_firewall(cfg.get("net0"))}
+            if address:
+                tenants.append({
+                    "guest": name,
+                    "ip": address,
+                    "segment": segment,
+                    "vmid": str(vmid),
+                })
         for key, spec in cfg.items():
             m = NET_KEY.match(key)
             if not m:
@@ -108,6 +453,25 @@ def main():
         print("no guest config for VMID(s) " + ", ".join(failed)
               + ", keeping the previous file", file=sys.stderr)
         return 1
+    if unread:
+        print("no firewall file for VMID(s) " + ", ".join(unread)
+              + ", keeping the previous file", file=sys.stderr)
+        return 1
+
+    # The same rule for the tenant readings: a table, a chain or a filter that
+    # cannot be read must not turn into a zero.
+    try:
+        counts = conntrack_counts(set(t["ip"] for t in tenants)) if tenants else {}
+        limits = [(v, tap_limit(v["vmid"])) for v in sorted(tenant_vms, key=lambda v: int(v["vmid"]))]
+        # The datacenter option is read once, and only when some tenant VM is
+        # running to be judged by it.
+        running = [v for v, (up, _) in limits if up]
+        datacenter_on = datacenter_firewall_enabled() if running else False
+        firewall = [(v, firewall_active(v, tenant_facts[v["vmid"]], datacenter_on)) for v in running]
+        drops = firewall_drops()
+    except API_ERRORS as e:
+        print("tenant firewall read failed, keeping the previous file: " + str(e), file=sys.stderr)
+        return 1
 
     lines = []
     if samples:
@@ -122,6 +486,60 @@ def main():
             # Jinja statement tag. Never let those two characters become
             # adjacent anywhere in this file, comments included.
             lines.append("fleet_pve_guest_nic_info" + "{" + rendered + "}" + " 1")
+
+    if tenants:
+        lines.append("# HELP fleet_pve_tenant_conntrack_entries Conntrack entries whose original"
+                     " source is the address of a tenant VM (segment work or lease),"
+                     " via roles/pve_guest_metrics.")
+        lines.append("# TYPE fleet_pve_tenant_conntrack_entries gauge")
+        for t in sorted(tenants, key=lambda t: int(t["vmid"])):
+            rendered = ",".join(k + '="' + esc(v) + '"' for k, v in sorted(t.items()))
+            lines.append("fleet_pve_tenant_conntrack_entries" + "{" + rendered + "}"
+                         + " " + str(counts[t["ip"]]))
+
+    policed = [(v, dropped) for v, (running, dropped) in limits if dropped is not None]
+    if policed:
+        lines.append("# HELP fleet_pve_tenant_policed_packets_total Packets dropped by the packet-rate"
+                     " limit on the tap device of a tenant VM (segment work or lease),"
+                     " via roles/pve_guest_metrics.")
+        lines.append("# TYPE fleet_pve_tenant_policed_packets_total counter")
+        for v, packets in policed:
+            rendered = ",".join(k + '="' + esc(x) + '"' for k, x in sorted(v.items()))
+            lines.append("fleet_pve_tenant_policed_packets_total" + "{" + rendered + "}"
+                         + " " + str(packets))
+
+    # Only a running lease is meant to be capped, so only a running lease is
+    # judged: 1 when its tap has the filter, 0 when it has lost it.
+    active = [(v, dropped is not None) for v, (running, dropped) in limits
+              if running and v["segment"] == "lease"]
+    if active:
+        lines.append("# HELP fleet_pve_tenant_packet_limit_active 1 when the packet-rate limit is on the"
+                     " tap device of a running lease VM, 0 when it has been lost,"
+                     " via roles/pve_guest_metrics.")
+        lines.append("# TYPE fleet_pve_tenant_packet_limit_active gauge")
+        for v, present in active:
+            rendered = ",".join(k + '="' + esc(x) + '"' for k, x in sorted(v.items()))
+            lines.append("fleet_pve_tenant_packet_limit_active" + "{" + rendered + "}"
+                         + " " + ("1" if present else "0"))
+
+    if firewall:
+        lines.append("# HELP fleet_pve_tenant_firewall_active 1 when the hypervisor firewall is fully in"
+                     " force for a running tenant VM (segment work or lease), 0 when any part is"
+                     " missing, via roles/pve_guest_metrics.")
+        lines.append("# TYPE fleet_pve_tenant_firewall_active gauge")
+        for v, in_force in firewall:
+            rendered = ",".join(k + '="' + esc(x) + '"' for k, x in sorted(v.items()))
+            lines.append("fleet_pve_tenant_firewall_active" + "{" + rendered + "}"
+                         + " " + ("1" if in_force else "0"))
+
+    if drops:
+        lines.append("# HELP fleet_pve_firewall_dropped_packets_total Packets dropped by the tenant"
+                     " and lease firewall groups, by address family, via roles/pve_guest_metrics.")
+        lines.append("# TYPE fleet_pve_firewall_dropped_packets_total counter")
+        for chain, family, rule, packets in drops:
+            lines.append("fleet_pve_firewall_dropped_packets_total" + "{" + 'chain="' + esc(chain)
+                         + '",family="' + esc(family) + '",rule="' + esc(rule) + '"' + "}"
+                         + " " + str(packets))
 
     # Emitted unconditionally, so a node with no guests reads as zero rather
     # than as a dead exporter.
