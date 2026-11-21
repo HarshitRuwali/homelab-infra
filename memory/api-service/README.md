@@ -21,11 +21,39 @@ Configuration is read from environment variables or `.env`. The Compose files
 pass explicit service hosts (`postgres`, `qdrant`, `redis`); the defaults in
 `app/config.py` are local-development fallbacks.
 
+## Tests
+
+The suite fakes the database session, Qdrant and the embedding server. Run it
+in a container, not on the host, from this directory:
+
+```bash
+docker run --rm -e UV_PROJECT_ENVIRONMENT=/tmp/venv --tmpfs /tmp:exec \
+  -v "$PWD":/w:ro -w /w python:3.12-slim \
+  sh -c 'pip install -q uv==0.11.18 && uv sync --frozen -q && uv run -q pytest -p no:cacheprovider'
+```
+
+## Bulk writes
+
+`POST /memory/store/batch` stores up to 100 chunks per request through the same
+code path as `POST /memory/store`: one embed call per 25 chunks, one Qdrant
+upsert and one `memory_chunks` upsert for the whole list, and one `memory_files`
+upsert per distinct file. See [Memory endpoints](../docs/api/memory.md).
+
+## Logs
+
+Container stdout is capped by the Compose `logging:` block (`json-file`,
+10 MB x 3 files). The app also writes daily-rotated files to `logs/` (7 days).
+Successful `/health` requests are not logged; failed ones and every other
+request are.
+
 ## Layout
 
 | Path | Contents |
 |---|---|
 | `app/routers/` | `/health`, `/embed`, `/memory/*`, `/llm/infer` |
+| `app/http_client.py` | the one shared `httpx.AsyncClient` (opened in the lifespan, closed on shutdown) used by `/embed`, `/llm/infer` and the embedding step of `/memory/*` |
+| `app/logging_filters.py` | drops successful `GET /health` lines from the uvicorn access log |
+| `tests/` | pytest suite (no database, Qdrant or AI box needed) |
 | `app/scope.py` | multi-agent scope constants and normalisation |
 | `app/qdrant_store.py` | collection creation, dimension validation, payload indexes |
 | `app/models.py` | SQLAlchemy models |

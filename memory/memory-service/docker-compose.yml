@@ -8,6 +8,12 @@
 #   docker compose up -d
 #   docker compose logs -f
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   qdrant:
     # Qdrant upgrades its storage only one minor release at a time. Before
@@ -17,6 +23,7 @@ services:
     image: qdrant/qdrant:latest
     container_name: qdrant
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${QDRANT_HTTP_PORT:?QDRANT_HTTP_PORT must be set}:6333"
       - "${QDRANT_GRPC_PORT:?QDRANT_GRPC_PORT must be set}:6334"
@@ -39,6 +46,7 @@ services:
     image: postgres:16-alpine
     container_name: postgres
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${POSTGRES_HOST_PORT:?POSTGRES_HOST_PORT must be set}:5432"
     volumes:
@@ -66,6 +74,7 @@ services:
     image: redis:8-alpine
     container_name: redis
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${REDIS_HOST_PORT:?REDIS_HOST_PORT must be set}:6379"
     volumes:

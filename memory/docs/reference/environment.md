@@ -40,6 +40,7 @@ stack and the FastAPI application.
 | `AI_VM_HOST` | `host.docker.internal` | Host running LLM and embed models |
 | `LLM_PORT` | `8080` | LLM service port |
 | `EMBED_PORT` | `8081` | Embedding model port |
+| `EMBED_MODEL` | empty | Empty: llama.cpp `POST /embedding`. A model id: OpenAI-style `POST /v1/embeddings` for that model (LM Studio) |
 
 ## FastAPI
 

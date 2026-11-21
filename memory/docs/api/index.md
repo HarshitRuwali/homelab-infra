@@ -10,6 +10,7 @@ interfaces at `/docs` and `/redoc` respectively.
 | `GET` | `/health` | Liveness check for PostgreSQL and Qdrant |
 | `POST` | `/embed` | Generate an embedding vector |
 | `POST` | `/memory/store` | Store or upsert a memory chunk |
+| `POST` | `/memory/store/batch` | Store or upsert up to 100 chunks in one request |
 | `POST` | `/memory/search` | Semantic search across stored chunks |
 | `POST` | `/memory/update` | Update an existing chunk |
 | `DELETE` | `/memory/delete` | Delete chunks by file path |
