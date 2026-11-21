@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/HarshitRuwali/homelab-infra/compare/proxmox-v0.2.0...proxmox-v0.2.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **proxmox:** default to the Ubuntu template 9001 and count committed vCPU and RAM ([#47](https://github.com/HarshitRuwali/homelab-infra/issues/47)) ([beb6a27](https://github.com/HarshitRuwali/homelab-infra/commit/beb6a27dccdf7ee48330206c51a9f410499e9985))
+
 ## [0.2.0](https://github.com/HarshitRuwali/homelab-infra/compare/proxmox-v0.1.0...proxmox-v0.2.0) (2026-10-20)
 
 
