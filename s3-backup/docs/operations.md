@@ -64,6 +64,12 @@ files and reclaims space, runs only on `RESTIC_PRUNE_DAY` (Sunday), together
 with a `--read-data-subset=1/52` check. Over a year that verifies the whole
 repository without ever paying for a full download.
 
+The keep policy applies across nights because `forget` groups snapshots by
+host only (`--group-by host`). Each run is tagged with its date, so grouping by
+tags would make every snapshot a group of one, and nothing would ever expire.
+Grouping by `host,paths` is avoided too: enabling Nextcloud changes the path
+set, and the old group would then be kept forever.
+
 The Immich mirror has no snapshot history by design. Its protections are
 `--backup-dir` (removed objects move to `_deleted/<date>/` for 90 days) and
 bucket versioning.
@@ -74,9 +80,30 @@ bucket versioning.
 |---|---|
 | `RCLONE_BWLIMIT` | The backup saturates your uplink. `"20M"` = 20 MiB/s. Supports a schedule: `"08:00,5M 23:00,off"`. |
 | `RCLONE_TRANSFERS` | Raise for many small files, lower for a weak CPU or router. |
+| `RCLONE_COMPARE` | How the Immich sync decides a file is unchanged: `size-only` (default), `modtime` or `checksum`. See [Immich comparison](#immich-comparison). |
 | `NEXTCLOUD_EXCLUDE_PREVIEWS` | Set to 0 only if regenerating previews after a restore is unacceptable. They are large and Nextcloud rebuilds them. |
-| `IMMICH_SYNC_DIRS` | `thumbs` and `encoded-video` are excluded because Immich regenerates them. Add them only if you want a restore to be instantly fast rather than instantly complete. |
+| `IMMICH_SYNC_DIRS` | `thumbs` and `encoded-video` are excluded because Immich regenerates them. Add them only if you want a restore to be instantly fast rather than instantly complete. `backups` is excluded too: it holds Immich's own nightly database dump, which duplicates this module's `pg_dumpall` (the restore path documented here) and, being a fresh file every night, was re-uploaded in full and then moved into `_deleted/`. Add it back only if you want Immich's native dump as a second copy. |
 | `RESTIC_PRUNE_DAY` | Empty disables prune entirely (repo grows). |
+
+## Immich comparison
+
+Each night `rclone sync` has to decide, for every object already in S3, whether
+it is unchanged. `RCLONE_COMPARE` picks how:
+
+| Value | Flag | Cost per night over N objects |
+|---|---|---|
+| `size-only` (default) | `--size-only` | Listings only (`--fast-list` batches them). No per-object request. |
+| `modtime` | none (rclone default) | Size plus modification time. S3 listings do not carry the mtime rclone wrote, so this is **one HEAD request per object**. |
+| `checksum` | `--checksum` | MD5. An S3 ETag is an MD5 only for single-part uploads; for multipart uploads rclone reads the MD5 it stored as object metadata, again **one HEAD per object**. |
+
+Immich originals are written once and never edited in place, so a changed file
+has a new path, and a size comparison catches every real change. The blind spot
+of `size-only` is a file rewritten with identical length and different content
+(bit rot is the realistic case; Immich does not do this). Run a one-off
+`checksum` pass occasionally if you want to cover it: set
+`RCLONE_COMPARE="checksum"`, run `sudo s3-backup run`, then set it back.
+`s3-backup-restore-drill` independently checks that every local original exists
+in S3 at the right size.
 
 ## Updating
 

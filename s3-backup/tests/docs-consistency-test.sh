@@ -129,6 +129,21 @@ done < <(grep -ohE '\$\{[A-Z][A-Z0-9_]+:=' bin/lib/common.sh | grep -ohE '[A-Z][
 (( keyfail )) || ok "every key with a default in common.sh appears in the template"
 
 echo
+echo "== the default IMMICH_SYNC_DIRS is the same everywhere and excludes backups =="
+d_code="$(grep -oE 'IMMICH_SYNC_DIRS:=[^}]*' bin/lib/common.sh | cut -d= -f2)"
+d_tmpl="$(sed -nE 's/^IMMICH_SYNC_DIRS="(.*)"/\1/p' config/backup.env.example)"
+d_disc="$(sed -nE "s/^say 'IMMICH_SYNC_DIRS=\"(.*)\"'/\1/p" bin/s3-backup-discover)"
+if [[ -n "$d_code" && "$d_code" == "$d_tmpl" && "$d_code" == "$d_disc" ]]; then
+  ok "common.sh, the template and s3-backup-discover agree ($d_code)"
+else
+  no "IMMICH_SYNC_DIRS differs: code='$d_code' template='$d_tmpl' discover='$d_disc'"
+fi
+case " $d_code " in
+  *" backups "*) no "the default IMMICH_SYNC_DIRS includes backups (Immich's own dump duplicates the pg_dumpall)" ;;
+  *) ok "the default does not mirror Immich's own database dump (backups/)" ;;
+esac
+
+echo
 echo "== no counts restated in prose =="
 # A number that lives in tool output drifts the moment a test is added.
 if grep -rnE '[0-9]+ (assertion|check|test)s?\b' README.md docs/*.md >/dev/null 2>&1; then
