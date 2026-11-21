@@ -104,10 +104,16 @@ say(env.get("WIREGUARD_PRIVATE_KEY_SECRETFILE") == "/run/secrets/wireguard_priva
 host = sorted(n for n, s in services.items() if s.get("network_mode") == "host")
 say(host == ["plex", "plex-tunnel"], f"host network is used by plex and plex-tunnel only (found: {host})")
 
-# 6. Every service has a memory cap and rotated json-file logs. The host has no
-#    swap, so an uncapped container can take RAM from its neighbours.
+# 6. Every service but Plex has a memory cap, and every service has rotated
+#    json-file logs. The host has no swap, so an uncapped container can take
+#    RAM from its neighbours. Plex is left uncapped on purpose: a transcode
+#    needs room, and its peak is about 1 GiB, almost all page cache.
+UNCAPPED = {"plex"}
 for name, svc in sorted(services.items()):
     mem = svc.get("mem_limit")
+    if name in UNCAPPED:
+        say(not mem, f"{name} has no memory limit (found: {mem!r})")
+        continue
     say(bool(mem) and str(mem) not in ("0", "0b"),
         f"{name} has a memory limit (found: {mem!r})")
     log = svc.get("logging") or {}

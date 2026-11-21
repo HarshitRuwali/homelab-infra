@@ -16,7 +16,7 @@
 #                  All torrent traffic leaves through gluetun; if the tunnel
 #                  drops, gluetun's firewall blocks it rather than leaking.
 
-# Limits and logs. Every service has a memory cap (`mem_limit`, honoured by
+# Limits and logs. Every service except Plex has a memory cap (`mem_limit`, honoured by
 # Docker Compose v2 and later) and size-capped json-file logs through the
 # x-logging anchor. The host has no swap, so an uncapped container can take RAM
 # from its neighbours (Immich, Nextcloud). Caps are sized from 7-day peaks with
@@ -42,7 +42,8 @@ services:
     container_name: plex
     network_mode: host
     restart: unless-stopped
-    mem_limit: ${PLEX_MEM_LIMIT:-1536m}
+    # No memory cap on Plex: a transcode needs room, and Plex never came near
+    # one (peak about 1 GiB, almost all page cache).
     logging: *default-logging
     environment:
       TZ: ${TZ}
