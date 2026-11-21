@@ -25,6 +25,7 @@ is_other_flag() { printf '%s\n' "${OTHER_FLAGS[@]}" | grep -qxF -- "$1"; }
 
 in_install_parser()   { grep -qE -e "(^|[|[:space:]])$1([|)])" install.sh; }
 in_artifacts_parser() { grep -qE -e "add_argument\(\"$1\"" artifacts.py; }
+in_deploy_parser()    { grep -qE -e "(^|[|[:space:]])$1([|)])" deploy.sh; }
 
 # One logical command per line: join backslash continuations, and join the
 # indented continuation lines of a usage block to the line that opened it.
@@ -34,7 +35,7 @@ logical_lines() {
     {
       line = $0
       if (cont) { sub(/^[ \t]+/, "", line); buf = buf " " line }
-      else if (infence && buf != "" && line ~ /^[ \t]+/ && buf ~ /(install\.sh|artifacts)/) {
+      else if (infence && buf != "" && line ~ /^[ \t]+/ && buf ~ /(install\.sh|deploy\.sh|artifacts)/) {
         sub(/^[ \t]+/, "", line); buf = buf " " line
       } else { if (buf != "") print buf; buf = line }
       cont = ($0 ~ /\\[ \t]*$/)
@@ -52,14 +53,16 @@ headings() {
 # hyphen become one hyphen.
 slug() { tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_ -]//g; s/^ +| +$//g; s/[ -]+/-/g'; }
 
-for need in install.sh artifacts.py mkdocs.yml; do
+for need in install.sh deploy.sh artifacts.py mkdocs.yml; do
   [[ -f "$need" ]] || { echo "missing $need, cannot check"; exit 1; }
 done
 
 # check_flags <label> <file>: every flag shown on a line with install.sh is in
 # install.sh's parser; every flag shown on a line with artifacts or artifacts.py
-# is in artifacts.py's argparse (or is argparse's own --help). Flags of other
-# tools (OTHER_FLAGS) are not accepted after either command.
+# is in artifacts.py's argparse (or is argparse's own --help); every flag on a
+# line with deploy.sh is in deploy.sh's parser, except after a bare "--", where
+# the flags are install.sh's. Flags of other tools (OTHER_FLAGS) are not
+# accepted after any of these commands.
 flagfail=0
 check_flags() {
   local label="$1" file="$2" line tok cmd flag
@@ -69,16 +72,20 @@ check_flags() {
       tok="${tok//\`/}"
       case "$tok" in
         install.sh|*/install.sh)                  cmd=install;   break ;;
+        deploy.sh|*/deploy.sh)                    cmd=deploy;    break ;;
         artifacts|artifacts.py|*/artifacts|*/artifacts.py) cmd=artifacts; break ;;
       esac
     done
     [[ -n "$cmd" ]] || continue
     for tok in $line; do
+      [[ "$cmd" == deploy && "${tok//\`/}" == -- ]] && { cmd=install; continue; }
       [[ "$tok" == *--?* ]] || continue
       flag="$(grep -oE -- '--[a-z][a-z-]*' <<<"$tok" | head -1)"
       [[ -n "$flag" ]] || continue
       case "$cmd" in
         install)   in_install_parser   "$flag" || { no "$label shows 'install.sh $flag' but install.sh has no such flag"; flagfail=1; } ;;
+        deploy)    in_deploy_parser    "$flag" || [[ "$flag" == --help ]] \
+                     || { no "$label shows 'deploy.sh $flag' but deploy.sh has no such flag"; flagfail=1; } ;;
         artifacts) in_artifacts_parser "$flag" || [[ "$flag" == --help ]] \
                      || { no "$label shows 'artifacts $flag' but artifacts.py has no such flag"; flagfail=1; } ;;
       esac
@@ -100,7 +107,7 @@ if [[ -f "$ROOT_README" ]]; then
     no "root README.md has no 'Serve a vault in the browser' snippet showing install.sh"; flagfail=1
   fi
 fi
-(( flagfail )) || ok "every flag shown with install.sh or artifacts is in its parser"
+(( flagfail )) || ok "every flag shown with install.sh, deploy.sh or artifacts is in its parser"
 
 echo
 echo "== every --flag in the docs belongs to some tool we know =="
@@ -108,6 +115,7 @@ anyfail=0
 while read -r flag; do
   in_install_parser "$flag" && continue
   in_artifacts_parser "$flag" && continue
+  in_deploy_parser "$flag" && continue
   is_other_flag "$flag" && continue
   no "docs mention '$flag', which is in neither parser nor the known-other-tools list"; anyfail=1
 done < <(grep -ohE -- '--[a-z][a-z-]*' "${SURFACES[@]}" | sort -u)

@@ -28,13 +28,23 @@ Then open `http://100.64.0.10:7777` from one of your own tailnet devices. Add
 [Getting started](docs/index.md#getting-started) page lists every option and
 what the installer does.
 
+To install or update other machines from this checkout, over SSH:
+
+```bash
+./deploy.sh --dry-run box1 box2       # probe and print the plan
+./deploy.sh box1 box2                 # update the program and, when needed, the PDF image
+```
+
+See [Deploy to other hosts](docs/operations.md#deploy-to-other-hosts).
+
 ## Layout
 
 ```text
 artifacts.py                The server: one file, standard library only
 install.sh                  Installs the program and a systemd user unit
+deploy.sh                   Installs or updates it on other hosts over SSH
 systemd/artifacts.service   Unit template the installer renders
-tests/                      Viewer, installer and docs-consistency tests
+tests/                      Viewer, installer, deploy and docs-consistency tests
 docs/                       MkDocs source for the published site
 mkdocs.yml                  Site configuration
 ```

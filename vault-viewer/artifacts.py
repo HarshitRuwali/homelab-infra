@@ -33,10 +33,11 @@ while printing.
 Needs python3-markdown (Debian/Ubuntu package) for notes; the tailscale CLI
 for --tailnet-user; docker for PDFs.
 Usage: artifacts.py [--bind ADDR] [--port 7777] [--allow-host NAME] [--tailnet-user LOGIN]
-                    [--pdf-image IMAGE] [--build-pdf-image] [ROOT ...]
+                    [--pdf-image IMAGE] [--build-pdf-image] [--pdf-rev] [ROOT ...]
 """
 import argparse
 import base64
+import hashlib
 import html
 import ipaddress
 import json
@@ -323,6 +324,18 @@ pre.mermaid svg { max-width: none; }
 pre.mermaid[data-processed] { color: inherit; }
 pre.mermaid svg { cursor: zoom-in; height: auto; }
 .diagram-hint { color: var(--dim); font-size: .75em; text-align: right; margin: -0.6em 0 1em; }
+/* Copy button on code blocks: in a wrapper, so it stays in the corner while the
+   code scrolls sideways. Shown on hover or focus; always on touch screens. */
+.codewrap { position: relative; margin: 1em 0; }
+.codewrap > pre { margin: 0; }
+.copy { position: absolute; top: 6px; right: 6px; font: 600 .72em/1 system-ui, sans-serif; color: var(--dim);
+  background: #2a2a31; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; cursor: pointer;
+  opacity: 0; transition: opacity .15s; }
+.codewrap:hover .copy, .copy:focus-visible, .copy.done { opacity: 1; }
+.copy:hover { color: var(--text); }
+.copy.done { color: #7ec699; border-color: #7ec699; }
+@media (hover: none) { .copy { opacity: 1; } }
+@media print { .copy { display: none; } }
 /* Phones: tighter margins, smaller headings, and wide blocks (code, tables,
    diagrams) scroll sideways inside themselves instead of widening the page. */
 @media (max-width: 640px) {
@@ -397,6 +410,57 @@ addEventListener('load', () => {
   const y = new URLSearchParams(location.search).get('y');
   if (y && !location.hash) scrollTo(0, +y);
 });
+// Copy buttons on code blocks. The page is plain HTTP in a sandboxed frame, so
+// the async clipboard API is usually missing here: fall back to execCommand,
+// and if the frame may not copy either, ask the viewer page (which shares the
+// click's user activation) to copy it.
+function execCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+  document.body.appendChild(ta); ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+let copyPending = null;
+function copied(btn, ok) {
+  clearTimeout(btn._t);
+  if (ok) { btn.textContent = 'Copied'; btn.classList.add('done'); }
+  else {  // leave the code selected, so the keyboard shortcut works
+    const r = document.createRange(); r.selectNodeContents(btn._code);
+    const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+    btn.textContent = /Mac|iPhone|iPad/.test(navigator.platform) ? 'Press \\u2318C' : 'Press Ctrl+C';
+  }
+  btn._t = setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('done'); }, 1800);
+}
+addEventListener('message', (e) => {
+  if (e.source === parent && e.data && e.data.type === 'vault-copied' && copyPending) {
+    copied(copyPending, e.data.ok === true); copyPending = null;
+  }
+});
+function addCopyButtons() {
+  document.querySelectorAll('pre > code').forEach((code) => {
+    const pre = code.parentElement;
+    if (pre.parentElement.classList.contains('codewrap')) return;
+    const wrap = document.createElement('div'); wrap.className = 'codewrap';
+    pre.before(wrap); wrap.appendChild(pre);
+    const btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'copy'; btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy code'); btn._code = code;
+    btn.addEventListener('click', async () => {
+      const text = code.textContent.replace(/\\n$/, '');
+      if (navigator.clipboard && window.isSecureContext) {
+        try { await navigator.clipboard.writeText(text); return copied(btn, true); } catch (e) { /* fall through */ }
+      }
+      if (execCopy(text)) return copied(btn, true);
+      if (parent !== window) { copyPending = btn; parent.postMessage({type: 'vault-copy', text}, '*'); }
+      else copied(btn, false);
+    });
+    wrap.appendChild(btn);
+  });
+}
 """
 
 # Mermaid 11 with the ELK layout engine (much better subgraph and edge routing
@@ -478,6 +542,7 @@ document.querySelectorAll('pre code:not(.language-mermaid)').forEach((b) => {{ t
 <script src="{HLJS}/highlight.min.js"></script>
 <script>{NOTE_JS}
 document.querySelectorAll('pre code:not(.language-mermaid)').forEach((b) => {{ try {{ hljs.highlightElement(b); }} catch (e) {{}} }});
+addCopyButtons();
 </script></body></html>"""
 
 
@@ -858,6 +923,27 @@ finally:
         os.kill(pid, signal.SIGKILL)
 """
 
+# The render script and the image depend on each other's layout, so the image
+# carries the revision of the pair it was built from, and a program only trusts
+# an image with its own revision. `artifacts --pdf-rev` prints it.
+PDF_REV_LABEL = "vault-viewer.pdf-rev"
+PDF_REV = hashlib.sha256((PDF_DOCKERFILE + PDF_RENDER).encode()).hexdigest()[:12]
+PDF_DOCKERFILE += f"LABEL {PDF_REV_LABEL}={PDF_REV}\n"
+
+
+def pdf_image_rev(image):
+    """The PDF_REV label of a local image: "" if it has none, None if docker can't say."""
+    try:
+        out = subprocess.run(["docker", "image", "inspect", "-f", f'{{{{ index .Config.Labels "{PDF_REV_LABEL}" }}}}',
+                              image], capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    rev = out.stdout.strip()
+    return "" if rev == "<no value>" else rev
+
+
 PDF_SLOTS = threading.BoundedSemaphore(2)
 
 
@@ -886,6 +972,10 @@ def render_pdf(page_html, image):
     if out.returncode != 0 or not out.stdout.startswith(b"%PDF"):
         if "No such image" in err:
             return None, f"the PDF image {image} is missing: run `artifacts --build-pdf-image`"
+        rev = pdf_image_rev(image)
+        if rev is not None and rev != PDF_REV:
+            return None, (f"the PDF image {image} does not match this program (image revision {rev or 'none'}, "
+                          f"program {PDF_REV}): run `artifacts --build-pdf-image`")
         return None, "rendering failed (details in the service log)"
     return out.stdout, None
 
@@ -1381,6 +1471,22 @@ window.addEventListener("message", (e) => {
     if (it) select(it, typeof d.anchor === "string" ? d.anchor : "");
   } else if (d.type === "vault-scroll" && current && Number.isFinite(d.y)) {
     scrolls[current.id] = d.y;
+  } else if (d.type === "vault-copy" && typeof d.text === "string" && d.text.length < 5e6) {
+    // A code block's copy button, when the sandboxed frame may not copy itself.
+    // Only text reaches the clipboard, and only during the click that sent it.
+    const reply = (ok) => e.source.postMessage({ type: "vault-copied", ok }, "*");
+    const viaTextarea = () => {
+      const ta = document.createElement("textarea");
+      ta.value = d.text; ta.setAttribute("readonly", "");
+      ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+      document.body.appendChild(ta); ta.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
+      ta.remove();
+      return ok;
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(d.text).then(() => reply(true), () => reply(viaTextarea()));
+    else reply(viaTextarea());
   } else if (d.type === "vault-zoom" && typeof d.svg === "string" && d.svg.length < 20e6 && /^\s*<svg[\s>]/.test(d.svg)) {
     // Shown as an <img> data URL: an SVG in an image can't run scripts.
     openOverlay(d.svg, typeof d.title === "string" ? d.title : "");
@@ -1485,11 +1591,16 @@ def main():
                     help=f"docker image that renders PDFs (default {PDF_IMAGE})")
     ap.add_argument("--build-pdf-image", action="store_true",
                     help="build --pdf-image with docker, then exit (needs network once)")
+    ap.add_argument("--pdf-rev", action="store_true",
+                    help=f"print the revision the PDF image must carry (its {PDF_REV_LABEL} label), then exit")
     # Removed: the PDF image no longer builds on a Playwright image. Kept hidden so
     # an old command line says what changed instead of "unrecognized arguments".
     ap.add_argument("--pdf-base", metavar="IMAGE", help=argparse.SUPPRESS)
     ap.add_argument("roots", nargs="*", type=Path, help="vault folders to serve (default: ~/obsidian)")
     args = ap.parse_args()
+    if args.pdf_rev:
+        print(PDF_REV)
+        sys.exit(0)
     if args.pdf_base is not None:
         print(f"artifacts: {PDF_BASE_REMOVED}; run `artifacts --build-pdf-image` without it", file=sys.stderr)
         sys.exit(2)

@@ -17,6 +17,8 @@ HTML artifacts, SVGs and images have no PDF button.
 - Embedded images and Mermaid diagrams. Diagrams use a light theme and shrink
   to the page width but stay vector, so they zoom cleanly.
 - External links, which stay clickable.
+- Code as selectable text, so it copies from any PDF reader. There is no copy
+  button: PDF readers do not run page scripts.
 - A footer on every page: the title on the left, `page / total` on the right.
 - Selectable text that copies as written. Every font is embedded as TrueType,
   and code shows its characters as typed (no `->` arrow ligature).
@@ -115,6 +117,14 @@ docker image rm artifacts-pdf:local
 
 `--build-pdf-image` runs `docker build --pull`, needs network once, and exits
 without starting the server.
+
+**The image and the program go together.** The render script inside the
+program and the image depend on each other's layout, so the image is labelled
+`vault-viewer.pdf-rev` with a hash of both (`python3 artifacts.py --pdf-rev`
+prints it). When a render fails against an image with another revision, the
+PDF button says so instead of a bare failure. Rebuild the image after updating
+the program; [`deploy.sh`](operations.md#deploy-to-other-hosts) does both for
+other hosts.
 
 **Updating Chromium.** Set `PDF_CHROME_VERSION` to a newer Chrome for
 Testing version and `PDF_CHROME_SHA256` to the SHA-256 of that version's

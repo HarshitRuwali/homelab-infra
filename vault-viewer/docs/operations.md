@@ -5,6 +5,8 @@
 See [Getting started](index.md#getting-started) for the command and options.
 Run the installer as the user that should own the service, from the
 `vault-viewer/` directory of a checkout.
+To install or update other machines over SSH, see
+[Deploy to other hosts](#deploy-to-other-hosts).
 
 ```bash
 ./install.sh --dry-run --bind 100.64.0.10 ~/obsidian    # preflight and preview, changes nothing
@@ -34,6 +36,53 @@ backup.
 If the post-install check fails, the installer disables and stops the unit and
 exits with status 1; see
 [What the installer does](index.md#what-the-installer-does) for the rule.
+
+## Deploy to other hosts
+
+`deploy.sh` installs or updates the viewer on other machines over SSH, from
+this checkout. It runs on your machine; each host needs `python3`, a systemd
+user session and, for PDF export, docker usable by the SSH user.
+
+```bash
+./deploy.sh --dry-run box1 box2                  # probe each host and print the plan
+./deploy.sh box1 box2                            # update both
+./deploy.sh -i ~/.ssh/infra-worker user@100.64.0.20
+./deploy.sh newbox -- --bind 100.64.0.30 --tailnet-user you@github ~/obsidian
+```
+
+A `HOST` is any ssh destination: an alias from `~/.ssh/config`, a name or
+`user@host`. For each one, in order:
+
+1. **Probe.** Reads the installed unit (program path, bind address, port,
+   PDF image), and checks `python3`, docker and free disk space.
+2. **PDF image.** The image must match the program: the program's
+   `--pdf-rev` names the revision, and every image carries it as the
+   `vault-viewer.pdf-rev` label. When the host's image already matches, it is
+   left alone. Otherwise it is replaced before the program changes, and the old
+   one keeps an `-prev` tag until the check passes. If this step fails, the host
+   is left as it was.
+3. **Program.** On a host that runs `artifacts.service`, the program is
+   replaced (the old one is kept as `<program>.prev`), the unit is left as it
+   is, and the service restarts. An identical program is left alone. A host
+   without the unit is installed with `install.sh` and the `INSTALL_OPTIONS`
+   given after `--`; given those options, an installed host is reconfigured
+   with them too.
+4. **Check.** The unit is active, the port answers (HTTP 200, or 403 when the
+   [tailnet gate](security.md#the-tailnet-gate) refuses the host itself), and
+   a test page prints to PDF. If an update fails the check, the previous
+   program and image are put back and the service restarts.
+
+| Option | Meaning |
+|---|---|
+| `--image MODE` | `auto` (default): copy this machine's `artifacts-pdf:local` when it matches the program, otherwise build on the host. `ship`: always copy it (`docker save`, compressed, into `docker load`), which suits a host with little disk or a slow link. `build`: always build on the host. `skip`: leave the image alone and skip the PDF part of the check. |
+| `-i FILE` | ssh identity file. |
+| `--dry-run` | Probe each host and print the plan; change nothing. |
+
+To copy images, build one here first with `python3 artifacts.py
+--build-pdf-image`. Hosts are handled one after another; the exit status is 0
+when every host succeeded and 1 otherwise, with a summary at the end. The SSH
+connection is reused for all steps of a host, and scripts reach the host
+base64-encoded, so the remote login shell only runs `bash`.
 
 ## Survive logout and reboot
 
@@ -78,6 +127,7 @@ itself is never touched.
 | No diagrams or code colours | The viewing device cannot reach cdnjs, jsdelivr or unpkg. See [Browser dependencies](security.md#browser-dependencies). |
 | Notes show as plain text | `python3-markdown` is missing on the host. Install the distribution package, then restart the service. |
 | PDF button reports the image is missing | Build it: `python3 ~/.local/bin/artifacts --build-pdf-image`. See [PDF export](pdf-export.md#the-image). |
+| PDF button reports the image does not match this program | The program was updated without its image. Rebuild it as above, or run [`deploy.sh`](#deploy-to-other-hosts), which updates both. |
 | PDF button reports a failed render | Read the service log; see [PDF export](pdf-export.md#limits) for the limits. |
 | Service stops when you log out or after a reboot | Enable lingering; see [Survive logout and reboot](#survive-logout-and-reboot). |
 
@@ -103,3 +153,4 @@ Its own options, from its argument parser (`python3 artifacts.py --help`):
 | `--title NAME` | Name shown in the sidebar. |
 | `--pdf-image IMAGE` | PDF image name (or `ARTIFACTS_PDF_IMAGE`). |
 | `--build-pdf-image` | Build the PDF image with docker, then exit. |
+| `--pdf-rev` | Print the revision the PDF image must carry (its `vault-viewer.pdf-rev` label), then exit. |

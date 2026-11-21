@@ -15,7 +15,8 @@ input. See [Security](security.md) for the model.
   `.py`; `.zip` archives, which download instead of previewing.
 - **Navigates it.** A file tree with a "recent" list and search on the left,
   the selected file on the right. The page reloads within seconds when a file
-  changes on disk. Any diagram opens full screen with pan and zoom.
+  changes on disk. Any diagram opens full screen with pan and zoom. Every code
+  block has a **Copy** button (shown on hover, always on touch screens).
 - **Exports PDF.** Notes and text files download as a print-styled A4 PDF,
   rendered in a locked-down container. See [PDF export](pdf-export.md).
 - **Stays read-only.** There is no route that writes, renames or deletes.
