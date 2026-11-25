@@ -532,6 +532,7 @@ class Env:
         self.fixture6 = root / "ip6tables-fixtures"
         self.tc_fixture = root / "tc-fixtures"
         self.sys_net = root / "sys-net"
+        self.nodes = root / "pve-nodes"
         for d in (self.fw, self.fixture, self.fixture6, self.tc_fixture, self.sys_net):
             d.mkdir()
         self.node = socket.gethostname().split(".")[0]
@@ -545,8 +546,16 @@ class Env:
         for vmid, gtype, name, tags, bridge, fw, node in guests:
             net = ("virtio=BC:24:11:00:00:01,bridge=" + bridge + ("" if vmid in NO_NIC_FIREWALL else ",firewall=1")
                    if gtype == "qemu" else "name=eth0,bridge=" + bridge)
-            fixture["/nodes/" + self.node + "/" + gtype + "/" + str(vmid) + "/config"] = {
-                "name" if gtype == "qemu" else "hostname": name, "tags": tags, "net0": net}
+            # The config is a file under PVE_NODES_DIR in Proxmox's on-disk format,
+            # which the script reads instead of asking pvesh per guest.
+            conf_dir = self.nodes / self.node / ("qemu-server" if gtype == "qemu" else "lxc")
+            conf_dir.mkdir(parents=True, exist_ok=True)
+            (conf_dir / (str(vmid) + ".conf")).write_text(
+                "#" + name + " is a fixture\n"
+                + ("name" if gtype == "qemu" else "hostname") + ": " + name + "\n"
+                + "tags: " + tags + "\n"
+                + "net0: " + net + "\n"
+                + "\n[snap1]\nname: stale\ntags: tenant\nnet0: virtio=AA,bridge=vmbrOLD,firewall=1\n")
             if fw is not None:
                 (self.fw / (str(vmid) + ".fw")).write_text(fw)
         # The datacenter firewall option. dc=None leaves the path unanswered, as a
@@ -583,6 +592,7 @@ class Env:
         self.mod = load_script(script_text, root)
         self.mod.OUT_DIR = str(self.metrics)
         self.mod.PVESH = str(root / "pvesh")
+        self.mod.PVE_NODES_DIR = str(self.nodes)
         self.mod.IPTABLES = str(root / "iptables")
         self.mod.IP6TABLES = str(root / "ip6tables")
         self.mod.TC = str(root / "tc")
@@ -723,6 +733,10 @@ def test_tenant_vms(script_text):
         check(env.pvesh_calls().count("/cluster/firewall/options") == 1,
               "the datacenter firewall option was read " + str(env.pvesh_calls().count("/cluster/firewall/options"))
               + " times, not once")
+        # One call for the guest list, one for the datacenter option, none per guest.
+        check(sorted(env.pvesh_calls()) == ["/cluster/firewall/options", "/cluster/resources"],
+              "pvesh was called " + str(env.pvesh_calls()) + ", not once for resources and once for the option")
+        check("vmbrOLD" not in "".join(env.lines()), "a snapshot section of a .conf leaked into the output")
         firewall = [l for l in env.lines() if l.startswith("fleet_pve_tenant_firewall_active{")]
         for vmid in ("100", "112", "205", "206", "207", "210"):
             check(not any('vmid="' + vmid + '"' in l for l in firewall),
@@ -1018,11 +1032,31 @@ def test_docs(script_text):
         check("`" + chain + "`" in variables, "variables.md does not name the firewall chain " + chain)
 
 
+def test_missing_conf(script_text):
+    """A tenant VM whose .conf is missing fails the run and keeps the old file."""
+    guests = GUESTS
+    env = Env(script_text, guests, {}, CONNTRACK_TABLE, TAPS)
+    try:
+        rc, err = env.run()
+        check(rc == 0, "baseline run exited " + str(rc) + ": " + err)
+        if rc != 0:
+            return
+        before = env.prom.read_text()
+        (env.nodes / env.node / "qemu-server" / "201.conf").unlink()
+        rc, err = env.run()
+        check(rc == 1, "a tenant VM with no .conf exited " + str(rc) + ", not 1")
+        check("201" in err, "the missing .conf of VM 201 was not named: " + err)
+        check(env.prom.read_text() == before, "a missing .conf did not keep the previous file")
+    finally:
+        env.close()
+
+
 def main():
     with tempfile.TemporaryDirectory() as tmp:
         text, _values = render_script(tmp)
         test_tenant_vms(text)
         test_quiet_node(text)
+        test_missing_conf(text)
         test_conntrack_reading(text)
         test_vanished_tap(text)
         test_role_tasks(text)
