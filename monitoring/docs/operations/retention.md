@@ -7,12 +7,14 @@ How long data is kept, and the disk arithmetic that decided it.
 | Store | Setting | Where |
 |---|---|---|
 | Prometheus | `PROMETHEUS_RETENTION`, default `7d` | `.env` on the central node |
-| Loki, direct LXC install | `LOKI_RETENTION_PERIOD`, default `168h` (7d) in `scripts/lxc-install.sh` | `.env` on the central node; the live install sets `720h` (30 days), see [below](#loki-retention-for-the-tenant-logs) |
+| Loki, direct LXC install | `LOKI_RETENTION_PERIOD`, default `720h` (30d) in `scripts/lxc-install.sh` | `.env` on the central node |
 | Loki, Docker Compose | `retention_period` in `loki/loki-config.yml`, committed as `720h` | the file itself; the Compose path does not read `LOKI_RETENTION_PERIOD` |
 | systemd journal (local) | `SystemMaxUse`, uncapped by default | `journald_system_max_use` per group |
 
-The 7 day defaults were shortened from 30 days. That was not a preference; it
-was arithmetic.
+Prometheus was shortened from 30 days to 7. That was not a preference; it was
+arithmetic. Loki stays at 30 days because it is small: the live store holds
+about 355 MB, which fits the disk without trimming, and the tenant logs need
+the longer window ([below](#loki-retention-for-the-tenant-logs)).
 
 ## The measurement
 
@@ -60,8 +62,8 @@ box from 75% to 60% used.
     re-render the config. `lxc-update.sh` restarts Loki itself.
 
     ```bash
-    # in .env on the central node
-    LOKI_RETENTION_PERIOD=720h
+    # in .env on the central node (default 720h)
+    LOKI_RETENTION_PERIOD=336h
     ```
 
     ```bash
@@ -110,25 +112,20 @@ VMs did, though not all of it: the wiring page lists
 For a leased VM they are the main record there is. An abuse report, a complaint
 from the other end of a connection, or a dispute with the tenant usually
 arrives days or weeks after the traffic, and a 7 day default has deleted the
-evidence by then. The live install therefore runs Loki at 30 days.
+evidence by then. Loki therefore keeps 30 days.
 
 | | Value |
 |---|---|
-| Default in `scripts/lxc-install.sh` | `168h` (7 days) |
-| Live install | `720h` (30 days), set by `LOKI_RETENTION_PERIOD` in `.env` on the central node |
+| Default in `scripts/lxc-install.sh` and `loki/loki-config.yml` | `720h` (30 days) |
+| Live install | `720h`, from `LOKI_RETENTION_PERIOD` in `.env` on the central node |
 | Applied with | `scripts/lxc-update.sh central --config-only` |
 | Prometheus | unchanged, `7d` |
 
-The default stays at 7 days on purpose: a fresh install of this repository has
-no leased VMs and a small disk. Raise it where the lease logs exist.
-
-**Disk cost.** Before the tenant logs were added, 7 days of Loki for the whole
-fleet was about 185 MB on disk. A linear extrapolation to 30 days is about
-790 MB for that same data (185 MB times 30 over 7), not a measurement. The new
-streams are not measured yet: the firewall sends about 55 MB a day of syslog
-before the two automatic rules in `alloy_syslog_drop_filterlog_rules` are
-dropped at ingest, and Loki compresses it, so the stored size is smaller. Check
-free space before raising retention and measure after a week:
+**Disk cost.** Measured on the live store with the tenant streams included:
+about 355 MB on 2026-11-13 and 531 MB on 2026-11-19, while the 30 days fill
+(the fleet ingests roughly 85 MB a day before Loki compresses it). Check free
+space before raising retention further, and measure again once 30 days of
+tenant logs exist:
 
 ```bash
 du -sh /var/lib/loki

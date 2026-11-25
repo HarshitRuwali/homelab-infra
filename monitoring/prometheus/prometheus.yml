@@ -19,3 +19,23 @@ scrape_configs:
     static_configs:
       - targets:
           - prometheus:9090
+
+  # Loki and Grafana expose /metrics. The histogram buckets are dropped: no
+  # dashboard or alert charts them, and they are most of the series count.
+  - job_name: loki
+    static_configs:
+      - targets:
+          - loki:3100
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '.+_bucket'
+        action: drop
+
+  - job_name: grafana
+    static_configs:
+      - targets:
+          - grafana:3000
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '.+_bucket'
+        action: drop
