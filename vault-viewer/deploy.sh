@@ -5,12 +5,13 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOCAL_IMAGE="artifacts-pdf:local"
 UNIT_NAME="artifacts.service"
+NEED_MB=250
+AA_FILE_DEFAULT="/etc/apparmor.d/artifacts-chrome-headless-shell"
 
 usage() {
   cat <<'USAGE'
-usage: deploy.sh [--image MODE] [-i FILE] [--dry-run] HOST... [-- INSTALL_OPTIONS...]
+usage: deploy.sh [--pdf MODE] [-i FILE] [--dry-run] HOST... [-- INSTALL_OPTIONS...]
        deploy.sh -h | --help
 
 Install or update the vault viewer on each HOST over SSH, from this checkout.
@@ -22,21 +23,25 @@ HOST is an ssh destination: an alias, a name or user@host.
   INSTALL_OPTIONS after "--" (at least --bind and a ROOT, as seen on that host).
   Given INSTALL_OPTIONS, an installed host is reconfigured with them too.
 
-  The PDF image must match the program. It is replaced only when its revision
-  differs (artifacts.py --pdf-rev), and before the program changes.
+  The PDF runtime (about 235 MB, under ~/.local/share/artifacts/pdf-runtime on
+  the host) must match the program. It is replaced only when its revision
+  differs (artifacts.py --pdf-rev), and before the program changes. When the
+  host's kernel restricts unprivileged user namespaces, the AppArmor profile
+  for Chromium's sandbox is installed there with sudo -n; if that needs a
+  password, the commands are printed and the PDF check is skipped.
 
-  --image MODE   auto (default): copy this machine's image when it matches the
-                 program, otherwise build on the host
-                 ship: always copy this machine's image (docker save | docker load)
-                 build: always build on the host (artifacts.py --build-pdf-image)
-                 skip: leave the image alone, and skip the PDF check
+  --pdf MODE     auto (default): copy this machine's runtime when it matches the
+                 program, otherwise download it on the host
+                 ship: always copy this machine's runtime (tar over ssh)
+                 fetch: always download it on the host (artifacts.py --install-pdf-runtime)
+                 skip: leave the runtime alone, and skip the PDF check
   -i FILE        ssh identity file
   --dry-run      probe each host and print the plan, change nothing
   -h, --help     show this help
 
 After a restart the host is checked: the unit is active, the port answers, and
 a test page prints to PDF. If that fails, an update is rolled back to the
-previous program and image. Exit status: 0 all hosts ok, 1 a host failed,
+previous program and runtime. Exit status: 0 all hosts ok, 1 a host failed,
 2 usage error.
 USAGE
 }
@@ -51,9 +56,14 @@ SSH=(ssh -o BatchMode=yes -o ConnectTimeout=15)
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --image)
-      [ "$#" -ge 2 ] || die_usage "--image needs a value"
-      case "$2" in auto|ship|build|skip) MODE="$2" ;; *) die_usage "--image must be auto, ship, build or skip, got: $2" ;; esac
+    --image|--image=*) die_usage "--image was removed: PDFs no longer use docker images; use --pdf MODE (auto, ship, fetch or skip)" ;;
+    --pdf)
+      [ "$#" -ge 2 ] || die_usage "--pdf needs a value"
+      case "$2" in
+        auto|ship|fetch|skip) MODE="$2" ;;
+        build) die_usage "--pdf build was removed: PDFs no longer use docker; use --pdf fetch" ;;
+        *) die_usage "--pdf must be auto, ship, fetch or skip, got: $2" ;;
+      esac
       shift 2 ;;
     -i)
       [ "$#" -ge 2 ] || die_usage "-i needs a file"
@@ -79,8 +89,14 @@ trap 'rm -rf "$CTL"' EXIT
 SSH+=(-o ControlMaster=auto -o "ControlPath=$CTL/%C" -o ControlPersist=120)
 
 REV="$(python3 "$HERE/artifacts.py" --pdf-rev)"
-LOCAL_REV="$(docker image inspect -f '{{ index .Config.Labels "vault-viewer.pdf-rev" }}' "$LOCAL_IMAGE" 2>/dev/null || true)"
-[ "$LOCAL_REV" != "<no value>" ] || LOCAL_REV=""
+LOCAL_RT="${XDG_DATA_HOME:-$HOME/.local/share}/artifacts/pdf-runtime"
+LOCAL_REV="$(cat "$LOCAL_RT/$REV/REV" 2>/dev/null || true)"
+
+# The runtime dir ends up in the AppArmor profile and in commands: artifacts.py
+# refuses whitespace and glob characters in it, so refuse it here, before anything runs.
+runtime_ok() { [[ "$1" =~ ^/[A-Za-z0-9_@%+=:,./~-]*$ ]]; }
+# profile_for <runtime dir>: the AppArmor profile for exactly that directory.
+profile_for() { python3 "$HERE/artifacts.py" --print-apparmor-profile --pdf-runtime "$1"; }
 
 # remote <host> <script>: run a bash script on the host. The script travels
 # base64-encoded in the command, so the remote login shell only sees a fixed
@@ -91,41 +107,123 @@ remote_in() { "${SSH[@]}" "$1" "$(remote_cmd "$2")"; }
 remote() { remote_in "$@" </dev/null; }
 assign() { printf '%s=%q\n' "$@"; }
 
-# Read the installed unit: the program, bind address, port and PDF image.
-# Shared by the probe and the check. Prints key=value lines.
+# Read the installed unit: the program, bind address, port and PDF runtime
+# directory. Shared by the probe and the check. Prints key=value lines.
 read -r -d '' UNIT_INFO <<'EOF' || true
 UNIT="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user/artifacts.service"
 if [ -f "$UNIT" ]; then
   echo "unit=yes"
   python3 - "$UNIT" <<'PY'
-import shlex, sys
+import os, shlex, sys
 line = next(l for l in open(sys.argv[1]) if l.startswith("ExecStart="))
 argv = shlex.split(line[len("ExecStart="):].replace("%%", "%").replace("$$", "$"))
 def opt(name, default):
     return argv[argv.index(name) + 1] if name in argv[:-1] else default
+data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
 print(f"bin={argv[1]}")
 print(f"bind={opt('--bind', '127.0.0.1')}")
 print(f"port={opt('--port', '7777')}")
-print(f"image={opt('--pdf-image', 'artifacts-pdf:local')}")
+print(f"runtime={opt('--pdf-runtime', data + '/artifacts/pdf-runtime')}")
 PY
 else
   echo "unit=no"
-  echo "image=artifacts-pdf:local"
+  echo "runtime=${XDG_DATA_HOME:-$HOME/.local/share}/artifacts/pdf-runtime"
 fi
 EOF
 
-# Probe a host: its unit (if any), python3, docker, free space, and the image revision.
+# Remote scripts. Each expects the assignments named in its first comment.
+# Probe, part two (RT REV PROFILE): the runtime revision and the AppArmor state.
+read -r -d '' PROBE_PDF <<'EOF' || true
+r="$(cat "$RT/$REV/REV" 2>/dev/null || true)"
+echo "rev=$r"
+echo "restrict=$(cat "${ARTIFACTS_APPARMOR_RESTRICT_FILE:-/proc/sys/kernel/apparmor_restrict_unprivileged_userns}" 2>/dev/null || echo 0)"
+if [ "$(cat "${ARTIFACTS_APPARMOR_PROFILE_FILE:-/etc/apparmor.d/artifacts-chrome-headless-shell}" 2>/dev/null || true)" = "$PROFILE" ]; then
+  echo "aa=ok"
+else
+  echo "aa=missing"
+fi
+EOF
+
+# Keep the old runtime revisions until the new program passes its check (RT):
+# hard links, so no extra space. The install step may delete them from RT.
+read -r -d '' PDF_STASH <<'EOF' || true
+rm -rf "$RT.keep"
+[ ! -d "$RT" ] || cp -al "$RT" "$RT.keep"
+EOF
+
+# Receive a runtime tarball on stdin (RT REV SHIP_ID): extract to a temporary
+# name, check the tree against the manifest that is the stream's first member,
+# write REV (the stream does not carry it), then rename. A half-copied runtime
+# never has the final name, and REV exists only on a verified tree.
+read -r -d '' PDF_RECEIVE <<'EOF' || true
+set -eo pipefail
+mkdir -p "$RT"
+T="$RT/.tmp-ship-$SHIP_ID"
+rm -rf "$T"
+mkdir "$T"
+trap 'rm -rf "$T"' EXIT
+gunzip | tar -x -C "$T"
+[ -f "$T/MANIFEST" ] && [ -d "$T/$REV" ] || { echo "the runtime stream has no manifest or no tree" >&2; exit 1; }
+(cd "$T/$REV" && find . \( -type f -o -type l \) -printf '%y %m %s %P\n' | LC_ALL=C sort) | cmp -s - "$T/MANIFEST" \
+  || { echo "the copied runtime does not match its manifest (incomplete stream?)" >&2; exit 1; }
+printf '%s' "$REV" > "$T/$REV/REV"
+[ ! -e "$RT/$REV" ] || mv "$RT/$REV" "$T/replaced"
+mv "$T/$REV" "$RT/$REV"
+EOF
+
+# After a passing check (RT REV SHIP_ID): drop the stash, this deploy's own
+# temporary directory and the other revisions. Only names that are exactly 12
+# lowercase hex characters are revisions; anything else in the dir is not ours,
+# and neither are artifacts.py's .tmp-<rev>-<pid> directories. artifacts.py's
+# lock (<runtime dir>/.lock) is held so no install runs while revisions go.
+read -r -d '' PDF_FINISH <<'EOF' || true
+rm -rf "$RT.keep" "$RT/.tmp-ship-$SHIP_ID"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>>"$RT/.lock"
+  flock -w 60 9 || { echo "could not take $RT/.lock" >&2; exit 1; }
+fi
+for d in "$RT"/*; do
+  n="${d##*/}"
+  [ "$n" != "$REV" ] || continue
+  [[ "$n" =~ ^[0-9a-f]{12}$ ]] || continue
+  [ -d "$d" ] && [ ! -L "$d" ] || continue
+  rm -rf "$d"
+done
+EOF
+
+# Undo the runtime step (RT REV [SHIP_ID]): the previous revisions come back from the stash.
+read -r -d '' PDF_RESTORE <<'EOF' || true
+rm -rf "$RT/$REV"
+[ -z "${SHIP_ID:-}" ] || rm -rf "$RT/.tmp-ship-$SHIP_ID"
+if [ -d "$RT.keep" ]; then
+  for d in "$RT.keep"/*; do
+    [ -e "$d" ] || continue
+    [ -e "$RT/$(basename "$d")" ] || mv "$d" "$RT/"
+  done
+fi
+rm -rf "$RT.keep"
+EOF
+
+# Install the AppArmor profile with sudo -n (PROFILE).
+read -r -d '' AA_INSTALL <<'EOF' || true
+set -e
+S="${ARTIFACTS_SUDO:-sudo}"
+P="${ARTIFACTS_APPARMOR_PARSER:-apparmor_parser}"
+F="${ARTIFACTS_APPARMOR_PROFILE_FILE:-/etc/apparmor.d/artifacts-chrome-headless-shell}"
+printf '%s\n' "$PROFILE" | "$S" -n tee "$F" >/dev/null
+"$S" -n "$P" -r "$F"
+EOF
+
+# Probe a host: its unit (if any), python3, free space, the runtime revision and AppArmor.
 probe_host() {
-  local host="$1" out image rev
+  local host="$1" out rt
   out="$(remote "$host" "$UNIT_INFO
 command -v python3 >/dev/null 2>&1 && echo python=yes || echo python=no
-if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then echo docker=yes; else echo docker=no; fi
 echo \"free_mb=\$(df -Pm \"\$HOME\" | awk 'NR == 2 { print \$4 }')\"")" || return 1
-  image="$(sed -n 's/^image=//p' <<<"$out")"
-  rev="$(remote "$host" "$(assign IMAGE "$image")
-docker image inspect -f '{{ index .Config.Labels \"vault-viewer.pdf-rev\" }}' \"\$IMAGE\" 2>/dev/null || true")"
-  [ "$rev" != "<no value>" ] || rev=""
-  printf '%s\nrev=%s\n' "$out" "$rev"
+  rt="$(sed -n 's/^runtime=//p' <<<"$out" | head -n 1)"
+  printf '%s\n' "$out"
+  if ! runtime_ok "$rt"; then echo "bad_runtime=yes"; return 0; fi
+  remote "$host" "$(assign RT "$rt" REV "$REV" PROFILE "$(profile_for "$rt")")"$'\n'"$PROBE_PDF"
 }
 
 # get <key> <probe output>
@@ -138,12 +236,14 @@ check_host() {
 } >/dev/null
 $(assign PDF "$pdf")"'
 eval "$(python3 - "$UNIT" <<'"'"'PY'"'"'
-import shlex, sys
+import os, shlex, sys
 line = next(l for l in open(sys.argv[1]) if l.startswith("ExecStart="))
 argv = shlex.split(line[len("ExecStart="):].replace("%%", "%").replace("$$", "$"))
 def opt(name, default):
     return argv[argv.index(name) + 1] if name in argv[:-1] else default
-for k, v in (("BIN", argv[1]), ("BIND", opt("--bind", "127.0.0.1")), ("PORT", opt("--port", "7777"))):
+data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+for k, v in (("BIN", argv[1]), ("BIND", opt("--bind", "127.0.0.1")), ("PORT", opt("--port", "7777")),
+             ("RT", opt("--pdf-runtime", data + "/artifacts/pdf-runtime"))):
     print(f"{k}={shlex.quote(v)}")
 PY
 )"
@@ -159,31 +259,31 @@ case "$code" in
   *) echo "port $BIND:$PORT does not answer (HTTP ${code:-none})"; exit 1 ;;
 esac
 [ "$PDF" = 1 ] || exit 0
-python3 - "$BIN" <<'"'"'PY'"'"'
-import importlib.machinery, importlib.util, sys
-loader = importlib.machinery.SourceFileLoader("artifacts_check", sys.argv[1])
-spec = importlib.util.spec_from_loader(loader.name, loader)
-A = importlib.util.module_from_spec(spec)
-loader.exec_module(A)
-image = A.Handler.pdf_image
-pdf, err = A.render_pdf(A.render_page("deploy check", "<h1>deploy check</h1><p>ok</p>", pdf=True), image)
-if err:
-    sys.exit(f"test PDF failed: {err}")
-print(f"test page printed to PDF ({len(pdf)} bytes)")
-PY
+if out="$(python3 "$BIN" --check-pdf-runtime --pdf-runtime "$RT" 2>&1)"; then
+  echo "PDF runtime: $out"
+else
+  echo "test PDF failed: $out"
+  exit 1
+fi
 '
 }
 
 FAILED=()
 OK=()
 deploy_host() {
-  local host="$1" info unit py dock bin image rev free plan action changed="" swapped=0 prev=""
+  local host="$1" info unit py bin rt rev free restrict aa plan aaplan action changed="" swapped=0 aa_manual=0
   echo "== $host"
   if ! info="$(probe_host "$host")"; then
     echo "   cannot reach $host over ssh"; return 1
   fi
-  unit="$(get unit "$info")"; py="$(get python "$info")"; dock="$(get docker "$info")"
-  bin="$(get bin "$info")"; image="$(get image "$info")"; rev="$(get rev "$info")"; free="$(get free_mb "$info")"
+  unit="$(get unit "$info")"; py="$(get python "$info")"
+  bin="$(get bin "$info")"; rt="$(get runtime "$info")"; rev="$(get rev "$info")"; free="$(get free_mb "$info")"
+  restrict="$(get restrict "$info")"; aa="$(get aa "$info")"
+  if [ "$(get bad_runtime "$info")" = yes ]; then
+    echo "   the PDF runtime directory on $host must be an absolute path without spaces or special"
+    echo "   characters (artifacts.py refuses others), got: $rt"
+    return 1
+  fi
   [ "$py" = yes ] || { echo "   python3 is missing on $host"; return 1; }
   if [ "${#INSTALL_OPTS[@]}" -gt 0 ]; then
     action=install
@@ -198,23 +298,33 @@ deploy_host() {
   if [ "$MODE" = skip ]; then plan=keep
   elif [ "$rev" = "$REV" ] && [ "$MODE" = auto ]; then plan=current
   elif [ "$MODE" = ship ] || { [ "$MODE" = auto ] && [ "$LOCAL_REV" = "$REV" ]; }; then plan=ship
-  else plan=build
+  else plan=fetch
   fi
   if [ "$plan" = ship ] && [ "$LOCAL_REV" != "$REV" ]; then
-    echo "   --image ship: $LOCAL_IMAGE here does not match this program (revision ${LOCAL_REV:-none}, program $REV);"
-    echo "   build it first: python3 $HERE/artifacts.py --build-pdf-image"
+    echo "   --pdf ship: the PDF runtime here ($LOCAL_RT/$REV) is not installed;"
+    echo "   install it first: python3 $HERE/artifacts.py --install-pdf-runtime"
     return 1
   fi
-  if [ "$plan" = ship ] || [ "$plan" = build ]; then
-    [ "$dock" = yes ] || { echo "   docker is missing or not usable on $host (needed for the PDF image)"; return 1; }
+  if [ "$plan" = ship ] || [ "$plan" = fetch ]; then
+    if [[ "$free" =~ ^[0-9]+$ ]] && [ "$free" -lt "$NEED_MB" ]; then
+      echo "   not enough free space on $host: the PDF runtime needs about $NEED_MB MB, $free MB free"; return 1
+    fi
+  fi
+  if [ "$plan" = keep ] || [ "$restrict" != 1 ]; then aaplan=none
+  elif [ "$aa" = ok ]; then aaplan=present
+  else aaplan=install
   fi
 
   echo "   viewer: ${action} (unit: ${unit}${bin:+, program $bin})"
   case "$plan" in
-    keep) echo "   image:  left alone (--image skip; revision ${rev:-none}, program $REV)" ;;
-    current) echo "   image:  $image is current (revision $REV)" ;;
-    ship) echo "   image:  copy $LOCAL_IMAGE from here to $image (revision ${rev:-none} -> $REV, ${free:-?} MB free)" ;;
-    build) echo "   image:  build $image on the host (revision ${rev:-none} -> $REV, ${free:-?} MB free)" ;;
+    keep) echo "   pdf:    left alone (--pdf skip; revision ${rev:-none}, program $REV)" ;;
+    current) echo "   pdf:    runtime $REV is current in $rt" ;;
+    ship) echo "   pdf:    copy the PDF runtime from here to $rt (revision ${rev:-none} -> $REV, ${free:-?} MB free)" ;;
+    fetch) echo "   pdf:    download the PDF runtime on the host into $rt (revision ${rev:-none} -> $REV, ${free:-?} MB free)" ;;
+  esac
+  case "$aaplan" in
+    install) echo "   apparmor: the host restricts user namespaces: install the profile with sudo -n" ;;
+    present) echo "   apparmor: the profile is installed" ;;
   esac
   if [ "$DRY_RUN" -eq 1 ]; then echo "   dry run: nothing changed"; return 0; fi
 
@@ -225,26 +335,41 @@ deploy_host() {
   tar -C "$HERE" -czf - artifacts.py install.sh systemd | remote_in "$host" "$(assign D "$tmp")"$'\ntar -xzf - -C "$D"' \
     || { echo "   copying the files failed"; return 1; }
 
-  # 1. The image, before the program: if this fails, nothing has changed. The
-  #    old image keeps a <image>-prev tag until the check passes, for a rollback.
-  if [ "$plan" = ship ] || [ "$plan" = build ]; then
-    if [ "$(remote "$host" "$(assign IMAGE "$image" PREV "${image}-prev")"$'\nif docker image inspect "$IMAGE" >/dev/null 2>&1; then docker tag "$IMAGE" "$PREV" && echo tagged; fi')" = tagged ]; then
-      prev="${image}-prev"
-    fi
+  # 1. The PDF runtime, before the program: if this fails, nothing has changed.
+  #    The old revisions stay in <runtime>.keep until the check passes, for a rollback.
+  if [ "$plan" = ship ] || [ "$plan" = fetch ]; then
     local ok=1
-    if [ "$plan" = ship ]; then
-      echo "   copying the image..."
-      docker save "$LOCAL_IMAGE" | gzip -1 | remote_in "$host" "$(assign IMAGE "$image" LOCAL "$LOCAL_IMAGE")"'
-gunzip | docker load >/dev/null && { [ "$IMAGE" = "$LOCAL" ] || docker tag "$LOCAL" "$IMAGE"; }' || ok=0
-    else
-      echo "   building the image on the host (a few minutes)..."
-      remote "$host" "$(assign D "$tmp" IMAGE "$image")"$'\npython3 "$D/artifacts.py" --build-pdf-image --pdf-image "$IMAGE"' >/dev/null 2>&1 || ok=0
+    remote "$host" "$(assign RT "$rt")"$'\n'"$PDF_STASH" || ok=0
+    if [ "$ok" -eq 1 ] && [ "$plan" = ship ]; then
+      echo "   copying the PDF runtime..."
+      # The manifest (sorted type, mode, size and path of every file) comes first and the
+      # revision's REV file is not sent: the host verifies the tree, then writes REV.
+      (cd "$LOCAL_RT/$REV" && find . \( -type f -o -type l \) ! -path ./REV -printf '%y %m %s %P\n' | LC_ALL=C sort) > "$CTL/MANIFEST"
+      tar -c -C "$CTL" MANIFEST -C "$LOCAL_RT" --anchored --exclude="$REV/REV" "$REV" | gzip -1 \
+        | remote_in "$host" "$(assign RT "$rt" REV "$REV" SHIP_ID "$$")"$'\n'"$PDF_RECEIVE" || ok=0
+    elif [ "$ok" -eq 1 ]; then
+      echo "   downloading the PDF runtime on the host (about 180 MB)..."
+      remote "$host" "$(assign D "$tmp" RT "$rt")"$'\npython3 "$D/artifacts.py" --install-pdf-runtime --pdf-runtime "$RT"' >/dev/null 2>&1 || ok=0
     fi
     if [ "$ok" -eq 0 ]; then
-      [ -z "$prev" ] || remote "$host" "$(assign PREV "$prev")"$'\ndocker image rm "$PREV" >/dev/null 2>&1' || true
-      echo "   the image step failed; nothing on $host was changed"; return 1
+      remote "$host" "$(assign RT "$rt" REV "$REV" SHIP_ID "$$")"$'\n'"$PDF_RESTORE" || true
+      echo "   the PDF runtime step failed; nothing on $host was changed"; return 1
     fi
     swapped=1
+  fi
+
+  # 1b. The AppArmor profile (sudo -n). Without passwordless sudo, print the commands
+  #     and carry on: the viewer works, the PDF button does not until it is installed.
+  if [ "$aaplan" = install ]; then
+    if remote "$host" "$(assign PROFILE "$(profile_for "$rt")")"$'\n'"$AA_INSTALL" >/dev/null 2>&1; then
+      echo "   apparmor profile installed"
+    else
+      aa_manual=1
+      echo "   could not install the AppArmor profile with sudo -n (a password is needed?)."
+      echo "   PDF export is NOT working on $host until you run, there:"
+      echo "     python3 $([ -n "$bin" ] && printf '%q' "$bin" || printf '%s' '$HOME/.local/bin/artifacts') --print-apparmor-profile --pdf-runtime $(printf '%q' "$rt") | sudo tee $AA_FILE_DEFAULT >/dev/null"
+      echo "     sudo apparmor_parser -r $AA_FILE_DEFAULT"
+    fi
   fi
 
   # 2. The program.
@@ -258,17 +383,18 @@ else
   cp -p "$BIN" "$BIN.prev"
   install -m 0755 "$D/artifacts.py" "$BIN"
   echo replaced
-fi')" || { echo "   replacing the program failed: check $bin by hand"; rollback "$host" "$bin" "$image" "$prev" 0; return 1; }
-    if [ "$changed" = replaced ] || [ "$swapped" = 1 ]; then
+fi')" || { echo "   replacing the program failed: check $bin by hand"; rollback "$host" "$bin" "$rt" 0 "$swapped"; return 1; }
+    if [ "$changed" = replaced ]; then
       remote "$host" 'systemctl --user restart artifacts.service' \
-        || { echo "   restarting artifacts.service failed"; rollback "$host" "$bin" "$image" "$prev" "$([ "$changed" = replaced ] && echo 1 || echo 0)"; return 1; }
+        || { echo "   restarting artifacts.service failed"; rollback "$host" "$bin" "$rt" 1 "$swapped"; return 1; }
     fi
     case "$changed" in
       replaced) echo "   program replaced (previous: $bin.prev), service restarted" ;;
-      *) if [ "$swapped" = 1 ]; then echo "   program unchanged, service restarted for the new image"; else echo "   program unchanged"; fi ;;
+      *) echo "   program unchanged" ;;
     esac
   else
     local opts
+    [ "$aa_manual" -eq 0 ] || INSTALL_OPTS+=(--no-apparmor)
     opts="$(printf '%q ' "${INSTALL_OPTS[@]}")"
     remote "$host" "$(assign D "$tmp")"$'\n'"bash \"\$D/install.sh\" $opts" | sed 's/^/   | /' \
       || { echo "   install.sh failed on $host"; return 1; }
@@ -276,34 +402,38 @@ fi')" || { echo "   replacing the program failed: check $bin by hand"; rollback 
 
   # 3. The check, and a rollback of an update if it fails.
   local pdf=1
-  [ "$plan" = keep ] && pdf=0
+  if [ "$plan" = keep ] || [ "$aa_manual" -eq 1 ]; then pdf=0; fi
   if ! check_host "$host" "$pdf" | sed 's/^/   check: /'; then
     if [ "$action" = update ]; then
-      rollback "$host" "$bin" "$image" "$prev" "$([ "$changed" = replaced ] && echo 1 || echo 0)"
+      rollback "$host" "$bin" "$rt" "$([ "$changed" = replaced ] && echo 1 || echo 0)" "$swapped"
     fi
     return 1
   fi
-  if [ -n "$prev" ]; then
-    remote "$host" "$(assign PREV "$prev")"$'\ndocker image rm "$PREV" >/dev/null 2>&1' && echo "   old image removed"
+  if [ "$swapped" -eq 1 ]; then
+    remote "$host" "$(assign RT "$rt" REV "$REV" SHIP_ID "$$")"$'\n'"$PDF_FINISH" && echo "   old PDF runtime revisions removed"
   fi
+  [ "$aa_manual" -eq 0 ] || echo "   PDF export on $host: not working until the AppArmor profile is installed (see above)"
   return 0
 }
 
-# rollback <host> <bin> <image> <prev image tag or ""> <1 if the program was replaced>
+# rollback <host> <bin> <runtime dir> <1 if the program was replaced> <1 if the runtime was replaced>
 rollback() {
   local what=""
-  [ "$5" = 1 ] && what="program"
-  [ -z "$4" ] || what="${what:+$what and }image"
+  [ "$4" = 1 ] && what="program"
+  [ "$5" != 1 ] || what="${what:+$what and }PDF runtime"
   echo "   rolling back the ${what:-service (nothing was replaced)}..."
-  remote "$1" "$(assign BIN "$2" IMAGE "$3" PREV "$4" PROGRAM "$5")"'
+  remote "$1" "$(assign BIN "$2" RT "$3" REV "$REV" SHIP_ID "$$" PROGRAM "$4" RUNTIME "$5")"'
 [ "$PROGRAM" != 1 ] || cp -p "$BIN.prev" "$BIN"
-[ -z "$PREV" ] || { docker tag "$PREV" "$IMAGE" && docker image rm "$PREV" >/dev/null; }
+if [ "$RUNTIME" = 1 ]; then
+'"$PDF_RESTORE"'
+fi
 systemctl --user restart artifacts.service' \
     && echo "   rolled back; see journalctl --user -u $UNIT_NAME on the host" \
-    || echo "   ROLLBACK FAILED: restore $2.prev and $3 by hand"
+    || echo "   ROLLBACK FAILED: restore $2.prev and the runtime in $3.keep by hand"
 }
 
-echo "program revision $REV; $LOCAL_IMAGE here: ${LOCAL_REV:-not built}"
+if [ -n "$LOCAL_REV" ]; then here="installed"; else here="not installed"; fi
+echo "program revision $REV; PDF runtime here: $here"
 for h in "${HOSTS[@]}"; do
   TMP_REMOTE=""
   if deploy_host "$h"; then OK+=("$h"); else FAILED+=("$h"); fi
