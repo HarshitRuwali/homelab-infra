@@ -51,7 +51,7 @@ inventory, so adding a host cannot leave a silent gap in down-detection.
     | `fleet-container-oom` | critical | 0m | container OOM-killed in last 15 min |
     | `fleet-container-memory-near-limit` | warning | 15m | over 90% of its own limit |
     | `fleet-container-unhealthy` | warning | 10m | was healthy, now failing ([why that matters](container-metrics.md#container_health_state-does-not-mean-what-it-looks-like)) |
-    | `fleet-container-disappeared` | warning | 10m | container gone while host metrics are still arriving, non-workstation hosts; excludes the temporary S3 backup runner |
+    | `fleet-container-disappeared` | warning | 10m | a Compose-managed container gone while host metrics are still arriving, non-workstation hosts; one-off `docker run` containers are not watched |
     | `fleet-docker-update-failed` | critical | 0m | nightly update failed or left restarts, non-workstation hosts |
     | `fleet-docker-update-stale` | warning | 1h | no successful update in 50h |
 
@@ -101,8 +101,8 @@ inventory, so adding a host cannot leave a silent gap in down-detection.
     | uid | Severity | For | Fires when |
     |---|---|---|---|
     | `fleet-net-interface-errors` | warning | 15m | any sustained rx/tx error rate |
-    | `fleet-net-interface-drops` | warning | 15m | over 1 dropped packet/s |
-    | `fleet-net-link-lost` | critical | 5m | an interface that was up in the last 6h is now down |
+    | `fleet-net-interface-drops` | warning | 15m | over 5 dropped packets/s (the home LAN carries a steady ~1/s of Realtek RRCP frames the kernel counts as drops) |
+    | `fleet-net-link-lost` | critical | 5m | an interface that was up in the last 6h is now down; workstations excluded (Host Down covers a workstation that loses every link) |
     | `fleet-net-conntrack-near-limit` | warning | 10m | conntrack table over 85% |
     | `fleet-net-tcp-retransmits` | warning | 20m | over 5% of segments retransmitted, above a traffic floor |
 
@@ -147,7 +147,8 @@ inventory, so adding a host cannot leave a silent gap in down-detection.
 
     | uid | Severity | For | Fires when |
     |---|---|---|---|
-    | `security-suricata-alert` | ET severity 1 is critical, 2 is warning | 0m | Suricata on the firewall raised a severity 1 or 2 alert in the last 5 min, known-noise SIDs excluded |
+    | `security-suricata-alert` | ET severity 1 is critical, 2 is warning | 0m | Suricata on the firewall raised a severity 1 or 2 alert in the last 5 min, known-noise SIDs excluded, and the outbound SSH scan signature (sid 2003068) left to the next rule |
+    | `security-suricata-ssh-scan` | warning | 0m | one inside host tripped sid 2003068 (outbound SSH scan) 20 times, or towards 10 different destinations, in 15 min |
 
 === "Tenant and lease"
 
@@ -313,8 +314,9 @@ curl -s -u admin \
 This is the practical argument behind the tip above. A silence is the right
 tool for something genuinely temporary, like a maintenance window. For a host
 that will *always* be noisy, exclude it in the rule expression, where it is
-reviewable and cannot expire. `fleet-container-disappeared` and
-`fleet-docker-update-failed` both do this with `role!="workstation"`.
+reviewable and cannot expire. `fleet-container-disappeared`,
+`fleet-docker-update-failed` and `fleet-net-link-lost` all do this with
+`role!="workstation"`.
 
 ## Routing
 
@@ -373,6 +375,14 @@ discovery, the torrent client resolving `.tk` and `.to` trackers). They are
 listed with reasons in `rules-security.yaml`. Noise with no investigative
 value is better disabled in OPNsense by SID; exclude in the rule only what
 should stay visible on the dashboard.
+
+**Outbound SSH pages on volume.** Sid 2003068 fires on every fifth SYN to
+port 22 in 120 s, which git over SSH and SSH or Ansible from the dev and work
+VMs reach on a normal day. It has its own rule, `security-suricata-ssh-scan`,
+that pages once a source reaches 20 of those alerts or 10 different
+destinations in 15 minutes; a real scan or brute force gets there within
+minutes. Its message lists sources with their alert and destination counts,
+and every single hit stays on the dashboard.
 
 **Timing.** A new signature arrives about 30 seconds after the alert.
 Further flows of the **same** signature wait for the 15 minute group

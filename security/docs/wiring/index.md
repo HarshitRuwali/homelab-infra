@@ -114,6 +114,24 @@ On OPNsense: **Services > Intrusion Detection > Administration**, enable
 `EVE syslog output`. Then point the firewall's remote syslog target at the
 central stack.
 
+Select every internal segment under **Interfaces**: LAN (the sandbox), OPT2
+(the DMZ) and OPT3 (the LAB). Suricata only sees traffic on the interfaces
+listed there, so a guest moved to a new segment drops out of inspection
+silently until its interface is added. Leave WAN out: NAT has already rewritten
+every inside address by then.
+
+Two signatures need attention on this network:
+
+- **sid 2019102** (`ET DOS Possible SSDP Amplification Scan`) is disabled under
+  **Rules**. It matches any `ssdp:all` discovery aimed at a home address, and
+  Tailscale's port mapper on every sandbox guest probes the gateway that way
+  every few minutes: about 3,000 alerts a day with nothing to investigate.
+- **sid 2003068** (`ET SCAN Potential SSH Scan OUTBOUND`) stays on. Git over
+  SSH and ordinary SSH from the dev and work VMs trip it every day, so it has
+  its own alert rule that pages only on volume: one source with 20 alerts or
+  10 destinations in 15 minutes
+  (`monitoring/grafana/provisioning/alerting/rules-security.yaml`).
+
 On the central stack, Alloy accepts it, and every other syslog program the
 firewall sends ([section 3](#3-firewall-streams-and-flow-visibility)):
 
@@ -175,7 +193,7 @@ is given, and `uid=0(root)` in a response trips sid 2100498, in the
 `emerging-attack_response` category:
 
 ```bash
-# from any host whose traffic crosses the firewall's LAN interface
+# from any host whose traffic crosses a monitored interface (LAN, DMZ or LAB)
 curl "http://httpbin.org/base64/$(printf 'uid=0(root) gid=0(root) groups=0(root)\n' | base64)"
 ```
 
@@ -187,8 +205,8 @@ Explore:
 ```
 
 !!! warning "Wait for that signature, not for any alert"
-    An ordinary LAN trips other rules within minutes: UPnP discovery against
-    the firewall, a torrent client resolving `.to` trackers. A check that stops
+    An ordinary LAN trips other rules within minutes, such as a torrent client
+    resolving `.to` trackers or an SSH session burst. A check that stops
     at the first alert it sees can report success, or failure, before the test
     alert has even arrived.
 
