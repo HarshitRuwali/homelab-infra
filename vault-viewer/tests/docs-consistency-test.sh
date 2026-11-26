@@ -17,15 +17,17 @@ no() { printf '  \033[31mFAIL\033[0m %s\n' "$*"; FAIL=$((FAIL+1)); }
 # Globbed, not listed: a doc added later is checked automatically.
 SURFACES=(README.md docs/*.md)
 
-# Flags of other tools that the docs legitimately show (docker run, docker
-# build, tailscale whois, systemctl, Chromium, and argparse's built-in --help).
-OTHER_FLAGS=(--network --read-only --tmpfs --user --cap-drop --security-opt
-             --memory --pids-limit --pull --json --now --remote-debugging-pipe --help)
+# Flags of other tools that the docs legitimately show (tailscale whois,
+# systemctl, Chromium, and argparse's built-in --help).
+OTHER_FLAGS=(--user --json --now --remote-debugging-pipe --no-sandbox --help
+             --host-resolver-rules --proxy-server --proxy-bypass-list
+             --force-webrtc-ip-handling-policy)
 is_other_flag() { printf '%s\n' "${OTHER_FLAGS[@]}" | grep -qxF -- "$1"; }
 
 in_install_parser()   { grep -qE -e "(^|[|[:space:]])$1([|)])" install.sh; }
 in_artifacts_parser() { grep -qE -e "add_argument\(\"$1\"" artifacts.py; }
 in_deploy_parser()    { grep -qE -e "(^|[|[:space:]])$1([|)])" deploy.sh; }
+in_e2e_parser()       { grep -qE -e "(^|[|[:space:]])$1([|)])" tests/e2e.sh; }
 
 # One logical command per line: join backslash continuations, and join the
 # indented continuation lines of a usage block to the line that opened it.
@@ -53,7 +55,7 @@ headings() {
 # hyphen become one hyphen.
 slug() { tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_ -]//g; s/^ +| +$//g; s/[ -]+/-/g'; }
 
-for need in install.sh deploy.sh artifacts.py mkdocs.yml; do
+for need in install.sh deploy.sh artifacts.py mkdocs.yml tests/e2e.sh; do
   [[ -f "$need" ]] || { echo "missing $need, cannot check"; exit 1; }
 done
 
@@ -66,6 +68,7 @@ done
 flagfail=0
 check_flags() {
   local label="$1" file="$2" line tok cmd flag
+  set -f  # the unquoted word splits below must not expand a lone * against the cwd
   while IFS= read -r line; do
     cmd=""
     for tok in $line; do
@@ -73,6 +76,7 @@ check_flags() {
       case "$tok" in
         install.sh|*/install.sh)                  cmd=install;   break ;;
         deploy.sh|*/deploy.sh)                    cmd=deploy;    break ;;
+        e2e.sh|*/e2e.sh)                          cmd=e2e;       break ;;
         artifacts|artifacts.py|*/artifacts|*/artifacts.py) cmd=artifacts; break ;;
       esac
     done
@@ -88,9 +92,12 @@ check_flags() {
                      || { no "$label shows 'deploy.sh $flag' but deploy.sh has no such flag"; flagfail=1; } ;;
         artifacts) in_artifacts_parser "$flag" || [[ "$flag" == --help ]] \
                      || { no "$label shows 'artifacts $flag' but artifacts.py has no such flag"; flagfail=1; } ;;
+        e2e)       in_e2e_parser       "$flag" \
+                     || { no "$label shows 'e2e.sh $flag' but tests/e2e.sh has no such flag"; flagfail=1; } ;;
       esac
     done
   done < <(logical_lines "$file")
+  set +f
 }
 
 echo "== flags shown with a command are accepted by that command =="
@@ -116,8 +123,9 @@ while read -r flag; do
   in_install_parser "$flag" && continue
   in_artifacts_parser "$flag" && continue
   in_deploy_parser "$flag" && continue
+  in_e2e_parser "$flag" && continue
   is_other_flag "$flag" && continue
-  no "docs mention '$flag', which is in neither parser nor the known-other-tools list"; anyfail=1
+  no "docs mention '$flag', which is in no parser nor the known-other-tools list"; anyfail=1
 done < <(grep -ohE -- '--[a-z][a-z-]*' "${SURFACES[@]}" | sort -u)
 (( anyfail )) || ok "no unknown flag appears anywhere in README or docs"
 
@@ -172,17 +180,67 @@ done < <(sed -n '/^nav:/,$p' mkdocs.yml | grep -oE '[A-Za-z0-9_./-]+\.md')
 (( navfail )) || ok "nav and docs/*.md agree"
 
 echo
-echo "== the PDF image name matches the code =="
-imgfail=0
-code_image="$(sed -nE 's/^PDF_IMAGE = "([^"]+)".*/\1/p' artifacts.py)"
-inst_image="$(sed -nE 's/^PDF_IMAGE="([^"]+)".*/\1/p' install.sh)"
-[[ -n "$code_image" ]] || { no "could not read PDF_IMAGE from artifacts.py"; imgfail=1; }
-[[ "$inst_image" == "$code_image" ]] || { no "install.sh PDF_IMAGE '$inst_image' != artifacts.py '$code_image'"; imgfail=1; }
-grep -qF -- "$code_image" docs/pdf-export.md || { no "docs/pdf-export.md does not show '$code_image'"; imgfail=1; }
+echo "== the PDF runtime location, profile and deploy modes match the code =="
+rtfail=0
+code_aa="$(sed -nE 's/^PDF_APPARMOR_NAME = "([^"]+)".*/\1/p' artifacts.py)"
+[[ -n "$code_aa" ]] || { no "could not read PDF_APPARMOR_NAME from artifacts.py"; rtfail=1; }
+# The runtime directory: the last two path parts come from the program's default.
+code_rt="$(sed -nE 's|.*Path\(data\) / "([^"]+)" / "([^"]+)".*|\1/\2|p' artifacts.py)"
+[[ -n "$code_rt" ]] || { no "could not read the default runtime directory from artifacts.py"; rtfail=1; }
+inst_rt="$(sed -nE 's|^PDF_RUNTIME_DIR="\$\{XDG_DATA_HOME:-\$HOME/.local/share\}/([^"]+)"|\1|p' install.sh)"
+[[ "$inst_rt" == "$code_rt" ]] || { no "install.sh runtime dir '$inst_rt' != artifacts.py '$code_rt'"; rtfail=1; }
+grep -qF -- "profile $code_aa " <(python3 artifacts.py --print-apparmor-profile) \
+  || { no "--print-apparmor-profile does not define profile '$code_aa'"; rtfail=1; }
+# The attachment is the exact absolute runtime dir (no /**/ glob: any local user could match it).
+aa_dir="/opt/rt-check/$code_rt"
+grep -qxF -- "profile $code_aa $aa_dir/*/chrome/chrome-headless-shell flags=(unconfined) {" \
+  <(python3 artifacts.py --print-apparmor-profile --pdf-runtime "$aa_dir") \
+  || { no "the AppArmor profile attachment is not the exact runtime directory ($aa_dir)"; rtfail=1; }
+grep -qF -- '${XDG_DATA_HOME:-~/.local/share}/'"$code_rt" docs/pdf-export.md \
+  || { no "docs/pdf-export.md does not show the runtime directory '\${XDG_DATA_HOME:-~/.local/share}/$code_rt'"; rtfail=1; }
+grep -qF -- "/etc/apparmor.d/$code_aa" docs/pdf-export.md \
+  || { no "docs/pdf-export.md does not show /etc/apparmor.d/$code_aa"; rtfail=1; }
+# Every runtime path and profile name the docs show must be the code's.
+while read -r p; do
+  [[ "$p" == "$code_rt" || "$p" == "$code_rt"/* || "$p" == */"$code_rt" || "$p" == */"$code_rt"/* ]] || { no "docs show runtime path '$p', code uses '$code_rt'"; rtfail=1; }
+done < <(grep -ohE '[A-Za-z0-9_${}:~./-]*artifacts/pdf-runtime[A-Za-z0-9_<>/.-]*' "${SURFACES[@]}" | grep -v '^\*\*' | sort -u)
 while read -r name; do
-  [[ "$name" == "$code_image" ]] || { no "docs show image '$name', code uses '$code_image'"; imgfail=1; }
-done < <(grep -ohE 'artifacts-pdf:[A-Za-z0-9._-]+' "${SURFACES[@]}" | sort -u)
-(( imgfail )) || ok "docs, install.sh and artifacts.py agree on '$code_image'"
+  [[ "$name" == "$code_aa" ]] || { no "docs show profile '$name', code uses '$code_aa'"; rtfail=1; }
+done < <(grep -ohE 'artifacts-chrome-[A-Za-z0-9-]*' "${SURFACES[@]}" | sort -u)
+# Every deploy.sh --pdf mode shown in the docs is accepted by deploy.sh.
+deploy_modes="$(sed -nE 's/^ *(auto\|[a-z|]+)\) MODE=.*/\1/p' deploy.sh | tr '|' ' ')"
+[[ -n "$deploy_modes" ]] || { no "could not read the --pdf modes from deploy.sh"; rtfail=1; }
+for f in "${SURFACES[@]}"; do
+  while read -r mode; do
+    grep -qwF -- "$mode" <<<"$deploy_modes" || { no "$f shows 'deploy.sh --pdf $mode' but deploy.sh accepts: $deploy_modes"; rtfail=1; }
+  done < <(logical_lines "$f" | grep -E 'deploy\.sh' | grep -oE -- '--pdf[ =][a-z]+' | sed -E 's/--pdf[ =]//')
+done
+# The documented modes (the table in operations.md) are exactly deploy.sh's.
+for m in $deploy_modes; do
+  grep -qE -- "\`$m\`" <(grep -F -- '| `--pdf MODE`' docs/operations.md) \
+    || { no "docs/operations.md does not describe --pdf mode '$m'"; rtfail=1; }
+done
+(( rtfail )) || ok "runtime dir '$code_rt', profile '$code_aa' and --pdf modes ($deploy_modes) agree"
+
+echo
+echo "== removed docker options appear only as tombstones =="
+tombfail=0
+for flag in --build-pdf-image --pdf-image --pdf-base; do
+  while IFS= read -r hit; do
+    no "removed option $flag shown outside the migration note: $hit"; tombfail=1
+  done < <(grep -nF -- "$flag" "${SURFACES[@]}" | grep -v '^docs/pdf-export.md')
+done
+for needle in 'artifacts-pdf:local' 'Playwright' 'playwright'; do
+  while IFS= read -r hit; do
+    no "'$needle' outside the migration notes: $hit"; tombfail=1
+  done < <(grep -nF -- "$needle" "${SURFACES[@]}" | grep -vE '^docs/(pdf-export|operations)\.md:')
+done
+# The tombstones the docs promise really exist and exit 2.
+for flag in --build-pdf-image --pdf-image --pdf-base; do
+  python3 artifacts.py "$flag" >/dev/null 2>&1; rc=$?
+  [[ $rc -eq 2 ]] || { no "artifacts.py $flag should exit 2 (tombstone), got $rc"; tombfail=1; }
+done
+(( tombfail )) || ok "docker-era options are tombstones in the code and only noted in the migration section"
 
 echo
 echo "== defaults shown in the docs match the code =="
