@@ -32,11 +32,16 @@ from that runtime, and images are inlined, so nothing is fetched while
 printing. On Ubuntu 23.10+ the sandbox needs an AppArmor profile
 (--print-apparmor-profile).
 
+Obsidian canvases (.canvas, JSON Canvas) render as a pannable, zoomable board. Obsidian
+bases (.base) are evaluated by the Obsidian CLI (--obsidian-cli) and shown as tables.
+
 Needs python3-markdown (Debian/Ubuntu package) for notes; the tailscale CLI
-for --tailnet-user; network access once for --install-pdf-runtime.
+for --tailnet-user; network access once for --install-pdf-runtime; the Obsidian
+CLI for bases (python3-yaml names a base's views, optional).
 Usage: artifacts.py [--bind ADDR] [--port 7777] [--allow-host NAME] [--tailnet-user LOGIN]
                     [--pdf-runtime DIR] [--install-pdf-runtime] [--check-pdf-runtime]
-                    [--print-apparmor-profile] [--pdf-rev] [ROOT ...]
+                    [--print-apparmor-profile] [--pdf-rev]
+                    [--obsidian-cli CMD] [--obsidian-vault DIR] [ROOT ...]
 """
 import argparse
 import base64
@@ -50,6 +55,7 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import selectors
 import shutil
 import signal
@@ -76,6 +82,11 @@ except ImportError:  # notes then render as plain text
     def slugify(value, separator):
         return re.sub(r"[-\s]+", separator, re.sub(r"[^\w\s-]", "", value).strip().lower())
 
+try:  # optional: names the views of a .base file; without it only the default view is queried
+    import yaml
+except ImportError:
+    yaml = None
+
 DEFAULT_ROOTS = [Path.home() / "obsidian"]
 KINDS = {
     ".md": "note",
@@ -84,6 +95,7 @@ KINDS = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image", ".webp": "image",
     ".d2": "text", ".txt": "text", ".json": "text", ".yaml": "text", ".yml": "text", ".mmd": "text",
     ".csv": "text", ".toml": "text", ".py": "text", ".sh": "text", ".go": "text", ".ts": "text", ".js": "text",
+    ".canvas": "canvas", ".base": "base",
     ".zip": "archive",
     ".css": "asset", ".woff2": "asset",
 }
@@ -182,6 +194,8 @@ class Library:
             return None
         if it["kind"] == "html":
             text = re.sub(r"<[^>]+>", " ", text)
+        elif it["kind"] == "canvas":
+            text = canvas_search_text(text)
         low = text.lower()
         cost = len(text) + len(low)
         if cost <= self.TEXT_CACHE_CHARS // 4:
@@ -400,6 +414,12 @@ ul, ol { padding-left: 1.5em; } li { margin: .15em 0; }
 .backlinks { margin-top: 3em; padding-top: 1em; border-top: 1px solid var(--line); font-size: .9em; }
 .backlinks h4 { color: var(--dim); margin: 0 0 .4em; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; font-size:.8em; }
 .path { color: var(--dim); font-size: .8em; margin-bottom: .8em; }
+.embed-canvas::before { content: "\\25A6  "; color: var(--dim); }
+.base-view h2, .base-view h3, .base-view h4 { margin-top: 1.2em; }
+.base-view .count { color: var(--dim); font-size: .82em; margin: -.4em 0 1em; }
+.base-embed { border-left: 3px solid var(--accent); padding: 2px 0 2px 12px; margin: 1em 0; }
+.base-embed .base-name { color: var(--dim); font-size: .85em; }
+.base-error { border-radius: 8px; padding: 10px 14px; margin: 1em 0; background: #25252d; border-left: 3px solid #e06c75; }
 pre.mermaid { background: #23232a; text-align:center; padding: 16px; overflow: auto; color: transparent; min-height: 60px; max-height: 85vh; }
 pre.mermaid svg { max-width: none; }
 pre.mermaid[data-processed] { color: inherit; }
@@ -635,16 +655,16 @@ def mermaid_blocks(out):
     return re.sub(r'<pre><code class="language-mermaid">(.*?)</code></pre>', repl, out, flags=re.S)
 
 
-def render_note(lib, path, ident, pdf=False):
-    """A note as a viewer page, or with pdf=True as the page a PDF prints: light,
-    images inlined, vault links as plain text, no properties or backlinks."""
-    items = lib.scan()
-    items_by_id = {i["id"]: i for i in items}
-    by_name = lib.index(items)
-    text = path.read_text(errors="replace")
-    fm, body = split_frontmatter(text)
+def render_markdown(lib, body, ident, items_by_id, by_name, pdf=False, inline=None, embed_bases=True, budget=None):
+    """Markdown text to (HTML, extra <head> markup): wikilinks, embeds, callouts, relative
+    links and Mermaid. The one pipeline for notes and for the text of canvas nodes, so both
+    are treated alike. embed_bases=False shows ![[x.base]] as a link instead of evaluating it.
+    budget (a BaseBudget) is shared by everything one page evaluates; a new one if None."""
     note_dir = ident.rsplit("/", 1)[0]
-    inline = inliner(lib, items_by_id) if pdf else None
+    budget = budget or BaseBudget()
+    base_embeds = []  # (id, view or None), swapped in after Markdown has run
+    # A random per-render token marks where a base goes: nothing a note says can forge it.
+    token = "zz" + secrets.token_hex(8) + "n"
 
     def wikilink(m):
         bang, inner = m.group(1), m.group(2)
@@ -668,6 +688,17 @@ def render_note(lib, path, ident, pdf=False):
                     f'title="click to open full screen" data-id="{html.escape(tid)}"{width}>')
         if bang and kind == "note":
             return f'<div class="embed-note">Embedded: <a class="internal" {attrs}>{html.escape(target)}</a></div>'
+        if bang and kind == "canvas":
+            return f'<div class="embed-note embed-canvas">Canvas: <a class="internal" {attrs}>{html.escape(target)}</a></div>'
+        if bang and kind == "base":
+            if pdf or not embed_bases:
+                return f'<div class="embed-note">Base: <a class="internal" {attrs}>{html.escape(target)}</a></div>'
+            if len(base_embeds) >= BASE_MAX_EMBEDS:
+                budget.truncated = True
+                return (f'<div class="embed-note">Base: <a class="internal" {attrs}>{html.escape(target)}</a> '
+                        f'(not evaluated: at most {BASE_MAX_EMBEDS} base embeds per page)</div>')
+            base_embeds.append((tid, anchor.strip() or None))
+            return f"{token}{len(base_embeds) - 1}zz"
         return f'<a class="internal" {attrs}>{label}</a>'
 
     body = map_outside_code(body, lambda s: re.sub(r"(!?)\[\[([^\]\n]+)\]\]", wikilink, s))
@@ -703,10 +734,46 @@ def render_note(lib, path, ident, pdf=False):
         return f'href="#{html.escape(tid)}" data-id="{html.escape(tid)}"{extra}'
     out = re.sub(r'\b(href|src)="([^"]*)"', rel, out)
 
+    # A base embed is evaluated by the Obsidian CLI and swapped in last, so none of the
+    # passes above touch its markup (a base's own links are built with this viewer's format).
+    def known(m):
+        return int(m.group(1)) < len(base_embeds)
+
+    def base_embed(m):
+        if not known(m):
+            return m.group(0)
+        tid, view = base_embeds[int(m.group(1))]
+        return base_html(lib, tid, items_by_id, view, embed=True, budget=budget)
+
+    def in_heading(m):  # a heading holds a link, not a table, and its id must stay readable
+        def card(t):
+            if not known(t):
+                return t.group(0)
+            tid = base_embeds[int(t.group(1))][0]
+            return f'<a class="internal" {vault_ref(tid)}>{html.escape(items_by_id[tid]["name"])}</a>'
+        tag = re.sub(re.escape(token) + r"\d+zz", "base", m.group(2))
+        return f"<h{m.group(1)}{tag}>" + re.sub(re.escape(token) + r"(\d+)zz", card, m.group(3)) + f"</h{m.group(1)}>"
+    if base_embeds:
+        out = re.sub(r"<h([1-6])\b([^>]*)>(.*?)</h\1>", in_heading, out, flags=re.S)
+        out = re.sub(r"(?:<p>\s*)?" + re.escape(token) + r"(\d+)zz(?:\s*</p>)?", base_embed, out)
+
     head = ""
     if 'class="language-mermaid"' in out:
         out = mermaid_blocks(out)
         head = mermaid_head(pdf)
+    return out, head
+
+
+def render_note(lib, path, ident, pdf=False):
+    """A note as a viewer page, or with pdf=True as the page a PDF prints: light,
+    images inlined, vault links as plain text, no properties or backlinks."""
+    items = lib.scan()
+    items_by_id = {i["id"]: i for i in items}
+    by_name = lib.index(items)
+    text = path.read_text(errors="replace")
+    fm, body = split_frontmatter(text)
+    inline = inliner(lib, items_by_id) if pdf else None
+    out, head = render_markdown(lib, body, ident, items_by_id, by_name, pdf, inline)
     if pdf:
         return render_page(path.stem, out, head, pdf=True)
 
@@ -750,13 +817,738 @@ def render_text(path, ident, pdf=False):
     return render_page(path.name, body, pdf=pdf)
 
 
+# ------------------------------------------------------------------ Obsidian bases
+
+BASE_TIMEOUT = 15  # seconds one CLI call may take
+BASE_TTL = 5.0  # seconds a query result is reused
+BASE_CACHE_MAX = 64  # results kept
+BASE_MAX_ROWS = 2000  # rows shown per view
+BASE_MAX_OUTPUT = 8 << 20  # bytes of CLI output accepted (the call is killed past this)
+BASE_MAX_VIEWS = 20  # views queried per base
+BASE_MAX_EMBEDS = 20  # base embeds evaluated per page
+BASE_PAGE_BUDGET = 30.0  # seconds of CLI time one page may spend in all
+BASE_SLOT_WAIT = 10.0  # seconds to wait for a free CLI slot
+BASE_SLOTS = threading.BoundedSemaphore(2)  # CLI calls at once, like PDF_SLOTS
+NO_CLI = "Bases need the Obsidian CLI: not configured (see --obsidian-cli)."
+
+
+class BaseBudget:
+    """What one page may spend on bases: CLI time in total and a count of embeds."""
+
+    def __init__(self, seconds=None):
+        self.deadline = time.monotonic() + (BASE_PAGE_BUDGET if seconds is None else seconds)
+        self.truncated = False
+
+    def left(self):
+        return self.deadline - time.monotonic()
+
+
+def _read_bounded(proc, timeout, cap):
+    """Read a process's stdout (at most cap bytes) and stderr (first 64 KiB kept) until both
+    close or time runs out. Returns (stdout, stderr, problem) with problem None, "timeout"
+    or "overflow"."""
+    sel = selectors.DefaultSelector()
+    bufs = {"out": bytearray(), "err": bytearray()}
+    for name, f in (("out", proc.stdout), ("err", proc.stderr)):
+        os.set_blocking(f.fileno(), False)
+        sel.register(f, selectors.EVENT_READ, name)
+    end = time.monotonic() + timeout
+    try:
+        while sel.get_map():
+            left = end - time.monotonic()
+            if left <= 0:
+                return bytes(bufs["out"]), bytes(bufs["err"]), "timeout"
+            for key, _ in sel.select(left):
+                try:
+                    chunk = os.read(key.fd, 65536)
+                except BlockingIOError:
+                    continue
+                if not chunk:
+                    sel.unregister(key.fileobj)
+                    continue
+                buf = bufs[key.data]
+                if key.data == "out":
+                    buf += chunk
+                    if len(buf) > cap:
+                        return bytes(buf), bytes(bufs["err"]), "overflow"
+                elif len(buf) < 65536:
+                    buf += chunk
+        try:
+            proc.wait(timeout=max(0.1, end - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            return bytes(bufs["out"]), bytes(bufs["err"]), "timeout"
+        return bytes(bufs["out"]), bytes(bufs["err"]), None
+    finally:
+        sel.close()
+
+
+class BaseEngine:
+    """Evaluates .base files through the Obsidian CLI. The command is only ever run as
+    `CMD base:query path=<vault-relative .base file> [view=<view>] format=json`, as an
+    argument list (no shell, CMD one program path), for a file this viewer resolved inside
+    the Obsidian vault. Its output is untrusted: callers escape it."""
+
+    def __init__(self, cli=None, vault=None):
+        self.argv = [cli] if cli and cli.strip() and cli.strip() != "none" else None
+        self.vault = Path(vault).expanduser().resolve() if vault else None
+        self._cache = collections.OrderedDict()  # (id, view, mtime) -> (stamp, rows, error)
+        self._inflight = {}  # key -> Event, for a call already running
+        self._lock = threading.Lock()
+
+    def relpath(self, path):
+        """The path of a .base file as the CLI names it (relative to the Obsidian vault),
+        or None if it is not a .base file inside that vault."""
+        if self.vault is None or path.suffix.lower() != ".base":
+            return None
+        try:
+            rel = path.resolve().relative_to(self.vault)
+        except ValueError:
+            return None
+        if not rel.parts or any(part in ("", ".", "..") for part in rel.parts):
+            return None
+        out = rel.as_posix()
+        return None if any(ord(c) < 32 for c in out) else out
+
+    def unavailable(self, path):
+        """Why this file cannot be evaluated (a message), or None."""
+        if not self.argv:
+            return NO_CLI
+        if self.vault is None:
+            return "Bases need the Obsidian CLI: no Obsidian vault is set (see --obsidian-vault)."
+        if self.relpath(path) is None:
+            return "This base is outside the Obsidian vault the CLI has open (--obsidian-vault), so it cannot be evaluated."
+        return None
+
+    def _fresh(self, key):
+        hit = self._cache.get(key)
+        return hit if hit and time.monotonic() - hit[0] < BASE_TTL else None
+
+    def query(self, path, ident, view, mtime, budget=None):
+        """(rows, None) or (None, message). Results are cached briefly, and identical calls
+        that overlap share one CLI run."""
+        why = self.unavailable(path)
+        if why:
+            return None, why
+        budget = budget or BaseBudget()
+        key = (ident, view, mtime)
+        with self._lock:
+            hit = self._fresh(key)
+            if hit:
+                return hit[1], hit[2]
+            running = self._inflight.get(key)
+            if running is None:
+                running = self._inflight[key] = threading.Event()
+                leader = True
+            else:
+                leader = False
+        if not leader:
+            running.wait(max(0.0, min(budget.left(), BASE_TIMEOUT + BASE_SLOT_WAIT)))
+            with self._lock:
+                hit = self._fresh(key)
+            if hit:
+                return hit[1], hit[2]
+            return None, "The Obsidian CLI did not answer in time."
+        try:
+            rows, err = self._run(self.relpath(path), view, budget)
+            with self._lock:
+                self._cache[key] = (time.monotonic(), rows, err)
+                self._cache.move_to_end(key)
+                while len(self._cache) > BASE_CACHE_MAX:
+                    self._cache.popitem(last=False)
+            return rows, err
+        finally:
+            with self._lock:
+                self._inflight.pop(key, None)
+            running.set()
+
+    def _run(self, rel, view, budget):
+        argv = [*self.argv, "base:query", f"path={rel}"]
+        if view is not None:
+            if any(ord(c) < 32 for c in view):
+                return None, "This view name cannot be queried."
+            argv.append(f"view={view}")
+        argv.append("format=json")
+        if budget.left() <= 0:
+            return None, "Skipped: time limit for bases on this page."
+        if not BASE_SLOTS.acquire(timeout=min(BASE_SLOT_WAIT, max(0.0, budget.left()))):
+            return None, "The Obsidian CLI is busy, try again in a moment."
+        try:
+            try:
+                # Its own session, so a timeout or overflow can kill the whole process group
+                # (a wrapper's children too), not just the wrapper.
+                proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                        stderr=subprocess.PIPE, start_new_session=True)
+            except OSError as e:
+                return None, f"The Obsidian CLI could not be run: {e}"
+            try:
+                out, err, problem = _read_bounded(proc, min(BASE_TIMEOUT, max(0.5, budget.left())), BASE_MAX_OUTPUT)
+            finally:
+                _kill_group(proc)  # whatever is still running; harmless when nothing is
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+                for f in (proc.stdout, proc.stderr):
+                    try:
+                        f.close()
+                    except OSError:
+                        pass
+        finally:
+            BASE_SLOTS.release()
+        if problem == "timeout":
+            return None, f"The Obsidian CLI did not answer within {BASE_TIMEOUT} s."
+        if problem == "overflow":
+            return None, f"The Obsidian CLI returned more than {BASE_MAX_OUTPUT >> 20} MiB."
+        if proc.returncode != 0:
+            msg = err.decode(errors="replace").strip().splitlines()
+            return None, (msg[0][:300] if msg else f"The Obsidian CLI failed (exit {proc.returncode}).")
+        try:
+            rows = json.loads(out.decode(errors="replace"))
+        except (ValueError, RecursionError):
+            return None, "The Obsidian CLI did not return JSON."
+        if not isinstance(rows, list) or not all(isinstance(x, dict) for x in rows):
+            return None, "The Obsidian CLI returned JSON that is not a list of rows."
+        return rows, None
+
+
+OBSIDIAN = BaseEngine()  # replaced by main() from --obsidian-cli and --obsidian-vault
+
+
+def base_views(src):
+    """[(name, type)] of a .base file's views, in file order; [] when PyYAML is missing,
+    the YAML does not parse or it names no views."""
+    if yaml is None:
+        return []
+    try:
+        data = yaml.safe_load(src)
+    except Exception:  # noqa: BLE001 (yaml raises several types; a bad file just has no views)
+        return []
+    views = data.get("views") if isinstance(data, dict) else None
+    out = []
+    for v in views if isinstance(views, list) else []:
+        if isinstance(v, dict) and isinstance(v.get("name"), str) and v["name"].strip():
+            out.append((v["name"], str(v.get("type") or "table")))
+    return out
+
+
+def base_cell(v, depth=0):
+    if v is None:
+        return ""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if depth > 6:
+        return "\u2026"
+    if isinstance(v, list):
+        return ", ".join(base_cell(x, depth + 1) for x in v)
+    if isinstance(v, dict):
+        try:
+            return json.dumps(v, ensure_ascii=False)
+        except (ValueError, RecursionError):
+            return "\u2026"
+    return str(v)
+
+
+def vault_ref(tid):
+    """href and data-id for a viewer id, the format the viewer page opens."""
+    t = html.escape(tid)
+    return f'href="#{t}" data-id="{t}"'
+
+
+def base_table(lib, rows, items_by_id):
+    """Rows (dicts) as an HTML table; every value is escaped. `path` is shown as a link to the
+    note in the viewer, on the `file name` column when the view has one, else in its own."""
+    cols = []
+    for r in rows:
+        for k in r:
+            if k not in cols:
+                cols.append(k)
+    name_col = "file name" if "file name" in cols else None
+    shown = [c for c in cols if not (c == "path" and name_col)]
+
+    vault = str(OBSIDIAN.vault) if OBSIDIAN.vault is not None else None
+
+    def link_for(row):
+        """The viewer id of a row's note. The path is relative to the Obsidian vault, which may
+        be inside a viewer root, equal to it, or contain it, so go through the real path."""
+        p = row.get("path")
+        if vault is None or not isinstance(p, str) or not p:
+            return None
+        full = os.path.normpath(os.path.join(vault, p))
+        if full != vault and not full.startswith(vault.rstrip(os.sep) + os.sep):
+            return None
+        for root in lib.roots:
+            r = str(root).rstrip(os.sep)
+            if full.startswith(r + os.sep):
+                tid = root.name + "/" + full[len(r) + 1:]
+                return tid if tid in items_by_id else None
+        return None
+
+    head = "".join(f"<th>{html.escape(str(c))}</th>" for c in shown)
+    body = []
+    for r in rows[:BASE_MAX_ROWS]:
+        tid = link_for(r)
+        cells = []
+        for c in shown:
+            if c == name_col or (c == "path" and not name_col):
+                p = r.get("path")
+                if c == name_col:
+                    text = base_cell(r.get(c))
+                elif isinstance(p, str):
+                    text = os.path.basename(p)
+                    text = text[:-3] if text.lower().endswith(".md") else text
+                else:
+                    text = base_cell(p)
+                if tid:
+                    cells.append(f'<td><a class="internal" {vault_ref(tid)}>{html.escape(text)}</a></td>')
+                else:
+                    cells.append(f"<td>{html.escape(text)}</td>")
+            else:
+                cells.append(f"<td>{html.escape(base_cell(r.get(c)))}</td>")
+        body.append("<tr>" + "".join(cells) + "</tr>")
+    n = len(rows)
+    count = f'<p class="count">{n} row{"s" if n != 1 else ""}' + (f", showing the first {BASE_MAX_ROWS}" if n > BASE_MAX_ROWS else "") + "</p>"
+    if not rows:
+        return count
+    return f'<table><thead><tr>{head}</tr></thead><tbody>{"".join(body)}</tbody></table>{count}'
+
+
+def base_html(lib, tid, items_by_id, only_view=None, embed=False, budget=None):
+    """The evaluated views of a base (all, or only_view) as an HTML fragment, or the reason
+    it cannot be shown with the base's YAML. Never raises."""
+    path = lib.resolve(tid)
+    if path is None or path.suffix.lower() != ".base":
+        return '<div class="base-error">This base is not in the vault.</div>'
+    try:
+        src = path.read_text(errors="replace")
+    except OSError:
+        return '<div class="base-error">This base cannot be read.</div>'
+    h = "h4" if embed else "h2"
+
+    def source_block():
+        return f'<p class="base-name">The base file:</p><pre><code class="language-yaml">{html.escape(src)}</code></pre>'
+
+    budget = budget or BaseBudget()
+    views = base_views(src)
+    if only_view is not None and yaml is None:
+        views = [(only_view, "table")]  # the views cannot be listed without PyYAML: the CLI checks the name
+    elif only_view is not None:
+        views = [v for v in views if v[0] == only_view]
+        if not views:
+            return (f'<div class="base-error">No view named "{html.escape(only_view[:100])}" in this base.</div>'
+                    + source_block())
+    mtime = items_by_id.get(tid, {}).get("mtime", 0)
+    why = OBSIDIAN.unavailable(path)
+    if why:
+        out = f'<div class="base-error">{html.escape(why)}</div>' + source_block()
+    else:
+        parts, failed = [], False
+        if len(views) > BASE_MAX_VIEWS:
+            parts.append(f'<div class="base-error">This base has {len(views)} views: showing the first {BASE_MAX_VIEWS}.</div>')
+            views = views[:BASE_MAX_VIEWS]
+        for name, vtype in views or [(None, "table")]:
+            rows, err = OBSIDIAN.query(path, tid, name, mtime, budget)
+            title = ""
+            if name is not None:
+                title = html.escape(name) + (f" ({html.escape(vtype)})" if vtype != "table" else "")
+                title = f"<{h}>{title}</{h}>"
+            if err:
+                failed = True
+                parts.append(f'<div class="base-view">{title}<div class="base-error">{html.escape(err)}</div></div>')
+            else:
+                parts.append(f'<div class="base-view">{title}{base_table(lib, rows, items_by_id)}</div>')
+        out = "".join(parts) + (source_block() if failed else "")
+    if embed:
+        out = (f'<div class="base-embed"><div class="base-name">Base: <a class="internal" {vault_ref(tid)}>'
+               f'{html.escape(path.stem)}</a></div>{out}</div>')
+    return out
+
+
+def render_base(lib, path, ident):
+    items_by_id = {i["id"]: i for i in lib.scan()}
+    crumbs = html.escape(" / ".join(ident.split("/")[1:-1]))
+    body = (f'<div class="path">{crumbs}</div><h1>{html.escape(path.stem)}</h1>'
+            + base_html(lib, ident, items_by_id, budget=BaseBudget()))
+    return render_page(path.stem, body)
+
+
+# ------------------------------------------------------------------ JSON Canvas
+
+CANVAS_COLORS = {"1": "#fb464c", "2": "#e9973f", "3": "#e0de71", "4": "#44cf6e", "5": "#53dfdd", "6": "#a882ff"}
+CANVAS_MAX_NODES, CANVAS_MAX_EDGES = 2000, 5000
+CANVAS_MAX_BYTES = 8 << 20
+SIDE_VEC = {"top": (0, -1), "right": (1, 0), "bottom": (0, 1), "left": (-1, 0)}
+EXCERPT_CHARS = 600
+
+
+def canvas_color(v):
+    """A preset number or a #hex color as a CSS color, else None (nothing else reaches a style)."""
+    if isinstance(v, str):
+        if v in CANVAS_COLORS:
+            return CANVAS_COLORS[v]
+        if re.fullmatch(r"#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})", v):
+            return v
+    return None
+
+
+def _num(v, default, lo=-10_000_000, hi=10_000_000):
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v:
+        return default
+    return max(lo, min(hi, v))
+
+
+def parse_canvas(text):
+    """(nodes, edges) as clean dicts from JSON Canvas text; raises ValueError (JSONDecodeError
+    included) if it is not a JSON object. Missing or odd fields get defaults, unusable nodes
+    and edges are dropped."""
+    try:
+        data = json.loads(text)
+    except RecursionError:
+        raise ValueError("nested too deeply") from None
+    if not isinstance(data, dict):
+        raise ValueError("the top level is not a JSON object")
+    nodes, ids = [], set()
+    for n in (data.get("nodes") if isinstance(data.get("nodes"), list) else [])[:CANVAS_MAX_NODES]:
+        if not isinstance(n, dict) or not isinstance(n.get("id"), str):
+            continue
+        nodes.append({**n, "x": _num(n.get("x"), 0), "y": _num(n.get("y"), 0),
+                      "width": _num(n.get("width"), 250, 1), "height": _num(n.get("height"), 60, 1)})
+        ids.add(n["id"])
+    edges = []
+    for e in (data.get("edges") if isinstance(data.get("edges"), list) else [])[:CANVAS_MAX_EDGES]:
+        if isinstance(e, dict) and e.get("fromNode") in ids and e.get("toNode") in ids:
+            edges.append(e)
+    return nodes, edges
+
+
+def canvas_search_text(text):
+    """What search matches in a canvas: text nodes, group labels, edge labels, file names."""
+    try:
+        nodes, edges = parse_canvas(text)
+    except ValueError:
+        return ""
+    parts = []
+    for n in nodes:
+        for k in ("text", "label", "file", "url"):
+            if isinstance(n.get(k), str):
+                parts.append(n[k])
+    parts += [e["label"] for e in edges if isinstance(e.get("label"), str)]
+    return "\n".join(parts)
+
+
+def _auto_sides(a, b):
+    dx = (b["x"] + b["width"] / 2) - (a["x"] + a["width"] / 2)
+    dy = (b["y"] + b["height"] / 2) - (a["y"] + a["height"] / 2)
+    if abs(dx) >= abs(dy):
+        return ("right", "left") if dx >= 0 else ("left", "right")
+    return ("bottom", "top") if dy >= 0 else ("top", "bottom")
+
+
+def _anchor(n, side):
+    return {"top": (n["x"] + n["width"] / 2, n["y"]), "bottom": (n["x"] + n["width"] / 2, n["y"] + n["height"]),
+            "left": (n["x"], n["y"] + n["height"] / 2), "right": (n["x"] + n["width"], n["y"] + n["height"] / 2)}[side]
+
+
+def _arrow(p, side):
+    """An arrowhead with its tip at p, on the `side` of the node it points into."""
+    dx, dy = SIDE_VEC[side]
+    px, py = -dy, dx
+    pts = [p, (p[0] + dx * 13 + px * 6, p[1] + dy * 13 + py * 6), (p[0] + dx * 13 - px * 6, p[1] + dy * 13 - py * 6)]
+    return " ".join(f"{x:.1f},{y:.1f}" for x, y in pts)
+
+
+def canvas_edge(e, by_id, ox, oy):
+    """(svg markup, label markup) for one edge, in board coordinates."""
+    a, b = by_id[e["fromNode"]], by_id[e["toNode"]]
+    auto_a, auto_b = _auto_sides(a, b)
+    sa = e.get("fromSide") if e.get("fromSide") in SIDE_VEC else auto_a
+    sb = e.get("toSide") if e.get("toSide") in SIDE_VEC else auto_b
+    (x1, y1), (x2, y2) = _anchor(a, sa), _anchor(b, sb)
+    x1, y1, x2, y2 = x1 + ox, y1 + oy, x2 + ox, y2 + oy
+    k = max(40.0, min(300.0, 0.4 * ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5))
+    c1 = (x1 + SIDE_VEC[sa][0] * k, y1 + SIDE_VEC[sa][1] * k)
+    c2 = (x2 + SIDE_VEC[sb][0] * k, y2 + SIDE_VEC[sb][1] * k)
+    d = f"M{x1:.1f},{y1:.1f} C{c1[0]:.1f},{c1[1]:.1f} {c2[0]:.1f},{c2[1]:.1f} {x2:.1f},{y2:.1f}"
+    col = canvas_color(e.get("color"))
+    style = f' style="--ec:{col}"' if col else ""
+    svg = f'<g class="edge"{style}><path d="{d}"/>'
+    if e.get("fromEnd") == "arrow":
+        svg += f'<polygon points="{_arrow((x1, y1), sa)}"/>'
+    if e.get("toEnd", "arrow") == "arrow":
+        svg += f'<polygon points="{_arrow((x2, y2), sb)}"/>'
+    svg += "</g>"
+    label = ""
+    if isinstance(e.get("label"), str) and e["label"].strip():
+        mx = (x1 + 3 * c1[0] + 3 * c2[0] + x2) / 8
+        my = (y1 + 3 * c1[1] + 3 * c2[1] + y2) / 8
+        label = f'<div class="elabel" style="left:{mx:.1f}px;top:{my:.1f}px">{html.escape(e["label"][:200])}</div>'
+    return svg, label
+
+
+CANVAS_CSS = """
+html, body { height: 100%; overflow: hidden; overscroll-behavior: none; }
+main { max-width: none; padding: 0; height: 100%; }
+#cv { position: fixed; inset: 0; overflow: hidden; touch-action: none; cursor: grab; background: var(--bg);
+  background-image: radial-gradient(var(--line) 1px, transparent 1px); background-size: 24px 24px; }
+#cv.drag { cursor: grabbing; }
+#board { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+#edges { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.edge path { fill: none; stroke: var(--ec, var(--dim)); stroke-width: 2; }
+.edge polygon { fill: var(--ec, var(--dim)); stroke: none; }
+.cn { position: absolute; overflow: hidden; border: 2px solid var(--c, var(--line)); border-radius: 8px;
+  background: color-mix(in srgb, var(--c, transparent) 10%, var(--code)); }
+.cn-group { background: color-mix(in srgb, var(--c, var(--dim)) 8%, transparent); border-style: dashed; overflow: visible; }
+.cn-group > .cn-label { position: absolute; left: 0; bottom: 100%; margin-bottom: 4px; color: var(--dim); font-size: 14px;
+  white-space: nowrap; }
+.cn-body { height: 100%; overflow: auto; padding: 8px 12px; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; user-select: text; }
+.cn-body > :first-child { margin-top: 0; } .cn-body > :last-child { margin-bottom: 0; }
+.cn-body h1, .cn-body h2, .cn-body h3 { margin: .6em 0 .3em; font-size: 1.2em; border: 0; padding: 0; }
+.cn-body img { max-width: 100%; }
+.cn-body pre { padding: 8px 10px; }
+.cn-title { font-weight: 650; margin-bottom: 4px; }
+.cn-dim { color: var(--dim); font-size: .85em; }
+.cn-image { padding: 0; display: grid; place-items: center; }
+.cn-image img { width: 100%; height: 100%; object-fit: contain; margin: 0; cursor: zoom-in; }
+.elabel { position: absolute; transform: translate(-50%, -50%); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 1px 8px; font-size: 13px; white-space: nowrap; pointer-events: none; }
+.cvtools { position: fixed; right: 12px; bottom: 12px; z-index: 5; display: flex; gap: 6px; }
+.cvtools button { background: var(--code); color: var(--text); border: 1px solid var(--line); border-radius: 8px;
+  min-width: 40px; height: 40px; font: 600 16px/1 system-ui, sans-serif; cursor: pointer; }
+.cvtools button:hover { background: var(--line); }
+.cv-empty { position: fixed; inset: 0; display: grid; place-items: center; color: var(--dim); }
+"""
+
+CANVAS_JS = """
+(() => {
+  const vp = document.getElementById('cv'), board = document.getElementById('board');
+  if (!vp || !board) return;
+  const W = +board.dataset.w, H = +board.dataset.h;
+  let k = 1, tx = 0, ty = 0;
+  const apply = () => { board.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + k + ')'; };
+  const lim = (v) => Math.max(0.02, Math.min(4, v));
+  function fit() {
+    const r = vp.getBoundingClientRect();
+    k = lim(Math.min(r.width / W, r.height / H, 1));
+    tx = (r.width - W * k) / 2; ty = (r.height - H * k) / 2; apply();
+  }
+  function zoomAt(f, cx, cy) {
+    const nk = lim(k * f);
+    tx = cx - (cx - tx) * nk / k; ty = cy - (cy - ty) * nk / k; k = nk; apply();
+  }
+  const mid = () => { const r = vp.getBoundingClientRect(); return [r.width / 2, r.height / 2]; };
+  document.getElementById('zin').onclick = () => zoomAt(1.25, ...mid());
+  document.getElementById('zout').onclick = () => zoomAt(0.8, ...mid());
+  document.getElementById('zfit').onclick = fit;
+  vp.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const r = vp.getBoundingClientRect();
+    const f = e.ctrlKey ? Math.exp(-e.deltaY * 0.01) : (e.deltaY < 0 ? 1.12 : 1 / 1.12);
+    zoomAt(f, e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+  const pts = new Map();
+  let moved = 0, last = null;
+  const span = () => { const [a, b] = [...pts.values()]; return [Math.hypot(a.x - b.x, a.y - b.y), (a.x + b.x) / 2, (a.y + b.y) / 2]; };
+  vp.addEventListener('pointerdown', (e) => {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    moved = 0; vp.classList.add('drag');
+    if (pts.size === 2) last = span();
+  });
+  addEventListener('pointermove', (e) => {
+    const p = pts.get(e.pointerId);
+    if (!p) return;
+    const r = vp.getBoundingClientRect();
+    if (pts.size === 1) {
+      moved += Math.abs(e.clientX - p.x) + Math.abs(e.clientY - p.y);
+      tx += e.clientX - p.x; ty += e.clientY - p.y; apply();
+      p.x = e.clientX; p.y = e.clientY;
+    } else {
+      p.x = e.clientX; p.y = e.clientY;
+      const [d, cx, cy] = span();
+      if (last && last[0] > 0) { tx += cx - last[1]; ty += cy - last[2]; zoomAt(d / last[0], cx - r.left, cy - r.top); }
+      last = [d, cx, cy]; moved += 10;
+    }
+  });
+  const up = (e) => { pts.delete(e.pointerId); if (!pts.size) vp.classList.remove('drag'); last = pts.size === 2 ? span() : null; if (!pts.size) setTimeout(() => { moved = 0; }, 60); };
+  addEventListener('pointerup', up); addEventListener('pointercancel', up);
+  // A drag that ends on a link must not follow it.
+  document.addEventListener('click', (e) => { if (moved > 6) { e.preventDefault(); e.stopPropagation(); moved = 0; } }, true);
+  addEventListener('keydown', (e) => {
+    if (e.key === '+' || e.key === '=') zoomAt(1.25, ...mid());
+    else if (e.key === '-') zoomAt(0.8, ...mid());
+    else if (e.key === '0') fit();
+  });
+  addEventListener('resize', fit);
+  fit();
+})();
+"""
+
+
+def canvas_excerpt(text):
+    """The start of a note for a canvas card: front matter dropped, raw HTML removed
+    (a cut-off tag must not swallow the page), cut to a few hundred characters."""
+    body = split_frontmatter(text)[1].strip()[:EXCERPT_CHARS * 2]
+    body = re.sub(r"<[^>]*>?", "", body, flags=re.S).strip()
+    return body[:EXCERPT_CHARS] + ("…" if len(body) > EXCERPT_CHARS else "")
+
+
+def canvas_vault_dir(lib, path, root_name):
+    """The Obsidian vault folder a canvas's file paths are relative to: --obsidian-vault when
+    the canvas is inside it, else the nearest folder above the canvas, inside its viewer
+    root, that holds a .obsidian folder, else the viewer root itself."""
+    here = path.resolve()
+    if OBSIDIAN.vault is not None and OBSIDIAN.vault in here.parents:
+        return OBSIDIAN.vault
+    root = next((r for r in lib.roots if r.name == root_name and r in here.parents), None)
+    if root is None:
+        return None
+    for d in here.parents:
+        if (d / ".obsidian").is_dir():
+            return d
+        if d == root:
+            break
+    return root
+
+
+def canvas_file_id(lib, vault_dir, rel):
+    """The viewer id of a canvas file node's vault-relative path, or None if it is not
+    under any viewer root."""
+    if vault_dir is None:
+        return None
+    base = str(vault_dir).rstrip(os.sep)
+    full = os.path.normpath(os.path.join(base, rel))
+    if not full.startswith(base + os.sep):
+        return None
+    for r in lib.roots:
+        rs = str(r).rstrip(os.sep)
+        if full.startswith(rs + os.sep):
+            return r.name + "/" + full[len(rs) + 1:]
+    return None
+
+
+def render_canvas(lib, path, ident):
+    """A .canvas file as a viewer page: a pannable, zoomable board. Bad content gives an
+    error page with a link to the raw JSON, not an exception."""
+    raw = raw_url(ident)
+
+    def error(msg):
+        return render_page(path.stem, f'<div style="padding:24px"><h1>{html.escape(path.stem)}</h1>'
+                           f'<div class="callout danger"><div class="callout-title">This canvas could not be read</div>'
+                           f'<p>{html.escape(msg)}</p></div>'
+                           f'<p><a href="{raw}" target="_blank" rel="noopener noreferrer">Open the raw JSON</a></p></div>')
+    try:
+        if path.stat().st_size > CANVAS_MAX_BYTES:
+            return error("The file is too large to render.")
+        nodes, edges = parse_canvas(path.read_text(errors="replace"))
+    except ValueError as e:
+        return error(f"Not valid JSON Canvas: {e}")
+    except OSError as e:
+        return error(f"Cannot read the file: {e.strerror or e}")
+    if not nodes:
+        return render_page(path.stem, '<div class="cv-empty">This canvas is empty.</div>', f"<style>{CANVAS_CSS}</style>")
+
+    items = lib.scan()
+    items_by_id = {i["id"]: i for i in items}
+    by_name = lib.index(items)
+    root = ident.split("/", 1)[0]
+    vault_dir = canvas_vault_dir(lib, path, root)
+    budget = BaseBudget()
+    heads = []
+
+    def markdown_html(text, embed_bases=True):
+        out, head = render_markdown(lib, text, ident, items_by_id, by_name, embed_bases=embed_bases, budget=budget)
+        if head and head not in heads:
+            heads.append(head)
+        return out
+
+    def file_body(n):
+        f = n.get("file")
+        sub = n.get("subpath") if isinstance(n.get("subpath"), str) and n["subpath"].startswith("#") else ""
+        if not isinstance(f, str) or not f:
+            return '<div class="cn-body cn-dim">file node without a file</div>'
+        tid = canvas_file_id(lib, vault_dir, f)
+        it = items_by_id.get(tid) if tid else None
+        if it is None:
+            return (f'<div class="cn-body"><div class="cn-title">{html.escape(os.path.basename(f))}</div>'
+                    f'<div class="cn-dim">not in the vault: {html.escape(f[:200])}</div></div>')
+        t = html.escape(tid)
+        if it["kind"] in ("image", "svg"):
+            return (f'<div class="cn-body cn-image"><img src="{raw_url(tid)}?v={int(it["mtime"])}" '
+                    f'alt="{html.escape(it["name"])}" title="click to open" data-id="{t}"></div>')
+        anchor = f' data-anchor="{html.escape(slugify(sub[1:], "-"))}"' if sub else ""
+        title = html.escape(it["name"][:-3] if it["kind"] == "note" else it["name"]) + (html.escape(" > " + sub[1:]) if sub else "")
+        excerpt = ""
+        if it["kind"] == "note":
+            p = lib.resolve(tid)
+            try:
+                excerpt = markdown_html(canvas_excerpt(p.read_text(errors="replace")), embed_bases=False) if p else ""
+            except OSError:
+                excerpt = ""
+        return (f'<div class="cn-body"><div class="cn-title"><a class="internal" href="#{t}" data-id="{t}"{anchor}>{title}</a></div>'
+                f'{excerpt}</div>')
+
+    def link_body(n):
+        u = n.get("url")
+        if not isinstance(u, str):
+            return '<div class="cn-body cn-dim">link node without a URL</div>'
+        shown = html.escape(u[:500])
+        if re.fullmatch(r"https?://[^\s<>\"']+", u, re.I):
+            return (f'<div class="cn-body"><a class="external" href="{html.escape(u, quote=True)}" target="_blank" '
+                    f'rel="noopener noreferrer">{shown}</a></div>')
+        return f'<div class="cn-body">{shown}</div>'
+
+    minx = min(n["x"] for n in nodes)
+    miny = min(n["y"] for n in nodes)
+    pad = 60
+    ox, oy = pad - minx, pad - miny
+    bw = max(n["x"] + n["width"] for n in nodes) - minx + 2 * pad
+    bh = max(n["y"] + n["height"] for n in nodes) - miny + 2 * pad
+    by_id = {n["id"]: n for n in nodes}
+
+    def box(n, cls, inner):
+        col = canvas_color(n.get("color"))
+        style = f"left:{n['x'] + ox:.1f}px;top:{n['y'] + oy:.1f}px;width:{n['width']:.1f}px;height:{n['height']:.1f}px"
+        if col:
+            style += f";--c:{col}"
+        return f'<div class="cn {cls}" style="{style}">{inner}</div>'
+
+    groups, others = [], []
+    for n in nodes:
+        t = n.get("type")
+        if t == "group":
+            label = n.get("label")
+            lab = f'<div class="cn-label">{html.escape(label[:200])}</div>' if isinstance(label, str) and label else ""
+            groups.append(box(n, "cn-group", lab))
+        elif t == "text":
+            txt = n.get("text") if isinstance(n.get("text"), str) else ""
+            others.append(box(n, "cn-text", f'<div class="cn-body">{markdown_html(txt)}</div>'))
+        elif t == "file":
+            others.append(box(n, "cn-file", file_body(n)))
+        elif t == "link":
+            others.append(box(n, "cn-link", link_body(n)))
+        else:
+            name = html.escape(str(t)[:40]) if t is not None else "node"
+            others.append(box(n, "cn-unknown", f'<div class="cn-body cn-dim">{name}</div>'))
+    svgs, labels = [], []
+    for e in edges:
+        s, lab = canvas_edge(e, by_id, ox, oy)
+        svgs.append(s)
+        labels.append(lab)
+    board = (f'<div id="board" data-w="{bw:.0f}" data-h="{bh:.0f}" style="width:{bw:.0f}px;height:{bh:.0f}px">'
+             f'{"".join(groups)}<svg id="edges" width="{bw:.0f}" height="{bh:.0f}">{"".join(svgs)}</svg>'
+             f'{"".join(others)}{"".join(labels)}</div>')
+    tools = ('<div class="cvtools"><button id="zout" type="button" title="Zoom out (-)" aria-label="Zoom out">−</button>'
+             '<button id="zfit" type="button" title="Fit to view (0)" aria-label="Fit to view">Fit</button>'
+             '<button id="zin" type="button" title="Zoom in (+)" aria-label="Zoom in">+</button></div>')
+    body = f'<div id="cv">{board}</div>{tools}<script>{CANVAS_JS}</script>'
+    return render_page(path.stem, body, f"<style>{CANVAS_CSS}</style>" + "".join(heads))
+
+
 def search(lib, q, limit=40):
     q = q.strip().lower()
     if len(q) < 2:
         return []
     out = []
     for it in lib.scan():
-        if it["kind"] not in ("note", "text", "html"):
+        if it["kind"] not in ("note", "text", "html", "canvas"):
             continue
         got = lib.search_text(it)
         if got is None:
@@ -1613,12 +2405,30 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send(HTTPStatus.NOT_FOUND, "not found\n", "text/plain")
                 kind = KINDS[p.suffix.lower()]
                 if prefix == "/view/" and kind == "note":
-                    return self._send(HTTPStatus.OK, render_note(self.library, p, ident), "text/html; charset=utf-8", sandboxed)
+                    try:
+                        page = render_note(self.library, p, ident)
+                    except Exception as e:  # noqa: BLE001 (a bad note must give a page, not a dropped connection)
+                        sys.stderr.write(f"artifacts: view: {ident}: {e!r}\n")
+                        page = render_page(p.stem, f'<div class="base-error">This note could not be rendered '
+                                           f'(details in the service log). <a href="{raw_url(ident)}" target="_blank" '
+                                           f'rel="noopener noreferrer">Open the raw file</a></div>')
+                    return self._send(HTTPStatus.OK, page, "text/html; charset=utf-8", sandboxed)
                 if prefix == "/view/" and kind == "text":
                     return self._send(HTTPStatus.OK, render_text(p, ident), "text/html; charset=utf-8", sandboxed)
+                if prefix == "/view/" and kind in ("canvas", "base"):
+                    try:
+                        page = render_canvas(self.library, p, ident) if kind == "canvas" else render_base(self.library, p, ident)
+                    except Exception as e:  # noqa: BLE001 (a bad file must give a page, not a dropped connection)
+                        sys.stderr.write(f"artifacts: view: {ident}: {e!r}\n")
+                        page = render_page(p.stem, f'<div class="base-error">This file could not be rendered '
+                                           f'(details in the service log). <a href="{raw_url(ident)}" target="_blank" '
+                                           f'rel="noopener noreferrer">Open the raw file</a></div>')
+                    return self._send(HTTPStatus.OK, page, "text/html; charset=utf-8", sandboxed)
                 ctype = mimetypes.guess_type(p.name)[0] or "text/plain"
-                if kind in ("note", "text"):
+                if kind in ("note", "text", "base"):
                     ctype = "text/plain"
+                elif kind == "canvas":
+                    ctype = "application/json"
                 if ctype.startswith("text/") or ctype in ("image/svg+xml", "application/json", "application/javascript"):
                     ctype += "; charset=utf-8"
                 if kind == "archive":
@@ -1738,7 +2548,7 @@ PAGE = r"""<!doctype html>
 </div>
 <script>
 const $ = (id) => document.getElementById(id);
-const ICON = { note: "≣", html: "◈", svg: "◇", image: "▣", text: "≡", archive: "▤" };
+const ICON = { note: "≣", html: "◈", svg: "◇", image: "▣", text: "≡", archive: "▤", canvas: "▦", base: "▥" };
 let items = [], byId = new Map(), current = null, seen = new Set(), firstLoad = true, overlay = false;
 let open = new Set(JSON.parse(localStorage.getItem("vault-open") || "[]"));
 let scrolls = {}, zoom = { s: 1, x: 0, y: 0 }, hits = null, searchTimer = null, retryTimer = null;
@@ -1918,7 +2728,7 @@ function show(it, opts = {}) {
   } else {
     const f = $("frame");
     f.classList.toggle("light", it.kind === "html");
-    const base = (it.kind === "note" || it.kind === "text" ? "/view/" : "/raw/") + enc(it.id) + v;
+    const base = (["note", "text", "canvas", "base"].includes(it.kind) ? "/view/" : "/raw/") + enc(it.id) + v;
     const y = opts.keep && scrolls[it.id] ? "&y=" + scrolls[it.id] : "";
     // replace(), not src =: a frame navigation would add a browser history
     // entry of its own, and back would step through the frame instead of files.
@@ -1952,7 +2762,7 @@ function select(it, anchor, how) {
 // app, and this page, already showing the file, stays behind it as the
 // fallback. Nothing here reaches the server; the setting and the vault name
 // live in this browser's storage.
-const OBS_KINDS = new Set(["note", "image", "svg"]);  // files Obsidian shows itself
+const OBS_KINDS = new Set(["note", "image", "svg", "canvas", "base"]);  // files Obsidian shows itself
 const OBS_FRESH = 600;  // s: a newer file may not have synced to the device yet
 const store = (s) => ({
   get(k) { try { return s.getItem(k); } catch (e) { return null; } },
@@ -2246,6 +3056,13 @@ def main():
     ap.add_argument("--print-apparmor-profile", action="store_true",
                     help="print the AppArmor profile Chromium's sandbox needs on Ubuntu 23.10+ for the --pdf-runtime "
                          "directory, then exit")
+    ap.add_argument("--obsidian-cli", metavar="CMD", default=os.environ.get("ARTIFACTS_OBSIDIAN_CLI"),
+                    help="the Obsidian CLI command that evaluates .base files (run as `CMD base:query path=... "
+                         "[view=...] format=json`), one program path, never run through a shell; default: off, "
+                         "bases then show their YAML only; `none` also disables it (env ARTIFACTS_OBSIDIAN_CLI)")
+    ap.add_argument("--obsidian-vault", metavar="DIR", type=Path, default=os.environ.get("ARTIFACTS_OBSIDIAN_VAULT"),
+                    help="the Obsidian vault folder the CLI's app has open; only .base files inside it are "
+                         "evaluated (default: the first ROOT; env ARTIFACTS_OBSIDIAN_VAULT)")
     ap.add_argument("--pdf-rev", action="store_true",
                     help="print the revision of the PDF runtime this program uses, then exit")
     # Removed: the PDF image (docker) and, before it, the Playwright base image. Kept hidden so
@@ -2292,6 +3109,8 @@ def main():
     Handler.title = args.title
     Handler.pdf_runtime = args.pdf_runtime
     Handler.library = Library(args.roots or DEFAULT_ROOTS)
+    global OBSIDIAN
+    OBSIDIAN = BaseEngine(args.obsidian_cli, args.obsidian_vault or Handler.library.roots[0])
     if markdown is None:
         print("artifacts: python3-markdown is missing, notes render as plain text", file=sys.stderr)
     srv = ThreadingHTTPServer((args.bind, args.port), Handler)

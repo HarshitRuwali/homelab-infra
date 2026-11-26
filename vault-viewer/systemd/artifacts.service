@@ -5,7 +5,8 @@
 # double-underscore placeholders on the ExecStart line:
 #   the first is the installed program (default ~/.local/bin/artifacts);
 #   the second is the command line built from install.sh's options (--bind,
-#   --port, --allow-host, --tailnet-user, --title and the vault folders),
+#   --port, --allow-host, --tailnet-user, --title, --obsidian-cli,
+#   --obsidian-vault and the vault folders),
 #   already quoted for systemd (a literal % is %%, a literal $ is $$).
 # Edit the rendered copy only for a one-off; re-running install.sh overwrites it.
 #

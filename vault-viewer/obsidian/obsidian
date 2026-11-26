@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# obsidian: the Obsidian CLI, run inside the headless Obsidian container.
+#
+#   obsidian <command> [key=value ...]     e.g. obsidian search query="vault viewer"
+#   obsidian help                          the app's own command list
+#
+# Installed to ~/.local/bin/obsidian by obsidian/setup.sh. Paths are relative
+# to the vault. Unlike the app's own CLI, this exits non-zero when the command
+# fails (the app prints "Error: ..." and exits 0), so scripts and agents can
+# tell. The app's output is on stdout, warnings and errors on stderr.
+#
+# Environment: OBSIDIAN_CONTAINER names the container (default obsidian);
+# OBSIDIAN_TIMEOUT is how long a command may run inside it, in seconds
+# (default 60; exit 124 when it runs out).
+set -uo pipefail
+
+name="${OBSIDIAN_CONTAINER:-obsidian}"
+limit="${OBSIDIAN_TIMEOUT:-60}"
+docker="${OBSIDIAN_DOCKER:-docker}"   # test seam
+[[ "$limit" =~ ^[1-9][0-9]*$ ]] || { echo "obsidian: OBSIDIAN_TIMEOUT must be a whole number of seconds" >&2; exit 2; }
+
+err="$(mktemp)"
+trap 'rm -f "$err"' EXIT
+# The time limit runs inside the container, so a command that hangs stops
+# there too, not only this client.
+out="$("$docker" exec -w /vault "$name" timeout "$limit" /opt/obsidian/obsidian-cli "$@" 2>"$err")"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+  if ! "$docker" inspect -f '{{.State.Running}}' "$name" 2>/dev/null | grep -qx true; then
+    echo "obsidian: the $name container is not running (see vault-viewer/docs/obsidian.md)" >&2
+  else
+    cat "$err" >&2
+    [ -z "$out" ] || printf '%s\n' "$out" >&2
+    [ "$rc" -ne 124 ] || echo "obsidian: timed out after ${limit}s" >&2
+  fi
+  exit "$rc"
+fi
+cat "$err" >&2
+case "$out" in
+  "Error: "* | "Command line interface is not enabled"* | "Vault not found."* | "Unable to connect to main process"*)
+    printf '%s\n' "$out" >&2
+    exit 1 ;;
+esac
+[ -z "$out" ] || printf '%s\n' "$out"
+exit 0
