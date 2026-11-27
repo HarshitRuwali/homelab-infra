@@ -168,7 +168,7 @@ cd vault-viewer
 
 Installs one Python file and a systemd user unit, then checks that the server
 answers. Open `http://100.64.0.10:7777` from your own tailnet devices. Add
-`--build-pdf-image` for PDF export, which needs docker.
+`--install-pdf-runtime` for PDF export (a pinned headless Chromium, no docker).
 
 </details>
 

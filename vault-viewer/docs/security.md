@@ -16,6 +16,8 @@ the note anything useful.
 | A note's script drives the viewer | [Navigation by message](#navigation-by-message) |
 | A request reaches a file outside the vault or a hidden file | [File access](#file-access) |
 | Another web site makes your browser start PDF renders | [Cross-site requests](pdf-export.md#limits) |
+| A note's HTML attacks the host through the PDF renderer | [PDF rendering](#pdf-rendering) |
+| A base or its query result abuses the Obsidian CLI | [The Obsidian CLI](#the-obsidian-cli) |
 
 ## Bind address
 
@@ -88,7 +90,99 @@ The viewer loads highlight.js and Mermaid (with the ELK layout) from cdnjs,
 jsdelivr and unpkg, and fonts from Google Fonts. The **viewing device** needs
 internet access for diagrams and code highlighting; without it, text and tables
 still render. The server itself makes no outbound calls apart from
-`tailscale whois` and, for PDFs, `docker`. PDFs need no internet at all.
+`tailscale whois` and, for PDFs, the local renderer. PDFs need no internet at all.
+
+## The Obsidian CLI
+
+Bases (`.base`) are evaluated by running the command given with `--obsidian-cli`
+(for example a wrapper around a headless Obsidian). The viewer runs it only in
+this shape, as an argument list with no shell:
+
+```text
+CMD base:query path=<vault-relative .base file> [view=<view name>] format=json
+```
+
+- The file is one the viewer resolved itself: a `.base` file inside the vault
+  folders, hidden paths and symlinks that leave the vault refused (the same
+  checks as every other file), and also inside `--obsidian-vault`. A base
+  outside that folder is never passed to the command.
+- `path=` and `view=` are each one argument, and the command is one program
+  path, never split into words. A view name is passed only if it is a view
+  named in the base's own YAML, so a `![[X.base#Name]]` embed cannot send an
+  arbitrary string. Without PyYAML the views cannot be listed, and the name
+  from the embed is passed as it is, so the CLI judges it. Names with control
+  characters are refused.
+- The command is never found on its own: with no `--obsidian-cli` (or
+  `ARTIFACTS_OBSIDIAN_CLI`) nothing is run.
+- No other subcommand or option is ever built from vault content, and the
+  command inherits the service's environment but gets no input on stdin.
+- A call runs in its own process group and is killed, children included, after
+  15 s or once it has written more than 8 MiB (stdout is read with that cap, not
+  collected first). At most 2 calls run at once, a request waits at most 10 s
+  for a free slot, identical calls that overlap share one run, and results are
+  cached for 5 s. One page queries at most 20 views per base and 20 base embeds
+  and spends at most 30 s in all on the CLI; the rest is shown as skipped.
+- **The output is untrusted.** The command's JSON, and its error text, come from
+  an app that evaluates vault content. Every value is HTML-escaped before it
+  reaches a page, a `path` becomes a link only if it names a file the viewer
+  itself lists, and output that is not a JSON list of objects is shown as an
+  error. A ` ```base ` code block in a note is never sent to the command.
+
+The viewer trusts the command itself: point `--obsidian-cli` only at a program
+you control. `none` turns the feature off, and then bases show their YAML only.
+
+Canvases (`.canvas`) need no tool. They are rendered by the viewer, served with
+the same sandbox and CSP as notes, and their text nodes use the notes'
+Markdown pipeline, so they carry the same properties. A link node is a link only
+for an `http` or `https` URL, with `rel="noopener noreferrer"`; colors must be a
+preset number or a `#hex` value before they reach a style.
+
+## PDF rendering
+
+A PDF is made by printing the note in Chromium's headless shell, and a note can
+carry raw HTML and script that runs there. The renderer is a subprocess of the
+service on the same host, not a container. Its controls:
+
+- **Chromium's own sandbox is on.** The renderer processes run in user and PID
+  namespaces with a seccomp filter. `--no-sandbox` is never used. On Ubuntu
+  23.10 and later this needs an AppArmor profile for the browser binary, which
+  grants only `userns` and attaches to the exact runtime directory it was printed
+  for, so a binary copied elsewhere does not get it; without it the render fails with a clear message
+  instead of running unsandboxed. See
+  [The AppArmor profile](pdf-export.md#the-apparmor-profile).
+- **The network is blocked in layers, and each layer stops different things.**
+  Fetch interception refuses every request except the page and the runtime's
+  bundled libraries. It is enabled on every target Chromium creates (browser-level
+  auto-attach pauses a new target, a `window.open` popup included, until it has
+  the filter), but it only sees HTTP-level requests, not UDP. The launch flags
+  resolve no name (`--host-resolver-rules=MAP * ~NOTFOUND`) and send all
+  HTTP(S) and WebSocket traffic, loopback included, to a dead local proxy port,
+  which also covers a target the filter missed; `--force-webrtc-ip-handling-policy=disable_non_proxied_udp`
+  is the only layer that stops WebRTC UDP. The page's policy carries
+  `connect-src 'none'`, which binds the page itself, not a popup.
+- **A temporary `HOME` per render.** The working directory, `HOME`, `TMPDIR`
+  and Chromium's profile are one fresh directory, removed afterwards, and the
+  environment holds only a few variables. Nothing of the service user's
+  configuration reaches the render.
+- **Bounded resources.** At most 2 renders run at a time, each is killed with
+  its whole process group after 90 s, and the unit caps the service and its
+  renders together (`MemoryMax=1536M`, `TasksMax=1024`). Each renderer sets its
+  `oom_score_adj` to 1000 (Chromium inherits it), so within that shared limit
+  the OOM killer picks the render before the server.
+- **Pinned content.** The browser, libraries and fonts are pinned by SHA-256
+  and checked before extraction, and archive members with absolute paths, `..`
+  or links are refused.
+
+What changed against the docker container this replaced: the renderer used to
+run with no network namespace, a read-only root, no capabilities, no new
+privileges and per-render memory and process limits, in a filesystem view that
+held only the image. Now the browser process runs as the service user in the
+host's filesystem, with no separate filesystem view, and the limits are shared
+by the unit rather than per render. What keeps a hostile note contained is
+Chromium's sandbox around the code that handles the note, plus the blocked
+network. A sandbox escape would land as the service user, which can read the
+vault and that user's files. The viewer needs no docker group membership any
+more, which removes a route to root on the host.
 
 ## Navigation by message
 
@@ -109,6 +203,18 @@ A note can therefore place text on the clipboard when you click in it, which it
 could already do inside its own frame. If nothing works, the button selects the
 code and asks for the copy shortcut.
 
+## Opening the Obsidian app
+
+The viewer page opens `obsidian://open` links in two cases only: when you
+press its **Obsidian** button, and, on a device where you switched on
+**Open links in Obsidian**, once for the file named in the URL the page was
+opened with. That file must be one the page listed itself in `/api/tree`, so a
+crafted link cannot name a path outside the vault or one that does not exist.
+Messages from a note's frame only select files in the viewer; they never open
+the app. The link carries the vault name and the file's path inside the vault,
+nothing else. The setting and the vault name are kept in the browser's
+`localStorage` and never reach the server.
+
 ## File access
 
 - Only files under a vault root are served. Ids are resolved after following
@@ -121,6 +227,11 @@ code and asks for the copy shortcut.
   `application/zip` with `Content-Disposition: attachment` and is never
   unpacked or rendered by the viewer.
 - The server answers `GET` and `HEAD` only. Nothing writes to the vault.
+- Responses stay `private`: the file list and vault files are sent with
+  `Cache-Control: private, no-cache` and an `ETag` (files also `Last-Modified`),
+  so a browser may store them but must revalidate before reuse and a shared
+  cache must not. The Host, tailnet and `Sec-Fetch-Site` checks run before any
+  `304` is considered. Notes, search and PDFs stay `no-store`.
 
 ## What it does not do
 

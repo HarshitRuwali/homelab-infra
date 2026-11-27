@@ -3,10 +3,13 @@
 Run from vault-viewer/:  python3 tests/test_viewer.py
 Exit 0 = all pass. Needs python3-markdown; no pytest. ARTIFACTS_PY=/path/to/copy.py
 points the tests at another copy of the program (used to mutation-test the checks).
-The end-to-end PDF check runs only when the docker image artifacts-pdf:local exists.
+The PDF checks that need Chromium run only when ARTIFACTS_PDF_RUNTIME names a directory with an installed
+runtime for this program's PDF_REV (python3 artifacts.py --install-pdf-runtime --pdf-runtime DIR, DIR ending in
+artifacts/pdf-runtime so the AppArmor profile applies); the rest needs no browser and no network.
 """
 import base64
 import contextlib
+import email.utils
 import http.client
 import importlib.machinery
 import importlib.util
@@ -14,12 +17,19 @@ import io
 import os
 import pathlib
 import re
+import hashlib
 import shutil
+import signal
+import socket
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
+import time
 import urllib.parse
+import zipfile
+import zlib
 
 HERE = pathlib.Path(__file__).resolve().parent.parent
 PROGRAM = pathlib.Path(os.environ.get("ARTIFACTS_PY", HERE / "artifacts.py"))
@@ -156,6 +166,12 @@ def t_render(lib):
           and 'e.source !== $("frame").contentWindow' in A.PAGE,
           "viewer: copies only text, bounded, and only for its own frame")
     check(".copy { display: none; }" in A.NOTE_CSS, "print: copy buttons hidden")
+
+    print("viewer page states (driven in a browser by tests/e2e.sh)")
+    check('id="emptymsg">Loading the file list' in A.PAGE, "viewer: the stage says it is loading until the tree arrives")
+    check('if (!r.ok) throw new Error("HTTP " + r.status);' in A.PAGE
+          and "retryTimer = setTimeout(refresh, 2000)" in A.PAGE,
+          "viewer: a failed first tree load is shown with its status and retried after 2 s")
     node = shutil.which("node") or shutil.which("nodejs")
     if not node:
         skip("JavaScript syntax check (needs node)")
@@ -208,17 +224,6 @@ class Client:
             c.close()
 
 
-def docker_usable():
-    if not shutil.which("docker"):
-        return False
-    return subprocess.run(["docker", "version"], capture_output=True, check=False).returncode == 0
-
-
-def image_present(name):
-    return shutil.which("docker") is not None and \
-        subprocess.run(["docker", "image", "inspect", name], capture_output=True, check=False).returncode == 0
-
-
 def t_http(lib):
     print("HTTP guards")
     A.Handler.log_message = lambda self, fmt, *args: None
@@ -227,7 +232,7 @@ def t_http(lib):
     A.Handler.hosts = {f"127.0.0.1:{port}"}
     A.Handler.library = lib
     A.Handler.gate = A.TailnetGate(None)
-    A.Handler.pdf_image = "artifacts-pdf:does-not-exist"
+    A.Handler.pdf_runtime = pathlib.Path(tempfile.gettempdir()) / "artifacts-no-such-runtime" / "artifacts" / "pdf-runtime"
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     c = Client(port)
     note = "/pdf/" + urllib.parse.quote("vault/Note.md")
@@ -252,13 +257,8 @@ def t_http(lib):
         check(c.get("/pdf/" + urllib.parse.quote("vault/Ünï export.zip"))[0] == 404, "/pdf/<zip> -> 404")
 
         st, _, body = c.get(note)
-        if not shutil.which("docker"):
-            check(st == 503 and b"cannot run docker" in body, "/pdf/<note> without docker -> 503 'cannot run docker'")
-        elif not docker_usable():
-            skip("/pdf/<note> with a missing image: the docker daemon is not reachable")
-        else:
-            check(st == 503 and b"--build-pdf-image" in body,
-                  "/pdf/<note> with a missing image -> 503 naming --build-pdf-image")
+        check(st == 503 and b"--install-pdf-runtime" in body,
+              "/pdf/<note> without an installed runtime -> 503 naming --install-pdf-runtime")
 
         for prefix in ("/raw/", "/view/"):
             st, _, body = c.get(prefix + "vault/Note.md")
@@ -277,10 +277,10 @@ def t_http(lib):
         check(b'id="dllink"' in body, "index / has the archive download pane")
 
         print("end-to-end PDF")
-        if not image_present("artifacts-pdf:local"):
-            skip("artifacts-pdf:local is not built (python3 artifacts.py --build-pdf-image)")
+        if real_runtime() is None:
+            skip(NO_RUNTIME)
         else:
-            A.Handler.pdf_image = "artifacts-pdf:local"
+            A.Handler.pdf_runtime = real_runtime()
             ident = "/pdf/" + urllib.parse.quote("vault/" + UNICODE_NAME)
             st, hdr, body = c.get(ident, timeout=180)
             check(st == 200, f"GET /pdf/<mermaid note> -> 200 (got {st})")
@@ -295,103 +295,1298 @@ def t_http(lib):
         srv.server_close()
 
 
-def t_pdf_build():
-    print("PDF image build")
-    cmd = A.pdf_build_command("img:t")
-    check(cmd == ["docker", "build", "--pull", "-t", "img:t", "-"],
-          "build command: docker build --pull, the Dockerfile on stdin")
-    D = A.PDF_DOCKERFILE
-    check(re.fullmatch(r"[0-9a-f]{64}", A.PDF_CHROME_SHA256) is not None
-          and f"ADD --checksum=sha256:{A.PDF_CHROME_SHA256} {A.PDF_CHROME_URL} " in D
-          and A.PDF_CHROME_VERSION in A.PDF_CHROME_URL and A.PDF_CHROME_URL.endswith("/chrome-headless-shell-linux64.zip"),
-          "Dockerfile takes Chromium's headless shell from Chrome for Testing, pinned by version and checksum")
-    check("playwright" not in D.lower() and "playwright" not in A.PDF_RENDER.lower(),
-          "no Playwright in the image or the renderer (the renderer speaks DevTools over a pipe itself)")
-    final = D[D.rindex("\nFROM "):]
-    check(final.startswith("\nFROM debian:bookworm-slim\n") and "pip" not in final and "unzip" not in final,
-          "final stage: Debian 12 slim, no pip and no unzip (builder stages only)")
-    check("/opt/chrome-headless-shell/chrome-headless-shell" in A.PDF_RENDER
-          and "COPY --from=fetch /opt/chrome-headless-shell /opt/chrome-headless-shell" in D,
-          "the renderer launches the headless shell where the Dockerfile puts it")
-    check("find /lib-out -name '*.map' -delete" in D and "COPY --from=lib /lib-out /opt/vault-pdf/lib" in D,
-          "Dockerfile copies only the pruned print libraries, without source maps")
-    for want in (A.PDF_MERMAID, A.PDF_MERMAID_ELK, A.PDF_HLJS + "/highlight.min.js",
-                 A.PDF_HLJS + "/styles/github.min.css"):
-        rel = want[len(A.PDF_LIB) + 1:]
-        check(rel in D, f"Dockerfile keeps {rel}, which the print page loads")
-    check(re.fullmatch(r"[0-9a-f]{64}", A.PDF_INTER_SHA256) is not None
-          and f"ADD --checksum=sha256:{A.PDF_INTER_SHA256} {A.PDF_INTER_URL} " in A.PDF_DOCKERFILE
-          and "fonts-inter" not in A.PDF_DOCKERFILE,
-          "Dockerfile takes Inter as TrueType from the checksummed release, not Debian's CFF fonts-inter")
-    check(re.fullmatch(r"[0-9a-f]{12}", A.PDF_REV) is not None
-          and A.PDF_DOCKERFILE.endswith(f"\nLABEL {A.PDF_REV_LABEL}={A.PDF_REV}\n"),
-          "Dockerfile labels the image with PDF_REV")
-    base = A.PDF_DOCKERFILE[:A.PDF_DOCKERFILE.rindex("LABEL ")]
-    check(A.PDF_REV == A.hashlib.sha256((base + A.PDF_RENDER).encode()).hexdigest()[:12]
-          and A.PDF_REV != A.hashlib.sha256((base + A.PDF_RENDER + " ").encode()).hexdigest()[:12],
-          "PDF_REV is a hash of the Dockerfile and the render script, so either change gives a new revision")
+def t_perf(base):
+    print("cached scan, ETag/304, log suppression, file caching")
+    vault = base / "perfvault"
+    vault.mkdir()
+    (vault / "a.md").write_text("# a\n\nfindme-alpha\n")
+    (vault / "pic.png").write_bytes(PNG)
+    (vault / "big.zip").write_bytes(ZIP + bytes(1 << 20))
+    lib = A.Library([vault], ttl=3600)
+    ids = lambda: [i["id"] for i in lib.scan()]  # noqa: E731
+    check(ids() == ["perfvault/a.md", "perfvault/big.zip", "perfvault/pic.png"], "scan lists the vault")
+    (vault / "new.md").write_text("# new\n")
+    check("perfvault/new.md" not in ids(), "scan is cached within the TTL")
+    lib.ttl = 0
+    check("perfvault/new.md" in ids(), "a new file appears once the TTL has passed")
+    (vault / "new.md").unlink()
+    check("perfvault/new.md" not in ids(), "a deleted file disappears")
+    old = {i["id"]: i["mtime"] for i in lib.scan()}["perfvault/a.md"]
+    os.utime(vault / "a.md", (old + 50, old + 50))
+    check({i["id"]: i["mtime"] for i in lib.scan()}["perfvault/a.md"] == old + 50, "an edit changes the mtime in the scan")
+    check(lib.snapshot()[2].startswith('"'), "the tree ETag is a quoted strong validator")
+    e1 = lib.snapshot()[2]
+    os.utime(vault / "a.md", (old + 99, old + 99))
+    check(lib.snapshot()[2] != e1, "the ETag changes when a file changes")
+    check(lib.snapshot()[2] == lib.snapshot()[2], "the ETag is stable when nothing changed")
+    (vault / "sub").mkdir()
+    (vault / "sub" / "deep.md").write_text("# deep\n")
+    (vault / ".dot").mkdir()
+    (vault / ".dot" / "x.md").write_text("# x\n")
+    check("perfvault/sub/deep.md" in ids() and not any(".dot" in i for i in ids()), "subfolders scanned, hidden folders skipped")
+
+    check([h["id"] for h in A.search(lib, "findme-alpha")] == ["perfvault/a.md"], "search finds a note")
+    (vault / "a.md").write_text("# a\n\nfindme-beta changed\n")
+    check(A.search(lib, "findme-beta") != [] and A.search(lib, "findme-alpha") == [],
+          "search sees an edited file (cache keyed by mtime and size)")
+    lib.TEXT_CACHE_CHARS = 100
+    A.search(lib, "zzzz")
+    check(lib._texts_chars <= 100, "the search text cache stays within its bound")
+    lib.TEXT_CACHE_CHARS = 48 << 20
+    lib.ttl = 3600
+
+    logged = []
+    A.Handler.log_message = lambda self, fmt, *args: logged.append(fmt % args)
+    srv = A.ThreadingHTTPServer(("127.0.0.1", 0), A.Handler)
+    port = srv.server_address[1]
+    A.Handler.hosts = {f"127.0.0.1:{port}"}
+    A.Handler.library = lib
+    A.Handler.gate = A.TailnetGate(None)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    c = Client(port)
+    try:
+        st, hdr, body = c.get("/api/tree")
+        etag = hdr.get("ETag", "")
+        check(st == 200 and etag.startswith('"') and not etag.startswith("W/"), "/api/tree sends a strong ETag")
+        check(hdr.get("Cache-Control") == "private, no-cache", "/api/tree is private, no-cache")
+        import json as _json
+        check([i["id"] for i in _json.loads(body)["items"]] == ids(), "/api/tree body lists the scan")
+        st, hdr, body = c.get("/api/tree", **{"If-None-Match": etag})
+        check(st == 304 and body == b"" and hdr.get("ETag") == etag, "If-None-Match with the current ETag -> 304, no body")
+        check(c.get("/api/tree", **{"If-None-Match": "W/" + etag})[0] == 304, "a weak form of the ETag also matches")
+        check(c.get("/api/tree", **{"If-None-Match": '"stale"'})[0] == 200, "a stale ETag -> 200")
+        check(c.get("/api/tree", Host="evil.example", **{"If-None-Match": etag})[0] == 403, "wrong Host is refused before any 304")
+        check(c.get("/api/tree", **{"If-None-Match": etag, "Sec-Fetch-Site": "cross-site"})[0] == 403,
+              "cross-site is refused before any 304")
+        check(c.get("/api/tree", **{"If-Modified-Since": email.utils.formatdate(time.time() + 3600, usegmt=True)})[0] == 200,
+              "/api/tree ignores If-Modified-Since (only If-None-Match)")
+        A.Handler.title = "other-title"
+        st, hdr, body = c.get("/api/tree", **{"If-None-Match": etag})
+        check(st == 200 and hdr["ETag"] != etag and b"other-title" in body, "a different title changes the tree ETag")
+        A.Handler.title = None
+        lib.ttl = 0
+        (vault / "later.md").write_text("# later\n")
+        st, hdr, body = c.get("/api/tree", **{"If-None-Match": etag})
+        check(st == 200 and b"later.md" in body and hdr["ETag"] != etag, "a new file changes the ETag and returns 200")
+        lib.ttl = 3600
+        etag = c.get("/api/tree")[1]["ETag"]
+        check(c.get("/api/tree", **{"If-None-Match": etag})[0] == 304, "the tree ETag matches again after the change")
+        check(c.get("/api/tree", **{"If-Modified-Since": email.utils.formatdate(time.time() + 3600, usegmt=True)})[0] == 200,
+              "an IMS-only request after a vault change gets 200")
+
+        st, hdr, body = c.get("/raw/perfvault/pic.png")
+        check(st == 200 and body == PNG, "/raw/<png> serves the bytes")
+        check(hdr.get("ETag", "").startswith('"') and "Last-Modified" in hdr and hdr.get("Cache-Control") == "private, no-cache",
+              "/raw/<png> has ETag, Last-Modified and Cache-Control private")
+        st, h2, body = c.get("/raw/perfvault/pic.png", **{"If-None-Match": hdr["ETag"]})
+        check(st == 304 and body == b"", "/raw/<png> If-None-Match -> 304")
+        st, _, body = c.get("/raw/perfvault/pic.png", **{"If-Modified-Since": hdr["Last-Modified"]})
+        check(st == 304, "/raw/<png> If-Modified-Since -> 304")
+        st, hdr, body = c.get("/raw/perfvault/big.zip")
+        check(st == 200 and len(body) == (1 << 20) + len(ZIP) and hdr.get("Content-Length") == str(len(body)),
+              "a zip larger than one chunk streams in full")
+        st, hdr, body = c.get("/raw/perfvault/big.zip", method="HEAD")
+        check(st == 200 and body == b"" and int(hdr["Content-Length"]) > 0, "HEAD on a file sends headers only")
+        check(c.get("/raw/perfvault/missing.png")[0] == 404, "a missing file -> 404")
+
+        logged.clear()
+        c.get("/api/tree")
+        c.get("/api/tree", **{"If-None-Match": etag})
+        c.get("/api/search?q=findme")
+        c.get("/raw/perfvault/pic.png", **{"If-None-Match": '"x"'})
+        c.get("/raw/perfvault/pic.png", **{"If-None-Match": "*"})
+        c.get("/api/nothing")
+        c.get("/raw/perfvault/missing.png")
+        check(not any("/api/tree" in m or "/api/search" in m for m in logged), "successful /api/ requests are not logged")
+        check(not any(" 304 " in m for m in logged), "304 responses are not logged")
+        check(any("/raw/perfvault/pic.png" in m and " 200 " in m for m in logged), "non-API requests are logged")
+        check(any("/api/nothing" in m and " 404 " in m for m in logged), "API errors are logged")
+        check(any("missing.png" in m and " 404 " in m for m in logged), "404s are logged")
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+def NO_SANDBOX(render):
+    """The renderer with Chromium's sandbox off: tests that run a runtime outside the one path the AppArmor profile admits."""
+    assert '"--headless",' in render
+    return render.replace('"--headless",', '"--headless", "--no-sandbox",', 1)
+
+
+def glob_homes():
+    return [str(p) for p in pathlib.Path(tempfile.gettempdir()).glob("artifacts-pdf-*")]
+
+
+def real_runtime():
+    """The installed PDF runtime for this program's PDF_REV (env ARTIFACTS_PDF_RUNTIME), or None."""
+    base = os.environ.get("ARTIFACTS_PDF_RUNTIME")
+    if base and (pathlib.Path(base) / A.PDF_REV / "REV").is_file():
+        return pathlib.Path(base)
+    return None
+
+
+NO_RUNTIME = ("no PDF runtime for this revision: set ARTIFACTS_PDF_RUNTIME to a directory holding "
+              "<PDF_REV>/REV (python3 artifacts.py --install-pdf-runtime --pdf-runtime .../artifacts/pdf-runtime)")
+
+
+def load_variant(source, name):
+    """The program loaded from altered source text (never registered over A)."""
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader=None))
+    exec(compile(source, name, "exec"), mod.__dict__)
+    return mod
+
+
+@contextlib.contextmanager
+def patched(obj, **attrs):
+    old = {k: getattr(obj, k) for k in attrs}
+    for k, v in attrs.items():
+        setattr(obj, k, v)
+    try:
+        yield
+    finally:
+        for k, v in old.items():
+            setattr(obj, k, v)
+
+
+def zip_bytes(members):
+    """members: name -> bytes | (bytes, unix mode)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for name, data in members.items():
+            data, mode = data if isinstance(data, tuple) else (data, 0o644)
+            info = zipfile.ZipInfo(name)
+            info.external_attr = (0o100000 | mode) << 16
+            z.writestr(info, data)
+    return buf.getvalue()
+
+
+def tgz_bytes(members, extra=()):
+    """members: name -> bytes; extra: ready TarInfo objects (links) appended."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            t.addfile(info, io.BytesIO(data))
+        for info in extra:
+            t.addfile(info)
+    return buf.getvalue()
+
+
+# What the installer must keep from the fixture archives (the layout the pins' rules expect),
+# next to members it must drop.
+CH = "chrome-headless-shell-linux64/"
+FIXTURE_KEPT = {
+    "chrome/chrome-headless-shell", "chrome/locales/en-US.pak", "chrome/libfoo.so", "chrome/resources.pak",
+    "fonts/inter/Inter-Regular.ttf", "fonts/inter/Inter-SemiBoldItalic.ttf",
+    "fonts/jetbrains-mono/JetBrainsMono-Bold.ttf",
+    "fonts/dejavu/DejaVuSans.ttf", "fonts/dejavu/DejaVuSerif-Bold.ttf",
+    "fonts/noto/NotoColorEmoji.ttf",
+    "lib/mermaid/dist/mermaid.esm.min.mjs", "lib/mermaid/dist/chunks/mermaid.esm.min/a.mjs",
+    "lib/@mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs",
+    "lib/@mermaid-js/layout-elk/dist/chunks/mermaid-layout-elk.esm.min/sub/b.mjs",
+    "lib/@highlightjs/cdn-assets/highlight.min.js", "lib/@highlightjs/cdn-assets/styles/github.min.css",
+}
+
+
+def fixture_downloads():
+    """pin name -> archive bytes, small stand-ins laid out as the real downloads are."""
+    return {
+        "chrome": zip_bytes({
+            CH + "chrome-headless-shell": (b"#!/bin/sh\n", 0o755), CH + "locales/en-US.pak": b"en",
+            CH + "locales/de.pak": b"de", CH + "libfoo.so": b"foo", CH + "resources.pak": b"res",
+            CH + "libvk_swiftshader.so": b"x", CH + "libvulkan.so.1": b"x", CH + "vk_swiftshader_icd.json": b"{}"}),
+        "inter": zip_bytes({
+            "extras/ttf/Inter-Regular.ttf": b"i", "extras/ttf/Inter-SemiBoldItalic.ttf": b"i",
+            "extras/ttf/Inter-Black.ttf": b"x", "extras/otf/Inter-Regular.otf": b"x", "LICENSE.txt": b"x"}),
+        "jetbrains-mono": zip_bytes({"fonts/ttf/JetBrainsMono-Bold.ttf": b"j", "fonts/ttf/JetBrainsMono-Thin.ttf": b"x",
+                                     "fonts/webfonts/JetBrainsMono-Bold.woff2": b"x"}),
+        "dejavu": zip_bytes({"dejavu-fonts-ttf-2.37/ttf/DejaVuSans.ttf": b"d",
+                             "dejavu-fonts-ttf-2.37/ttf/DejaVuSerif-Bold.ttf": b"d",
+                             "dejavu-fonts-ttf-2.37/ttf/DejaVuSansCondensed.ttf": b"x",
+                             "dejavu-fonts-ttf-2.37/LICENSE": b"x"}),
+        "noto-emoji": b"emoji",
+        "mermaid": tgz_bytes({
+            "package/dist/mermaid.esm.min.mjs": b"m", "package/dist/mermaid.js": b"x",
+            "package/dist/chunks/mermaid.esm.min/a.mjs": b"c", "package/dist/chunks/mermaid.esm.min/a.mjs.map": b"x",
+            "package/dist/chunks/mermaid.core/z.mjs": b"x", "package/package.json": b"{}"}),
+        "layout-elk": tgz_bytes({
+            "package/dist/mermaid-layout-elk.esm.min.mjs": b"e",
+            "package/dist/chunks/mermaid-layout-elk.esm.min/sub/b.mjs": b"c",
+            "package/dist/chunks/mermaid-layout-elk.esm.min/sub/b.mjs.map": b"x", "package/dist/x.cjs": b"x"}),
+        "highlightjs": tgz_bytes({
+            "package/highlight.min.js": b"h", "package/styles/github.min.css": b"s",
+            "package/styles/dark.min.css": b"x", "package/es/core.js": b"x"}),
+    }
+
+
+class FakeNet:
+    """Stands in for pdf_download: serves fixture bytes by pin URL, records every call, and
+    checks that the final runtime directory never exists before the install is complete."""
+
+    def __init__(self, files, base=None, fail_on=None):
+        self.files, self.calls, self.base, self.fail_on = dict(files), [], base, fail_on
+        self.by_url = {A.PDF_PINS[n][0]: n for n in A.PDF_PINS}
+        self.early = False
+        self.dests = []
+
+    def __call__(self, url, dest):
+        name = self.by_url[url]
+        self.calls.append(name)
+        self.dests.append(pathlib.Path(dest))
+        if self.base is not None and (self.base / A.PDF_REV).exists():
+            self.early = True
+        if name == self.fail_on:
+            raise OSError("network down")
+        pathlib.Path(dest).write_bytes(self.files[name])
+
+
+def fixture_pins(files):
+    return {n: (A.PDF_PINS[n][0], hashlib.sha256(files[n]).hexdigest()) for n in A.PDF_PINS}
+
+
+def ents(root):
+    """Directory entries except the installer's lock file."""
+    return sorted(p.name for p in root.iterdir() if p.name != ".lock")
+
+
+def tree(root):
+    return {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()}
+
+
+def run_main(*argv):
+    sys.argv = ["artifacts.py", *argv]
+    out, err = io.StringIO(), io.StringIO()
+    rc = None
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            A.main()
+        except SystemExit as e:
+            rc = e.code
+    return rc, out.getvalue(), err.getvalue()
+
+
+def pdf_unicode(pdf):
+    """The characters the PDF's embedded fonts can map back to text (ToUnicode CMaps)."""
+    chars = set()
+    for m in re.finditer(rb"stream\r?\n(.*?)\r?\nendstream", pdf, re.S):
+        try:
+            data = zlib.decompress(m.group(1))
+        except zlib.error:
+            continue
+        if b"beginbfchar" not in data and b"beginbfrange" not in data:
+            continue
+        for part in re.findall(rb"beginbfchar(.*?)endbfchar", data, re.S):
+            for dst in re.findall(rb"<[0-9A-Fa-f]+>\s*<([0-9A-Fa-f]{4})>", part):
+                chars.add(chr(int(dst, 16)))
+        for part in re.findall(rb"beginbfrange(.*?)endbfrange", data, re.S):
+            for lo, hi, dst in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]{4})>", part):
+                first = int(dst, 16)
+                chars.update(chr(first + i) for i in range(int(hi, 16) - int(lo, 16) + 1))
+    return chars
+
+
+def t_pdf_runtime():
+    print("PDF runtime: pins and revision")
+    names = set(A.PDF_PINS)
+    check(names == set(A.PDF_FILES), "every pinned download has a trimming rule, and vice versa")
+    check(all(u.startswith("https://") and re.fullmatch(r"[0-9a-f]{64}", s) for u, s in A.PDF_PINS.values()),
+          "pins: every URL is https and every checksum is 64 hex")
+    check(re.fullmatch(r"[0-9a-f]{12}", A.PDF_REV) is not None, "PDF_REV is 12 hex")
+    check("playwright" not in A.PDF_RENDER.lower() and "playwright" not in repr(A.PDF_PINS).lower(),
+          "no Playwright in the renderer or the pins (the renderer speaks DevTools over a pipe itself)")
+    src = PROGRAM.read_text()
+    old = next(iter(A.PDF_PINS.values()))[1]
+    v1 = load_variant(src.replace(old, ("0" if old[0] != "0" else "1") + old[1:], 1), "variant_pin")
+    v2 = load_variant(src.replace("import base64, fcntl", "import base64,  fcntl", 1), "variant_render")
+    v3 = load_variant(src.replace('<dir prefix="relative">fonts</dir>', '<dir prefix="relative">fonts2</dir>', 1), "variant_conf")
+    check(v1.PDF_REV != A.PDF_REV, "PDF_REV changes when a pinned checksum changes")
+    check(v2.PDF_REV == A.PDF_REV, "PDF_REV does not change when only PDF_RENDER changes (no new download)")
+    check(v3.PDF_REV != A.PDF_REV, "PDF_REV changes when the fontconfig template changes")
+    check(load_variant(src, "variant_same").PDF_REV == A.PDF_REV, "PDF_REV is stable for the same program")
     code_rule = re.search(r"^code \{[^}]*\}", A.PDF_CSS, re.MULTILINE)
     check(code_rule is not None and "font-variant-ligatures: none" in code_rule.group(0)
           and "padding: .1em 0;" in code_rule.group(0),
           "PDF code: no ligatures, and no side padding (copied as a space)")
+    for name, member, dest in (
+            ("chrome", CH + "chrome-headless-shell", "chrome/chrome-headless-shell"),
+            ("chrome", CH + "locales/en-US.pak", "chrome/locales/en-US.pak"),
+            ("chrome", CH + "locales/de.pak", None), ("chrome", CH + "libvulkan.so.1", None),
+            ("chrome", CH + "libvk_swiftshader.so", None), ("chrome", CH + "vk_swiftshader_icd.json", None),
+            ("mermaid", "package/dist/chunks/mermaid.esm.min/x.mjs.map", None),
+            ("mermaid", "package/dist/mermaid.js", None),
+            ("mermaid", "package/dist/mermaid.esm.min.mjs", "lib/mermaid/dist/mermaid.esm.min.mjs"),
+            ("layout-elk", "package/dist/mermaid-layout-elk.esm.min.mjs",
+             "lib/@mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs"),
+            ("highlightjs", "package/highlight.min.js", "lib/@highlightjs/cdn-assets/highlight.min.js"),
+            ("highlightjs", "package/styles/github.min.css", "lib/@highlightjs/cdn-assets/styles/github.min.css")):
+        check(A._pdf_target(member, A.PDF_FILES[name]) == dest, f"rules: {member} -> {dest}")
+    for want in (A.PDF_MERMAID, A.PDF_MERMAID_ELK, A.PDF_HLJS + "/highlight.min.js",
+                 A.PDF_HLJS + "/styles/github.min.css"):
+        rel = "lib/" + want[len(A.PDF_LIB) + 1:]
+        check(rel in {"lib/mermaid/dist/mermaid.esm.min.mjs",
+                      "lib/@mermaid-js/layout-elk/dist/mermaid-layout-elk.esm.min.mjs",
+                      "lib/@highlightjs/cdn-assets/highlight.min.js",
+                      "lib/@highlightjs/cdn-assets/styles/github.min.css"}, f"the print page's {rel} is a file the rules install")
 
-    calls = []
-    real_run, real_argv = A.subprocess.run, sys.argv
-    A.subprocess.run = lambda cmd, **kw: calls.append((cmd, kw)) or subprocess.CompletedProcess(cmd, 0)
-    try:
-        def run_main(*argv):
-            sys.argv = ["artifacts.py", *argv]
-            del calls[:]
+    print("PDF runtime: renderer launch")
+    r = A.PDF_RENDER
+    check("--no-sandbox" not in r and "no-sandbox" not in r, "PDF_RENDER never passes --no-sandbox")
+    for flag in ("--host-resolver-rules=MAP * ~NOTFOUND", "--proxy-server=http://127.0.0.1:9",
+                 "--proxy-bypass-list=<-loopback>", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"):
+        check(f'"{flag}"' in r, f"PDF_RENDER blocks the network with {flag}")
+    check('"/proc/self/oom_score_adj"' in r and r.index("oom_score_adj") < r.index("posix_spawn"),
+          "PDF_RENDER raises its own oom_score_adj before it starts Chromium")
+    check(r.index('call("Target.setAutoAttach", {"autoAttach": True, "waitForDebuggerOnStart": True, "flatten": True})')
+          < r.index('call("Target.createTarget"'),
+          "PDF_RENDER turns on browser-level auto-attach (popups included) before it creates the page")
+    check('os.environ["PDF_CHROME"]' in r and 'os.environ["PDF_LIB_DIR"]' in r and "/opt/" not in r,
+          "PDF_RENDER takes the headless shell and the libraries from the environment")
+
+    print("PDF runtime: installer")
+    files = fixture_downloads()
+    with tempfile.TemporaryDirectory() as td:
+        td = pathlib.Path(td).resolve()
+        base = td / "x" / "artifacts" / "pdf-runtime"
+        net = FakeNet(files, base)
+        (base).mkdir(parents=True)
+        (base / "aaaaaaaaaaaa").mkdir()
+        (base / "aaaaaaaaaaaa" / "REV").write_text("aaaaaaaaaaaa\n")
+        (base / ".tmp-bbbbbbbbbbbb-1").mkdir()
+        (base / ".tmp-other-format").mkdir()
+        (base / "keep-me").mkdir()
+        msgs = []
+        with patched(A, pdf_download=net, PDF_PINS=fixture_pins(files)):
+            final = A.install_pdf_runtime(base, say=msgs.append)
+            check(final == base / A.PDF_REV and (final / "REV").read_text() == A.PDF_REV + "\n",
+                  "install: DIR/<PDF_REV>/REV is written and holds PDF_REV")
+            check(tree(final) - {"REV", "fonts.conf"} == FIXTURE_KEPT,
+                  "install: only the listed files are kept (extras, other locales, Vulkan, maps, other builds dropped)")
+            if tree(final) - {"REV", "fonts.conf"} != FIXTURE_KEPT:
+                print("      extra:", sorted(tree(final) - {"REV", "fonts.conf"} - FIXTURE_KEPT),
+                      "missing:", sorted(FIXTURE_KEPT - tree(final)))
+            check(os.access(final / "chrome" / "chrome-headless-shell", os.X_OK), "install: the headless shell is executable")
+            conf = (final / "fonts.conf").read_text()
+            check('<dir prefix="relative">fonts</dir>' in conf and '<cachedir prefix="relative">fontcache</cachedir>' in conf
+                  and str(final) not in conf and "RUNTIME" not in conf,
+                  "install: fonts.conf paths are relative to the file, so the runtime can move")
+            check(net.calls == list(A.PDF_PINS) and not net.early,
+                  "install: every pin downloaded once, and the final directory only appears when complete")
+            check(not any(d.exists() for d in net.dests) and not any(p.name.startswith(".tmp-") for p in base.iterdir()),
+                  "install: the download directory and the staging directory are gone")
+            check(not (base / "aaaaaaaaaaaa").exists() and not (base / ".tmp-bbbbbbbbbbbb-1").exists()
+                  and not (base / ".tmp-other-format").exists(),
+                  "install: other revisions and stale staging directories are removed")
+            check((base / "keep-me").is_dir(), "install: unrelated entries in the directory are left alone")
+            net.calls.clear()
+            msgs.clear()
+            again = A.install_pdf_runtime(base, say=msgs.append)
+            check(again == final and not net.calls and any("already installed" in m for m in msgs),
+                  "install is idempotent: a second run downloads nothing and says already installed")
+
+        # Two installers into one directory take turns: the second waits, then finds it installed.
+        base5 = td / "race" / "artifacts" / "pdf-runtime"
+        first_in, release = threading.Event(), threading.Event()
+        inner = FakeNet(files, base5)
+
+        def slow(url, dest):
+            if not first_in.is_set():
+                first_in.set()
+                release.wait(20)
+            inner(url, dest)
+        said = {"a": [], "b": []}
+        results, errors = {}, []
+
+        def run(who):
             try:
-                A.main()
-            except SystemExit as e:
-                return e.code
-        rc = run_main("--build-pdf-image")
-        check(rc == 0 and len(calls) == 1 and calls[0][0] == A.pdf_build_command(A.PDF_IMAGE)
-              and calls[0][1].get("input") == A.PDF_DOCKERFILE.encode(),
-              "main: --build-pdf-image runs the build command with the Dockerfile on stdin")
-        err = io.StringIO()
-        with contextlib.redirect_stderr(err):
-            rc = run_main("--build-pdf-image", "--pdf-base", "mcr.microsoft.com/playwright:v1.56.0-noble")
-        check(rc == 2 and not calls, f"main: removed --pdf-base exits 2 and runs no docker (rc={rc})")
-        check("--pdf-base was removed" in err.getvalue() and "--build-pdf-image" in err.getvalue(),
-              "main: removed --pdf-base says what replaced it")
-        err = io.StringIO()
-        os.environ["ARTIFACTS_PDF_BASE"] = "mcr.microsoft.com/playwright:v1.56.0-noble"
-        try:
-            with contextlib.redirect_stderr(err):
-                rc = run_main("--build-pdf-image")
-        finally:
-            del os.environ["ARTIFACTS_PDF_BASE"]
-        check(rc == 0 and len(calls) == 1 and "ignoring ARTIFACTS_PDF_BASE" in err.getvalue(),
-              "main: a leftover ARTIFACTS_PDF_BASE is ignored with a warning, the build still runs")
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            rc = run_main("--pdf-rev")
-        check(rc == 0 and out.getvalue() == A.PDF_REV + "\n" and not calls,
-              "main: --pdf-rev prints PDF_REV and runs no docker")
+                results[who] = A.install_pdf_runtime(base5, say=said[who].append)
+            except BaseException as e:  # reported below
+                errors.append(repr(e))
+        with patched(A, pdf_download=slow, PDF_PINS=fixture_pins(files)):
+            ta = threading.Thread(target=run, args=("a",))
+            ta.start()
+            first_in.wait(10)
+            tb = threading.Thread(target=run, args=("b",))
+            tb.start()
+            time.sleep(0.5)
+            waiting = tb.is_alive()
+            release.set()
+            ta.join(30)
+            tb.join(30)
+        check(not errors and results.get("a") == results.get("b") == base5 / A.PDF_REV,
+              f"install: two concurrent installers both succeed ({errors})")
+        check(waiting and any("waiting" in m for m in said["b"]) and any("already installed" in m for m in said["b"]),
+              "install: the second installer waits for the first, says so, then finds it already installed")
+        check(inner.calls == list(A.PDF_PINS) and ents(base5) == [A.PDF_REV],
+              "install: concurrent installers download once and leave one clean runtime")
 
-        # A failed render against an image of another revision says so.
-        def fake(label, render_rc=1):
-            def run(cmd, **kw):
-                if cmd[:3] == ["docker", "image", "inspect"]:
-                    return subprocess.CompletedProcess(cmd, 0, label + "\n", "")
-                return subprocess.CompletedProcess(cmd, render_rc, b"", b"boom")
-            return run
-        with contextlib.redirect_stderr(io.StringIO()):
-            A.subprocess.run = fake("0123456789ab")
-            _, why = A.render_pdf("<p>x</p>", "img:t")
-            check(why is not None and "does not match this program" in why and "0123456789ab" in why
-                  and "--build-pdf-image" in why, "render_pdf: an image of another revision is named as the cause")
-            A.subprocess.run = fake("<no value>")
-            _, why = A.render_pdf("<p>x</p>", "img:t")
-            check(why is not None and "image revision none" in why, "render_pdf: an unlabelled image is reported as revision none")
-            A.subprocess.run = fake(A.PDF_REV)
-            _, why = A.render_pdf("<p>x</p>", "img:t")
-            check(why == "rendering failed (details in the service log)",
-                  "render_pdf: a matching image that fails gives the plain failure")
+        # A download that fails part way leaves nothing behind.
+        base2 = td / "fail" / "artifacts" / "pdf-runtime"
+        net = FakeNet(files, base2, fail_on="dejavu")
+        with patched(A, pdf_download=net, PDF_PINS=fixture_pins(files)):
+            try:
+                A.install_pdf_runtime(base2, say=lambda m: None)
+                raised = None
+            except A.PdfInstallError as e:
+                raised = str(e)
+        check(raised is not None and "dejavu" in raised and ents(base2) == [],
+              f"install: a failed download aborts and leaves no runtime ({raised})")
+
+        # An atomic install: if the final rename fails nothing is left either.
+        base3 = td / "rename" / "artifacts" / "pdf-runtime"
+        with patched(A, pdf_download=FakeNet(files), PDF_PINS=fixture_pins(files)), \
+                patched(A.os, rename=lambda *a: (_ for _ in ()).throw(OSError("boom"))):
+            try:
+                A.install_pdf_runtime(base3, say=lambda m: None)
+                raised = None
+            except OSError as e:
+                raised = e
+        check(raised is not None and ents(base3) == [], "install: a failure at the last step leaves no partial runtime")
+
+        # Checksum: a download that differs from its pin is refused before anything is unpacked.
+        base4 = td / "sum" / "artifacts" / "pdf-runtime"
+        tampered = dict(files, inter=zip_bytes({"extras/ttf/Inter-Regular.ttf": b"EVIL"}))
+        extracted = []
+        real_extract = A._pdf_extract
+        with patched(A, pdf_download=FakeNet(tampered), PDF_PINS=fixture_pins(files),
+                     _pdf_extract=lambda name, *a: extracted.append(name) or real_extract(name, *a)):
+            try:
+                A.install_pdf_runtime(base4, say=lambda m: None)
+                raised = None
+            except A.PdfInstallError as e:
+                raised = str(e)
+        check(raised is not None and "checksum mismatch" in raised and "inter" in raised,
+              f"install: a checksum mismatch aborts ({raised and raised[:60]})")
+        check("inter" not in extracted and ents(base4) == [],
+              "install: the mismatching download is never unpacked, and no runtime is left behind")
+
+        # Path traversal and links, in members the rules would keep and in ones they would drop.
+        def refuse(label, name, blob):
+            b = td / ("trav-" + label) / "artifacts" / "pdf-runtime"
+            served = dict(files, **{name: blob})
+            with patched(A, pdf_download=FakeNet(served), PDF_PINS=fixture_pins(served)):
+                try:
+                    A.install_pdf_runtime(b, say=lambda m: None)
+                    got = None
+                except A.PdfInstallError as e:
+                    got = str(e)
+            escaped = [p for p in (td / ("trav-" + label)).rglob("evil*")]
+            check(got is not None and b.is_dir() and ents(b) == [] and not escaped,
+                  f"install: {label} is refused, nothing written or left behind ({got and got[:50]})")
+        refuse("zip member ../ (a dropped file)", "inter", zip_bytes({"extras/ttf/Inter-Regular.ttf": b"i", "../evil.txt": b"x"}))
+        refuse("zip member that a rule would keep, via ..", "chrome",
+               zip_bytes({CH + "chrome-headless-shell": b"x", CH + "../../evil": b"x"}))
+        refuse("zip absolute path", "jetbrains-mono", zip_bytes({"/tmp/evil.ttf": b"x"}))
+        refuse("zip symlink", "dejavu", zip_bytes({"dejavu-fonts-ttf-2.37/ttf/DejaVuSans.ttf": (b"/etc/passwd", 0o120777)}))
+        link = tarfile.TarInfo("package/dist/evil-link")
+        link.type, link.linkname = tarfile.SYMTYPE, "/etc/passwd"
+        refuse("tar symlink", "mermaid", tgz_bytes({"package/dist/mermaid.esm.min.mjs": b"m"}, extra=[link]))
+        refuse("tar member ../", "highlightjs", tgz_bytes({"package/highlight.min.js": b"h", "package/../../evil.js": b"x"}))
+        refuse("tar absolute path", "layout-elk", tgz_bytes({"/tmp/evil.mjs": b"x"}))
+
+    print("PDF runtime: command line")
+    stub = []
+    with patched(A, install_pdf_runtime=lambda d, say=print: stub.append(d) or pathlib.Path(d) / A.PDF_REV):
+        rc, out, err = run_main("--install-pdf-runtime", "--pdf-runtime", "/nonexistent/artifacts/pdf-runtime")
+    check(rc == 0 and stub == [pathlib.Path("/nonexistent/artifacts/pdf-runtime")],
+          "main: --install-pdf-runtime is a real option and installs into --pdf-runtime")
+    def boom(d, say=print):
+        raise A.PdfInstallError("nope")
+    with patched(A, install_pdf_runtime=boom):
+        rc, out, err = run_main("--install-pdf-runtime")
+    check(rc == 1 and "nope" in err, "main: a failed install exits 1 and says why")
+    for argv in (["--build-pdf-image"], ["--pdf-image", "artifacts-pdf:local"], ["--pdf-base", "some/image"],
+                 ["--build-pdf-image", "--pdf-base", "mcr.microsoft.com/playwright:v1"]):
+        calls = []
+        with patched(A.subprocess, run=lambda *a, **k: calls.append(a), Popen=lambda *a, **k: calls.append(a)):
+            rc, out, err = run_main(*argv)
+        flag = next(a for a in argv if a.startswith("--"))
+        check(rc == 2 and "--install-pdf-runtime" in err and "was removed" in err and not calls,
+              f"main: removed {' '.join(argv[:1])} exits 2, names --install-pdf-runtime, runs nothing")
+    rc, out, err = run_main("--pdf-rev")
+    check(rc == 0 and out == A.PDF_REV + "\n", "main: --pdf-rev prints PDF_REV")
+    default = A.default_pdf_runtime()
+    rc, out, err = run_main("--print-apparmor-profile")
+    check(rc == 0 and out == A.pdf_apparmor_profile(default) and "  userns," in out and "flags=(unconfined)" in out
+          and f"profile {A.PDF_APPARMOR_NAME} {default}/*/chrome/chrome-headless-shell " in out and "/**/" not in out,
+          "main: --print-apparmor-profile names the default runtime directory exactly (no /**/ pattern)")
+    rc, out, err = run_main("--print-apparmor-profile", "--pdf-runtime", "/srv/viewer/artifacts/pdf-runtime")
+    check(rc == 0 and "profile artifacts-chrome-headless-shell /srv/viewer/artifacts/pdf-runtime/*/chrome/chrome-headless-shell flags=(unconfined) {" in out
+          and out.count("/srv/viewer") == 1, "main: --print-apparmor-profile honours --pdf-runtime")
+    old = os.getcwd()
+    try:
+        os.chdir("/srv")
+        rc, out, err = run_main("--print-apparmor-profile", "--pdf-runtime", "rel/../rt")
     finally:
-        A.subprocess.run, sys.argv = real_run, real_argv
+        os.chdir(old)
+    check(rc == 0 and " /srv/rt/*/chrome/chrome-headless-shell " in out, "main: a relative --pdf-runtime is made absolute in the profile")
+    for bad in ('/tmp/a b', '/tmp/a*b', '/tmp/a?b', '/tmp/a[b', '/tmp/a]b', '/tmp/a{b', '/tmp/a}b', '/tmp/a^b', '/tmp/a"b',
+                '/tmp/a\nb', '/tmp/a\tb', '/tmp/a,b', '/tmp/a\\b'):
+        rc, out, err = run_main("--print-apparmor-profile", "--pdf-runtime", bad)
+        check(rc == 2 and out == "" and "AppArmor" in err, f"main: --print-apparmor-profile refuses {bad!r} with exit 2")
+    host = pathlib.Path("/etc/apparmor.d") / A.PDF_APPARMOR_NAME
+    if host.is_file() and str(default) in host.read_text():
+        check(host.read_text() == A.pdf_apparmor_profile(default),
+              "the profile installed on this host is byte-identical to what the program prints")
+    else:
+        skip("no installed profile for the default runtime directory on this host")
+    with tempfile.TemporaryDirectory() as td:
+        fake = pathlib.Path(td) / "profile"
+        with patched(A, PDF_APPARMOR_FILE=fake):
+            state = " ".join(A.pdf_apparmor_state(td + "/artifacts/pdf-runtime"))
+            fake.write_text("stale")
+            stale = " ".join(A.pdf_apparmor_state(td + "/artifacts/pdf-runtime"))
+            fake.write_text(A.pdf_apparmor_profile(td + "/artifacts/pdf-runtime"))
+            good = " ".join(A.pdf_apparmor_state(td + "/artifacts/pdf-runtime"))
+            odd = " ".join(A.pdf_apparmor_state(td + "/a b"))
+        restricted = pathlib.Path("/proc/sys/kernel/apparmor_restrict_unprivileged_userns").is_file()
+        if restricted:
+            check("NOT installed" in state and "installed but DIFFERENT" in stale and "installed and current" in good
+                  and "unknown" not in good and "not readable without root" in good and "warning" in odd,
+                  "apparmor state: reports the world-readable profile file (missing, stale, current), never 'unknown'")
+        else:
+            skip("apparmor state: this kernel has no userns restriction")
+    rc, out, err = run_main("--help")
+    check(rc == 0 and "docker" not in out.lower() and "--install-pdf-runtime" in out and "--build-pdf-image" not in out,
+          "--help names no docker and lists --install-pdf-runtime")
+    check("docker" not in (A.__doc__ or "").lower(), "the module docstring names no docker")
+
+    print("PDF runtime: render_pdf error mapping")
+    with tempfile.TemporaryDirectory() as td:
+        rt = pathlib.Path(td).resolve()
+        launched = []
+        with patched(A.subprocess, Popen=lambda *a, **k: launched.append(a) or None):
+            pdf, why = A.render_pdf("<p>x</p>", rt)
+        check(pdf is None and "not installed" in why and "--install-pdf-runtime" in why and not launched,
+              "render_pdf: a missing runtime says to run --install-pdf-runtime and starts nothing")
+        (rt / A.PDF_REV).mkdir()
+        (rt / A.PDF_REV / "REV").write_text("0000000000bad\n")
+        pdf, why = A.render_pdf("<p>x</p>", rt)
+        check(pdf is None and "--install-pdf-runtime" in why, "render_pdf: a REV of another revision does not count")
+        (rt / A.PDF_REV / "REV").write_text(A.PDF_REV + "\n")
+
+        # A stand-in renderer runs as a real process (the real one needs the runtime):
+        # it behaves like PDF_RENDER on the pipes, so render_pdf's I/O is exercised.
+        stub_ok = """
+import os, sys, time
+data = sys.stdin.buffer.read()
+sys.stdout.buffer.write(b"%PDF-1.7 " + str(len(data)).encode() + b"\\n%%EOF\\n")
+sys.stdout.flush()
+quiet = os.open(os.devnull, os.O_WRONLY)
+os.dup2(quiet, 1)
+os.dup2(quiet, 2)
+time.sleep(1.5)   # Chromium shutting down
+"""
+        pidfile = pathlib.Path(td) / "helper.pid"
+        stub_hang = f"""
+import subprocess, sys, time
+sys.stdin.buffer.read()
+child = subprocess.Popen(["sleep", "60"])   # a Chromium helper in the same process group
+open({str(pidfile)!r}, "w").write(str(child.pid))
+time.sleep(60)
+"""
+        seen = {}
+        real_popen = subprocess.Popen
+
+        def spy(argv, **kw):
+            seen.update(argv=argv, kw=kw, home_existed=os.path.isdir(kw["cwd"]))
+            return real_popen(argv, **kw)
+
+        def render(script, page="<p>page</p>", timeout=90, **kw):
+            with patched(A, PDF_RENDER=script, PDF_TIMEOUT=timeout), patched(A.subprocess, Popen=spy), \
+                    contextlib.redirect_stderr(io.StringIO()) as err:
+                t = time.monotonic()
+                out = A.render_pdf(page, kw.pop("runtime", rt), **kw)
+                return out, time.monotonic() - t, err.getvalue()
+
+        def slots_free():
+            got = [A.PDF_SLOTS.acquire(blocking=False) for _ in range(2)]
+            for g in got:
+                if g:
+                    A.PDF_SLOTS.release()
+            return all(got)
+
+        (pdf, why), took, _ = render(stub_ok)
+        env = seen["kw"]["env"]
+        check(pdf == b"%PDF-1.7 11\n%%EOF\n" and why is None, "render_pdf: the page goes in on stdin and the PDF comes back")
+        check(took < 1.0, f"render_pdf: answers once the PDF is written, not when the renderer exits ({took:.2f} s, exit after 1.5 s)")
+        check(seen["argv"][1:3] == ["-I", "-c"] and seen["kw"]["start_new_session"] is True,
+              "render_pdf: python -I -c PDF_RENDER in its own session")
+        check(set(env) == {"PATH", "HOME", "TMPDIR", "LANG", "FONTCONFIG_FILE", "PDF_CHROME", "PDF_LIB_DIR"}
+              and env["HOME"] == seen["kw"]["cwd"] and env["PDF_CHROME"] == str(rt / A.PDF_REV / "chrome" / "chrome-headless-shell")
+              and env["PDF_LIB_DIR"] == str(rt / A.PDF_REV / "lib") and env["FONTCONFIG_FILE"] == str(rt / A.PDF_REV / "fonts.conf"),
+              "render_pdf: minimal environment pointing at this revision, HOME and cwd one fresh directory")
+        check(seen["home_existed"] and os.path.exists(env["HOME"]) and not slots_free(),
+              "render_pdf: while the renderer shuts down, its slot and temp HOME are still held")
+        time.sleep(2.5)
+        check(not os.path.exists(env["HOME"]) and slots_free(),
+              "render_pdf: once the renderer has exited, its temp HOME is removed and its slot is free")
+        big = "<p>" + "x" * (5 << 20) + "</p>"
+        (pdf, why), _, _ = render(stub_ok, page=big)
+        check(pdf == b"%PDF-1.7 " + str(len(big)).encode() + b"\n%%EOF\n",
+              "render_pdf: a 5 MB page goes through the pipes whole (no deadlock)")
+        (pdf, why), _, _ = render("import sys; sys.stdin.read(); sys.stderr.write('FATAL: No usable sandbox! Update your kernel'); sys.exit(1)")
+        check(pdf is None and "sandbox is not usable" in why and "--print-apparmor-profile" in why,
+              "render_pdf: 'No usable sandbox' points at the AppArmor profile")
+        (pdf, why), _, _ = render("import sys; sys.stdin.read(); print('not a pdf')")
+        check(pdf is None and why == "rendering failed (details in the service log)", "render_pdf: output that is not a PDF fails")
+        (pdf, why), _, _ = render("import sys; sys.stdin.buffer.read(); sys.stdout.buffer.write(b'%PDF-1.7 cut short'); sys.exit(1)")
+        check(pdf is None and why == "rendering failed (details in the service log)",
+              "render_pdf: a PDF cut short (no %%EOF) fails")
+        (pdf, why), _, logged = render("import sys; sys.stdin.read(); sys.stderr.write('boom'); sys.exit(1)")
+        check(pdf is None and why == "rendering failed (details in the service log)" and "boom" in logged,
+              "render_pdf: a failing renderer gives the plain failure and logs its stderr")
+        (pdf, why), took, _ = render(stub_hang, timeout=1)
+        time.sleep(0.5)
+        helper = int(pidfile.read_text()) if pidfile.exists() else None
+        try:
+            alive = helper is not None and os.kill(helper, 0) is None   # signal 0: does it still exist?
+        except ProcessLookupError:
+            alive = False
+        if alive:
+            os.kill(helper, signal.SIGKILL)  # do not leave it behind for the next run
+        check(pdf is None and why == "rendering took longer than 1 s" and took < 8,
+              f"render_pdf: a render past the time limit fails ({took:.1f} s)")
+        check(helper is not None and not alive, "render_pdf: a timeout kills the whole process group, helpers included")
+        check(slots_free(), "render_pdf: every render slot is released again")
+
+        # The renderer volunteers as the OOM killer's first victim, and Chromium inherits that.
+        fake_chrome = pathlib.Path(td) / "fake-chrome"
+        score = pathlib.Path(td) / "score"
+        fake_chrome.write_text(f"#!/bin/sh\ncat /proc/self/oom_score_adj > {score}\n")
+        fake_chrome.chmod(0o755)
+        subprocess.run([sys.executable, "-I", "-c", A.PDF_RENDER], input=b"<p>x</p>", cwd=td, timeout=30,
+                       capture_output=True, env={"PATH": "/usr/bin:/bin", "HOME": td, "TMPDIR": td,
+                                                 "PDF_CHROME": str(fake_chrome), "PDF_LIB_DIR": td})
+        check(score.exists() and score.read_text().strip() == "1000",
+              f"PDF_RENDER: the browser starts with oom_score_adj 1000 ({score.read_text().strip() if score.exists() else 'not run'})")
+
+        # wait=True (the command line): the shutdown and the cleanup are done before it returns.
+        (pdf, why), took, _ = render(stub_ok, wait=True)
+        check(pdf is not None and took >= 1.4 and not os.path.exists(seen["kw"]["cwd"]) and slots_free(),
+              f"render_pdf(wait=True): returns after the renderer exited, temp HOME removed, slot free ({took:.1f} s)")
+
+        # A relative runtime directory still gives the renderer absolute paths.
+        old = os.getcwd()
+        try:
+            os.chdir(rt)
+            (pdf, why), _, _ = render(stub_ok, runtime=pathlib.Path("."), wait=True)
+            env = seen["kw"]["env"]
+        finally:
+            os.chdir(old)
+        check(pdf is not None and all(os.path.isabs(env[k]) for k in ("FONTCONFIG_FILE", "PDF_CHROME", "PDF_LIB_DIR"))
+              and env["PDF_CHROME"] == str(rt / A.PDF_REV / "chrome" / "chrome-headless-shell"),
+              "render_pdf: a relative runtime directory is resolved to absolute paths for the renderer")
+
+        # The slot must come back whatever goes wrong after it was taken.
+        def boom(*a, **k):
+            raise OSError("no space left on device")
+        for _ in range(2):  # twice: a leak of one slot per failure would exhaust both
+            with patched(A.tempfile, mkdtemp=boom), contextlib.redirect_stderr(io.StringIO()):
+                pdf, why = A.render_pdf("<p>x</p>", rt)
+            check(pdf is None and "temporary directory" in why, f"render_pdf: mkdtemp failing is reported ({why})")
+        check(slots_free(), "render_pdf: after mkdtemp failed twice, both render slots are free")
+        homes = set(glob_homes())
+        helper_pid = pathlib.Path(td) / "own.pid"
+        stub_pid = f"import os, time\nopen({str(helper_pid)!r}, 'w').write(str(os.getpid()))\ntime.sleep(60)\n"
+
+        def exchange_fails(*a, **k):
+            for _ in range(100):  # let the renderer start and write its pid
+                if helper_pid.exists() and helper_pid.read_text():
+                    break
+                time.sleep(0.05)
+            raise OSError("broken pipe, or any other surprise")
+        for _ in range(2):
+            helper_pid.unlink(missing_ok=True)
+            with patched(A, PDF_RENDER=stub_pid, _exchange=exchange_fails), contextlib.redirect_stderr(io.StringIO()):
+                pdf, why = A.render_pdf("<p>x</p>", rt)
+            time.sleep(0.3)
+            try:
+                alive = os.kill(int(helper_pid.read_text()), 0) is None
+            except (ProcessLookupError, ValueError, OSError):
+                alive = False
+            check(pdf is None and why == "rendering failed (details in the service log)" and not alive,
+                  f"render_pdf: an unexpected error from _exchange fails the render and kills the renderer ({why})")
+        check(slots_free() and set(glob_homes()) == homes,
+              "render_pdf: after _exchange failed twice, both slots are free and no temp HOME is left")
+
+    print("PDF runtime: the real runtime")
+    rt = real_runtime()
+    if rt is None:
+        skip(NO_RUNTIME)
+        return
+    marker = "Qwertzuiop Vjxkz"
+    page = A.render_page("t", f"<h1>{marker}</h1><p>plain body</p>", pdf=True)
+    t0 = time.monotonic()
+    pdf, why = A.render_pdf(page, rt)
+    check(pdf is not None and pdf.startswith(b"%PDF") and why is None, f"render: a page prints to a PDF ({why})")
+    check(pdf is not None and set(marker.replace(" ", "")) <= pdf_unicode(pdf),
+          "render: the page's text is in the PDF (its fonts map back to it)")
+    print(f"      render took {time.monotonic() - t0:.2f} s")
+    homes_before = set(glob_homes())
+    r = subprocess.run([sys.executable, str(PROGRAM), "--check-pdf-runtime", "--pdf-runtime", str(rt)],
+                       capture_output=True, text=True, timeout=120)
+    check(set(glob_homes()) <= homes_before, f"--check-pdf-runtime leaves no temp directory behind ({set(glob_homes()) - homes_before})")
+    check(r.returncode == 0 and r.stdout.strip() == "ok", f"--check-pdf-runtime exits 0 and prints ok ({r.stdout.strip()} {r.stderr.strip()[-80:]})")
+    empty = tempfile.mkdtemp()
+    r = subprocess.run([sys.executable, str(PROGRAM), "--check-pdf-runtime", "--pdf-runtime", empty],
+                       capture_output=True, text=True, timeout=120)
+    shutil.rmtree(empty)
+    check(r.returncode == 1 and "--install-pdf-runtime" in r.stderr, "--check-pdf-runtime exits 1 for a missing runtime")
+
+    # The check fails when the fonts are missing (it used to say ok with a runtime that printed text in no font).
+    with tempfile.TemporaryDirectory() as td:
+        broken = pathlib.Path(td) / A.PDF_REV
+        broken.mkdir()
+        shutil.copy(rt / A.PDF_REV / "REV", broken / "REV")
+        (broken / "fonts.conf").write_text(A.PDF_FONTS_CONF)  # what the installer writes
+        for n in ("chrome", "lib"):
+            (broken / n).symlink_to(rt / A.PDF_REV / n)
+        (broken / "fonts").mkdir()  # no fonts in it
+        with patched(A, PDF_RENDER=NO_SANDBOX(A.PDF_RENDER)):
+            ok, why = A.check_pdf_runtime(td)
+        check(not ok and "fonts" in why, f"check_pdf_runtime: fails when the runtime's fonts are missing ({why})")
+        # A copy of the runtime at another path still finds its fonts: fonts.conf is path-independent.
+        # (The sandbox is off here only because the AppArmor profile admits one path.)
+        shutil.copytree(rt / A.PDF_REV / "fonts", broken / "fonts", dirs_exist_ok=True)
+        with patched(A, PDF_RENDER=NO_SANDBOX(A.PDF_RENDER)):
+            ok, why = A.check_pdf_runtime(td)
+            pdf, _ = A.render_pdf(A.render_page("t", "<p>moved</p>", pdf=True), td, wait=True)
+        check(ok and pdf and re.search(rb"/BaseFont\s*/[A-Z]{6}\+Inter-Regular", pdf),
+              f"a copy of the runtime at another path embeds Inter ({why})")
+
+    # Network: a page that tries <img>, <link>, fetch(), a WebSocket, a window.open() popup and WebRTC
+    # (STUN and TURN servers on a local UDP port) against live local listeners. The page carries no
+    # CSP of its own, so this tests the browser switches and the request interception, not the
+    # policy of the real print page.
+    def network_run(render_script=None):
+        hits, udp_hits = [], []
+        lsock = socket.socket()
+        lsock.bind(("127.0.0.1", 0))
+        lsock.listen(16)
+        lsock.settimeout(0.2)
+        usock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        usock.bind(("127.0.0.1", 0))
+        usock.settimeout(0.2)
+        port, uport = lsock.getsockname()[1], usock.getsockname()[1]
+        stop = threading.Event()
+
+        def accept():
+            while not stop.is_set():
+                try:
+                    c, _ = lsock.accept()
+                except OSError:
+                    continue
+                hits.append(1)
+                c.close()
+
+        def datagrams():
+            while not stop.is_set():
+                try:
+                    usock.recvfrom(4096)
+                except OSError:
+                    continue
+                udp_hits.append(1)
+        threads = [threading.Thread(target=f, daemon=True) for f in (accept, datagrams)]
+        for t in threads:
+            t.start()
+        ctl = socket.create_connection(("127.0.0.1", port))
+        ctl.close()
+        usock_c = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        usock_c.sendto(b"x", ("127.0.0.1", uport))
+        usock_c.close()
+        time.sleep(0.5)
+        saw = (len(hits), len(udp_hits))
+        del hits[:], udp_hits[:]
+        url = f"127.0.0.1:{port}"
+        net_page = f"""<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="http://{url}/c.css">
+<body><p>{marker}</p><img src="http://{url}/i.png"><script src="http://{url}/s.js"></script>
+<script>
+try {{ fetch("http://{url}/f").catch(() => {{}}); }} catch (e) {{}}
+try {{ const w = new WebSocket("ws://{url}/w"); w.onerror = () => {{}}; }} catch (e) {{}}
+try {{ window.open("http://{url}/popup"); }} catch (e) {{}}
+try {{
+  const pc = new RTCPeerConnection({{iceServers: [{{urls: "stun:127.0.0.1:{uport}"}},
+      {{urls: "turn:127.0.0.1:{uport}", username: "u", credential: "p"}}]}});
+  pc.createDataChannel("d");
+  pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => {{}});
+}} catch (e) {{}}
+setTimeout(() => {{ document.documentElement.dataset.ready = "1"; }}, 2500);
+</script></body>"""
+        with patched(A, PDF_RENDER=render_script or A.PDF_RENDER):
+            pdf, why = A.render_pdf(net_page, rt, wait=True)
+        time.sleep(0.5)
+        stop.set()
+        for t in threads:
+            t.join(2)
+        lsock.close()
+        usock.close()
+        return saw, len(hits), len(udp_hits), pdf, why
+
+    saw, tcp, udp, pdf, why = network_run()
+    check(saw == (1, 1), "network test: the local listeners do see a direct TCP connection and a UDP datagram")
+    check(tcp == 0 and udp == 0,
+          f"network: <img>, <link>, <script>, fetch(), a WebSocket, a window.open popup and WebRTC cause "
+          f"{tcp} TCP connections and {udp} UDP datagrams to local listeners (want 0 and 0)")
+    check(pdf is not None and pdf.startswith(b"%PDF") and set("Qwertzuiop") <= pdf_unicode(pdf),
+          f"network: the PDF still renders ({why})")
+
+    # Controls: take protections away in a copy of the renderer and the page's attempts do get out,
+    # so the zero above is the protections' doing. Interception on the page only (the old design)
+    # lets the popup through; without the switches WebRTC UDP is not stopped by interception.
+    switches = ('"--host-resolver-rules=MAP * ~NOTFOUND", "--proxy-server=http://127.0.0.1:9", '
+                '"--proxy-bypass-list=<-loopback>",')
+    webrtc = '"--force-webrtc-ip-handling-policy=disable_non_proxied_udp",'
+    child_fetch = 'send("Fetch.enable", {"patterns": [{"urlPattern": "*"}]}, child)'
+    main_fetch = '    s = attached[target]\n'
+    check(switches in A.PDF_RENDER and webrtc in A.PDF_RENDER and child_fetch in A.PDF_RENDER and main_fetch in A.PDF_RENDER,
+          "controls: the renderer source has the pieces the controls take away")
+    no_switch = A.PDF_RENDER.replace(webrtc, "")
+    _, tcp, udp, pdf, why = network_run(no_switch)
+    check(tcp == 0 and udp > 0, f"control: without the WebRTC switch, interception does not stop UDP ({tcp} TCP, {udp} UDP)")
+    page_only = (A.PDF_RENDER.replace(switches, "").replace(webrtc, "").replace(child_fetch, "pass")
+                 .replace(main_fetch, main_fetch + '    call("Fetch.enable", {"patterns": [{"urlPattern": "*"}]}, s)\n'))
+    _, tcp, udp, pdf, why = network_run(page_only)
+    check(tcp > 0, f"control: interception on the page only, no switches: the popup reaches the listener ({tcp} TCP, {udp} UDP)")
+
+
+# ---------------------------------------------------------------- canvas and bases
+
+CANVAS_TEXT = ("# Board heading\n\nHello [[Alpha]] and ![[pic.png]]\n\n```python\nprint(1)\n```\n\n"
+               "<script>alert('XSS1')</script>\n\n<img src=x onerror=alert('XSS2')>\n")
+CANVAS = {
+    "nodes": [
+        {"id": "t1", "type": "text", "x": -200, "y": -100, "width": 300, "height": 140, "color": "1", "text": CANVAS_TEXT},
+        {"id": "f1", "type": "file", "x": 200, "y": -100, "width": 260, "height": 160, "file": "Alpha.md"},
+        {"id": "f2", "type": "file", "x": 200, "y": 150, "width": 100, "height": 100, "file": "pic.png"},
+        {"id": "f3", "type": "file", "x": 320, "y": 150, "width": 100, "height": 100, "file": "nope/Missing.md"},
+        {"id": "l1", "type": "link", "x": -200, "y": 150, "width": 250, "height": 60, "color": "#00ff00",
+         "url": "https://example.com/ok"},
+        {"id": "l2", "type": "link", "x": -200, "y": 250, "width": 250, "height": 60, "url": "javascript:alert(1)"},
+        {"id": "g1", "type": "group", "x": -260, "y": -160, "width": 760, "height": 500, "label": "Group Label Zed",
+         "color": "#abcdef"},
+        {"id": "u1", "type": "weird", "x": 500, "y": 0, "width": 50, "height": 50},
+        {"id": "bad", "type": "text", "width": "wide"},
+    ],
+    "edges": [
+        {"id": "e1", "fromNode": "t1", "toNode": "f1", "fromEnd": "arrow", "label": "edge label one"},
+        {"id": "e2", "fromNode": "f1", "toNode": "l1", "fromSide": "bottom", "toEnd": "none", "color": "#ff0000"},
+        {"id": "e3", "fromNode": "t1", "toNode": "ghost"},
+    ],
+}
+BASE_YAML = "filters:\n  and: []\nviews:\n  - type: table\n    name: All notes\n  - type: cards\n    name: Gallery\n"
+FAKE_CLI = """#!{py}
+import json, sys
+open({log!r}, "a").write(json.dumps(sys.argv[1:]) + "\\n")
+args = dict(a.split("=", 1) for a in sys.argv[2:] if "=" in a)
+import os, subprocess, time
+if args.get("path") == "hang.base":
+    child = subprocess.Popen(["sleep", "60"])
+    open({pidfile!r}, "w").write(str(child.pid))
+    time.sleep(60)
+if args.get("path") == "slow.base":
+    time.sleep(1)
+if args.get("path") == "deep.base":
+    print("[" * 100000 + "]" * 100000); sys.exit(0)
+if args.get("path") == "big.base":
+    sys.stdout.write("x" * (3 << 20)); sys.exit(0)
+if args.get("path") == "sub/C.base":
+    print(json.dumps([{{"path": "sub/Beta.md", "k": 1}}])); sys.exit(0)
+if args.get("path") == "bad.base":
+    sys.stderr.write("Error: Base file not found: bad.base <b>x</b>\\n"); sys.exit(1)
+if args.get("view") == "All notes":
+    rows = [{{"path": "Alpha.md", "file name": "Alpha", "tags": ["a", "b"], "due": None, "flag": True, "n": 3,
+             "html": "<script>alert('XSS9')</script>"}},
+            {{"path": "gone.md", "file name": "Ghost", "tags": [], "due": "2026-11-25", "flag": False, "n": 0, "html": "&amp;"}}]
+elif args.get("view") == "Gallery":
+    rows = [{{"path": "Alpha.md", "title": "Gallery row"}}]
+else:
+    rows = [{{"path": "Alpha.md", "k": "default view"}}]
+print(json.dumps(rows))
+"""
+
+
+def build_obsidian_vault(base):
+    ob = base / "ob"
+    (ob / "sub").mkdir(parents=True)
+    (ob / "Alpha.md").write_text("# Alpha\n\nExcerpt body text <script>alert('XSS3')</script> end.\n")
+    (ob / "pic.png").write_bytes(PNG)
+    (ob / "Board.canvas").write_text(__import__("json").dumps(CANVAS))
+    (ob / "Broken.canvas").write_text("{not json")
+    (ob / "Empty.canvas").write_text("{}")
+    (ob / "Sheet.base").write_text(BASE_YAML)
+    (ob / "bad.base").write_text(BASE_YAML)
+    for name in ("hang", "deep", "big", "slow", "plain"):
+        (ob / f"{name}.base").write_text("filters:\n  and: []\n")
+    (ob / "many.base").write_text("views:\n" + "".join(f"  - type: table\n    name: v{i}\n" for i in range(25)))
+    (ob / "Deep.canvas").write_text('{"nodes": ' + "[" * 100000 + "]" * 100000 + "}")
+    (ob / "Colors.canvas").write_text(__import__("json").dumps({"nodes": [
+        {"id": "a", "type": "text", "x": 0, "y": 0, "width": 100, "height": 50, "text": "colored", "color": "red;background:url(x)"},
+        {"id": "b", "type": "text", "x": 200, "y": 0, "width": 100, "height": 50, "text": "other"}],
+        "edges": [{"id": "e", "fromNode": "a", "toNode": "b", "color": "red;background:url(x)"}]}))
+    (ob / "Forge.md").write_text("# Forge\n\nforged zzbaseembed5zz and zz0123456789abcdefn0zz here.\n\n"
+                                 "code `zzbaseembed0zz` span\n\n![[plain.base]]\n\n# ![[plain.base]]\n")
+    (ob / "NoEmbeds.md").write_text("# Plain\n\nlooks like a token: zzbaseembed0zz\n")
+    (ob / "ManyEmbeds.md").write_text("# Many\n\n" + "".join("![[plain.base]]\n\n" for _ in range(25)))
+    (ob / "sub" / "Inner.base").write_text("filters:\n  and: []\n")
+    (ob / "Embeds.md").write_text("# Embeds\n\nAll: ![[Sheet.base]]\n\nOne: ![[Sheet.base#Gallery]]\n\n"
+                                  "Bad: ![[Sheet.base#Nope]]\n\nCanvas: ![[Board.canvas]]\n\n```base\nviews: []\n```\n")
+    return ob
+
+
+def t_obsidian(base):
+    json_ = __import__("json")
+    ob = build_obsidian_vault(base)
+    log = base / "cli.log"
+    cli = base / "fake-obsidian"
+    pidfile = base / "child.pid"
+    cli.write_text(FAKE_CLI.format(py=sys.executable, log=str(log), pidfile=str(pidfile)))
+    cli.chmod(0o755)
+    failing = base / "failing-obsidian"
+    failing.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('Error: the Obsidian container is not running <i>x</i>\\n')\nsys.exit(3)\n")
+    failing.chmod(0o755)
+
+    def calls():
+        return [json_.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+
+    lib = A.Library([ob], ttl=0)
+    A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+    A.Handler.log_message = lambda self, fmt, *args: None
+    srv = A.ThreadingHTTPServer(("127.0.0.1", 0), A.Handler)
+    port = srv.server_address[1]
+    A.Handler.hosts = {f"127.0.0.1:{port}"}
+    A.Handler.library = lib
+    A.Handler.gate = A.TailnetGate(None)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    c = Client(port)
+    view = lambda name: c.get("/view/ob/" + urllib.parse.quote(name))  # noqa: E731
+    try:
+        print("canvas")
+        st, hdr, page = view("Board.canvas")
+        page = page.decode()
+        check(st == 200 and "<title>Board</title>" in page, "canvas: /view/ renders a page")
+        check("sandbox" in hdr.get("Content-Security-Policy", "") and "connect-src 'none'" in hdr["Content-Security-Policy"],
+              "canvas: served with the same sandbox CSP as notes")
+        check('class="cn cn-text"' in page and 'class="cn cn-file"' in page and 'class="cn cn-link"' in page
+              and 'class="cn cn-group"' in page and 'class="cn cn-unknown"' in page, "canvas: every node type is drawn")
+        check(page.index("cn-group") < page.index("cn-text"), "canvas: groups come first (behind)")
+        check("Group Label Zed" in page and "edge label one" in page, "canvas: group label and edge label appear")
+        check(page.count('<g class="edge"') == 2, "canvas: two edges drawn, the one to a missing node dropped")
+        check(page.count("<polygon") == 2, "canvas: arrowheads follow fromEnd and toEnd (both ends of e1, none on e2)")
+        check("--ec:#ff0000" in page and "--c:#00ff00" in page and "--c:#fb464c" in page,
+              "canvas: hex and preset colors reach the edge and node styles")
+        check('href="https://example.com/ok"' in page and 'rel="noopener noreferrer"' in page, "canvas: https link node is a link")
+        check('href="javascript:' not in page and "javascript:alert(1)" in page,
+              "canvas: javascript: link node is plain text, not a link")
+        check('data-id="ob/Alpha.md"' in page and "Excerpt body text" in page and "<script>alert('XSS3')" not in page,
+              "canvas: file node links to the note with a tag-free excerpt")
+        check('src="/raw/ob/pic.png' in page, "canvas: image file node shows the image via /raw/")
+        check("not in the vault" in page, "canvas: file node to a missing file says so")
+        check('data-id="ob/Alpha.md"' in page and "Board heading</h1>" in page.replace(' id="board-heading"', ""),
+              "canvas: text node goes through the Markdown pipeline (heading, wikilink)")
+        notes_html, _ = A.render_markdown(lib, CANVAS_TEXT, "ob/Board.canvas", {i["id"]: i for i in lib.scan()}, lib.index(lib.scan()))
+        check(notes_html in page and "<script>alert('XSS1')</script>" in notes_html and "onerror=alert('XSS2')" in notes_html,
+              "canvas: script and onerror payloads come out exactly as a note renders them (the sandbox contains them)")
+        check("language-python" in page, "canvas: code blocks in text nodes are highlighted like notes")
+        check('id="zin"' in page and 'id="zout"' in page and 'id="zfit"' in page and "wheel" in page and "pointerdown" in page,
+              "canvas: zoom buttons, wheel zoom and pointer pan are wired")
+        check("Open the raw JSON" not in page, "canvas: no error box on a good canvas")
+        node = shutil.which("node") or shutil.which("nodejs")
+        if node:
+            with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+                f.write("\n;\n".join(re.findall(r"<script>(.*?)</script>", page, re.S)))
+            r = subprocess.run([node, "--check", f.name], capture_output=True, text=True)
+            os.unlink(f.name)
+            check(r.returncode == 0, f"canvas: inline scripts parse as JavaScript {r.stderr.strip()[:200]}")
+        else:
+            skip("canvas JavaScript syntax check (needs node)")
+        st, hdr, body = c.get("/raw/ob/Board.canvas")
+        check(st == 200 and hdr["Content-Type"].startswith("application/json") and json_.loads(body)["nodes"][0]["id"] == "t1",
+              "canvas: /raw/ returns the JSON")
+        st, _, body = view("Broken.canvas")
+        check(st == 200 and b"could not be read" in body and b"/raw/ob/Broken.canvas" in body, "canvas: malformed JSON -> error page (200) with a raw link")
+        st, _, body = view("Empty.canvas")
+        check(st == 200 and b"canvas is empty" in body, "canvas: empty canvas renders")
+        for q, what in (("Group Label Zed", "group label"), ("edge label one", "edge label"), ("print(1)", "text node text")):
+            hits = json_.loads(c.get("/api/search?q=" + urllib.parse.quote(q))[2])
+            check(any(h["id"] == "ob/Board.canvas" and h["kind"] == "canvas" for h in hits), f"canvas: search finds the {what}")
+        check(c.get("/pdf/ob/Board.canvas")[0] == 404 and c.get("/pdf/ob/Sheet.base")[0] == 404, "canvas and base: no PDF export (404)")
+        check('["note", "text", "canvas", "base"].includes(it.kind)' in A.PAGE, "viewer page opens canvas and base items via /view/")
+        check(A.parse_canvas('{"nodes": [{"id": "a", "type": "text", "x": "q", "width": null}, 5, {"type": "text"}], "edges": "x"}')[0][0]["width"] == 250,
+              "canvas: odd fields fall back to defaults, junk nodes are dropped")
+
+        print("bases (through a fake Obsidian CLI)")
+        log.write_text("")
+        st, _, page = view("Sheet.base")
+        page = page.decode()
+        check(st == 200 and "<h1>Sheet</h1>" in page, "base: /view/ renders a page")
+        check(calls() == [["base:query", "path=Sheet.base", "view=All notes", "format=json"],
+                          ["base:query", "path=Sheet.base", "view=Gallery", "format=json"]],
+              f"base: the CLI got exactly base:query path= view= format=json per view (got {calls()})")
+        check("<h2>All notes</h2>" in page and "<h2>Gallery (cards)</h2>" in page, "base: one section per view, view type shown when not a table")
+        heads = re.findall(r"<th>(.*?)</th>", page)
+        check(heads[:6] == ["file name", "tags", "due", "flag", "n", "html"], f"base: columns in the CLI's order, path column dropped ({heads})")
+        check('<a class="internal" href="#ob/Alpha.md" data-id="ob/Alpha.md">Alpha</a>' in page, "base: path became a link to the note")
+        check(">Ghost</td>" in page and 'data-id="ob/gone.md"' not in page, "base: a row whose note is not in the vault is plain text")
+        check("<td>a, b</td>" in page and "<td></td>" in page and "<td>true</td>" in page and "<td>3</td>" in page,
+              "base: list joined with commas, null empty, booleans and numbers as text")
+        check("<script>alert('XSS9')" not in page and "&lt;script&gt;alert(&#x27;XSS9&#x27;)&lt;/script&gt;" in page
+              and "<td>&amp;amp;</td>" in page, "base: HTML in CLI values is escaped")
+        check("2 rows" in page and "1 row<" in page, "base: row counts shown")
+        check("<th>path</th><th>title</th>" in page, "base: without a file name column the path column stays, shown as a link")
+        check('>Alpha</a></td><td>Gallery row' in page, "base: path column (no file name) links with the file name")
+
+        n = len(calls())
+        view("Sheet.base")
+        check(len(calls()) == n, "base: a second view within the TTL does not call the CLI again")
+
+        log.write_text("")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        st, _, page = c.get("/view/ob/Embeds.md")
+        page = page.decode()
+        check(st == 200 and page.count('class="base-embed"') == 2 and "<h4>All notes</h4>" in page, "base embed: ![[X.base]] renders every view inline")
+        gallery = page.split("One:", 1)[1].split("Bad:", 1)[0]
+        check("<h4>Gallery (cards)</h4>" in gallery and "All notes" not in gallery, "base embed: ![[X.base#View]] renders only that view")
+        check('No view named "Nope"' in page, "base embed: an unknown view name gets the message")
+        check(not any("Nope" in " ".join(a) for a in calls()), "base embed: an unknown view name never reaches the CLI")
+        check('class="language-base"' in page and calls().count(["base:query", "path=Sheet.base", "view=Gallery", "format=json"]) == 1,
+              "base embed: a ```base fence stays a code block, and the cache served the repeat views")
+        check('class="embed-note embed-canvas"' in page and 'data-id="ob/Board.canvas"' in page, "canvas embed: ![[X.canvas]] is a card linking to the canvas")
+        check(isinstance(A.BASE_SLOTS, threading.BoundedSemaphore) and A.BASE_SLOTS._initial_value == 2, "base: CLI calls are bounded to 2 at once")
+
+        log.write_text("")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        st, _, page = view("bad.base")
+        check(st == 200 and b"Error: Base file not found: bad.base &lt;b&gt;x&lt;/b&gt;" in page and b"language-yaml" in page and b"Gallery" in page,
+              "base: a CLI error is shown escaped, with the YAML source, HTTP 200")
+        A.OBSIDIAN = A.BaseEngine(str(failing), ob)
+        st, _, page = view("Sheet.base")
+        check(st == 200 and b"container is not running &lt;i&gt;x&lt;/i&gt;" in page and b"language-yaml" in page, "base: a failing CLI -> message and YAML, 200")
+        A.OBSIDIAN = A.BaseEngine(None, ob)
+        st, _, page = view("Sheet.base")
+        check(st == 200 and b"not configured" in page and b"language-yaml" in page and b"All notes" in page, "base: CLI disabled -> message and YAML, 200")
+        check(A.BaseEngine("none", ob).argv is None, "base: --obsidian-cli none disables the CLI")
+        A.OBSIDIAN = A.BaseEngine(str(base / "no-such-cli"), ob)
+        st, _, page = view("Sheet.base")
+        check(st == 200 and b"could not be run" in page, "base: a missing CLI program -> message, 200")
+        log.write_text("")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob / "sub")
+        st, _, page = view("Sheet.base")
+        check(st == 200 and b"outside the Obsidian vault" in page and b"language-yaml" in page and calls() == [],
+              "base: a base outside --obsidian-vault is not queried; message and YAML, 200")
+        st, _, page = view("sub/Inner.base")
+        check(st == 200 and calls() == [["base:query", "path=Inner.base", "format=json"]] and b"default view" in page,
+              f"base: no views in the YAML -> default view, path relative to --obsidian-vault (got {calls()})")
+        log.write_text("")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        saved, A.yaml = A.yaml, None
+        try:
+            st, _, page = view("Sheet.base")
+        finally:
+            A.yaml = saved
+        check(st == 200 and calls() == [["base:query", "path=Sheet.base", "format=json"]], "base: without PyYAML only the default view is queried")
+        eng = A.BaseEngine(str(cli), ob)
+        check(eng.relpath(ob / "Sheet.base") == "Sheet.base" and eng.relpath(ob / "Alpha.md") is None
+              and eng.relpath(base / "ob" / ".." / "x.base") is None, "base: only .base files inside the vault have a CLI path")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+
+        print("review fixes: embeds, limits, process group, vault resolution")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        st, _, page = c.get("/view/ob/Forge.md")
+        page = page.decode()
+        check(st == 200 and "forged zzbaseembed5zz and zz0123456789abcdefn0zz here" in page, "embed token: forged tokens in note text stay literal, the note renders")
+        check("<code>zzbaseembed0zz</code>" in page, "embed token: a code span with a token-like string stays literal")
+        check(re.search(r'<h1 id="base"><a class="internal" href="#ob/plain.base"', page) is not None and page.count('class="base-embed"') == 1,
+              "embed token: an embed in a heading is a link with a clean id, not a table")
+        st, _, page = c.get("/view/ob/NoEmbeds.md")
+        check(st == 200 and b"looks like a token: zzbaseembed0zz" in page, "embed token: a note with a token-like string and no embeds renders")
+        orig_render = A.render_note
+        A.render_note = lambda *a, **k: 1 / 0
+        try:
+            st, _, page = c.get("/view/ob/Alpha.md")
+        finally:
+            A.render_note = orig_render
+        check(st == 200 and b"could not be rendered" in page, "/view/<note>: a render error gives an error page, not a dropped connection")
+
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        st, _, page = c.get("/view/ob/ManyEmbeds.md")
+        check(st == 200 and page.count(b'class="base-embed"') == A.BASE_MAX_EMBEDS and b"at most 20 base embeds per page" in page,
+              "limits: base embeds per page are capped, and the page says so")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        st, _, page = view("many.base")
+        check(st == 200 and len(calls()) == A.BASE_MAX_VIEWS and b"showing the first 20" in page, f"limits: views per base are capped and the page says so ({len(calls())} calls)")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        A.BASE_PAGE_BUDGET = 0.0
+        try:
+            st, _, page = view("Sheet.base")
+        finally:
+            A.BASE_PAGE_BUDGET = 30.0
+        check(st == 200 and page.count(b"Skipped: time limit") == 2 and calls() == [], "limits: past the per-page time budget views are skipped, no CLI call")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        A.BASE_SLOTS.acquire(); A.BASE_SLOTS.acquire()
+        A.BASE_SLOT_WAIT = 0.3
+        try:
+            st, _, page = view("Sheet.base")
+        finally:
+            A.BASE_SLOT_WAIT = 10.0
+            A.BASE_SLOTS.release(); A.BASE_SLOTS.release()
+        check(st == 200 and b"busy" in page, "limits: no free CLI slot -> a message, not a wait without end")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        A.BASE_MAX_OUTPUT = 2 << 20
+        try:
+            st, _, page = view("big.base")
+        finally:
+            A.BASE_MAX_OUTPUT = 8 << 20
+        check(st == 200 and b"more than 2 MiB" in page, "limits: CLI output over the byte cap is refused")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        st, _, page = view("deep.base")
+        check(st == 200 and b"did not return JSON" in page, "deeply nested CLI output gives the error message (no RecursionError)")
+        st, _, body = c.get("/api/search?q=Alpha")
+        check(st == 200 and any(h["id"] == "ob/Alpha.md" for h in json_.loads(body)), "deeply nested canvas does not break /api/search")
+        st, _, body = view("Deep.canvas")
+        check(st == 200 and b"could not be read" in body, "deeply nested canvas -> error page")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        results = []
+        eng = A.BaseEngine(str(cli), ob)
+        slow = lib.resolve("ob/slow.base")
+        ts = [threading.Thread(target=lambda: results.append(eng.query(slow, "ob/slow.base", None, 1))) for _ in range(3)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        check(len(calls()) == 1 and len(results) == 3 and all(r[1] is None for r in results), f"limits: overlapping identical calls share one CLI run ({len(calls())} runs)")
+
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        A.BASE_TIMEOUT = 1
+        pidfile.unlink(missing_ok=True)
+        try:
+            st, _, page = view("hang.base")
+        finally:
+            A.BASE_TIMEOUT = 15
+        pid = int(pidfile.read_text()) if pidfile.exists() else 0
+
+        def alive(pid):
+            try:
+                return pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+            except OSError:
+                return False
+        for _ in range(30):
+            if not alive(pid):
+                break
+            time.sleep(0.1)
+        check(st == 200 and b"did not answer within 1 s" in page and pid and not alive(pid),
+              "timeout: the CLI's child process is killed with its process group")
+        if pid and alive(pid):
+            os.kill(pid, signal.SIGKILL)
+
+        space = base / "dir with space"
+        space.mkdir()
+        spaced = space / "fake obsidian"
+        shutil.copy(cli, spaced)
+        spaced.chmod(0o755)
+        A.OBSIDIAN = A.BaseEngine(str(spaced), ob)
+        log.write_text("")
+        st, _, page = view("Sheet.base")
+        check(st == 200 and len(calls()) == 2 and b"<h2>All notes</h2>" in page, "--obsidian-cli is one path: a path with a space runs")
+
+        A.yaml, saved = None, A.yaml
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        try:
+            st, _, page = c.get("/view/ob/Embeds.md")
+        finally:
+            A.yaml = saved
+        check(["base:query", "path=Sheet.base", "view=Gallery", "format=json"] in calls(), "without PyYAML the embed's view reaches the CLI as view=")
+
+        st, _, page = view("Colors.canvas")
+        check(st == 200 and b"url(x)" not in page and b"colored" in page and b"other" in page and page.count(b'<g class="edge"') == 1,
+              "canvas: a color that is not a preset or #hex is not emitted (node and edge)")
+
+        wide = base / "wide"
+        (wide / "personal" / "sub").mkdir(parents=True)
+        (wide / "personal" / ".obsidian").mkdir()
+        (wide / "personal" / "Alpha.md").write_text("# Alpha\n\nbody\n")
+        (wide / "personal" / "sub" / "X.canvas").write_text(json_.dumps({"nodes": [
+            {"id": "f", "type": "file", "x": 0, "y": 0, "width": 200, "height": 100, "file": "Alpha.md"}]}))
+        wlib = A.Library([wide], ttl=0)
+        xc = wlib.resolve("wide/personal/sub/X.canvas")
+        A.OBSIDIAN = A.BaseEngine(None, wide / "personal")
+        check('data-id="wide/personal/Alpha.md"' in A.render_canvas(wlib, xc, "wide/personal/sub/X.canvas"),
+              "canvas files: paths resolve against --obsidian-vault when it is below the viewer root")
+        A.OBSIDIAN = A.BaseEngine(None, None)
+        check('data-id="wide/personal/Alpha.md"' in A.render_canvas(wlib, xc, "wide/personal/sub/X.canvas"),
+              "canvas files: without --obsidian-vault, the nearest folder with .obsidian is the vault")
+        (wide / "personal" / ".obsidian").rmdir()
+        check("not in the vault" in A.render_canvas(wlib, xc, "wide/personal/sub/X.canvas"),
+              "canvas files: with neither, paths are relative to the viewer root")
+
+        (wide / "personal" / "B.base").write_text("filters:\n  and: []\n")
+        (wide / "personal" / "sub" / "Beta.md").write_text("# Beta\n")
+        (wide / "personal" / "sub" / "C.base").write_text("filters:\n  and: []\n")
+        A.OBSIDIAN = A.BaseEngine(str(cli), wide / "personal")
+        wlib = A.Library([wide], ttl=0)
+        page = A.render_base(wlib, wlib.resolve("wide/personal/B.base"), "wide/personal/B.base")
+        check('data-id="wide/personal/Alpha.md"' in page, "base links: vault inside the viewer root")
+        slib = A.Library([wide / "personal" / "sub"], ttl=0)
+        page = A.render_base(slib, slib.resolve("sub/C.base"), "sub/C.base")
+        check('data-id="sub/Beta.md"' in page, "base links: viewer root inside the vault")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    print("--obsidian-cli and env fallback (a real server process)")
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p2 = s.getsockname()[1]
+    s.close()
+    env = {**os.environ, "ARTIFACTS_OBSIDIAN_CLI": str(cli), "ARTIFACTS_OBSIDIAN_VAULT": str(ob)}
+    log.write_text("")
+    proc = subprocess.Popen([sys.executable, str(PROGRAM), "--port", str(p2), str(ob)], env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        c2, body = Client(p2), b""
+        for _ in range(50):
+            try:
+                st, _, body = c2.get("/view/ob/Sheet.base")
+                break
+            except OSError:
+                time.sleep(0.1)
+        check(b"<h2>All notes</h2>" in body and len(calls()) == 2, "base: the server process reads ARTIFACTS_OBSIDIAN_CLI and ARTIFACTS_OBSIDIAN_VAULT")
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+    # No auto-detection: an `obsidian` on PATH is not used unless --obsidian-cli or the env var names it.
+    bindir = base / "pathdir"
+    bindir.mkdir()
+    shutil.copy(cli, bindir / "obsidian")
+    (bindir / "obsidian").chmod(0o755)
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p3 = s.getsockname()[1]
+    s.close()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ARTIFACTS_OBSIDIAN")}
+    env["PATH"] = f"{bindir}:{env.get('PATH', '')}"
+    log.write_text("")
+    proc = subprocess.Popen([sys.executable, str(PROGRAM), "--port", str(p3), str(ob)], env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        body = b""
+        for _ in range(50):
+            try:
+                _, _, body = Client(p3).get("/view/ob/Sheet.base")
+                break
+            except OSError:
+                time.sleep(0.1)
+        check(b"not configured" in body and calls() == [], "base: an `obsidian` on PATH is not used unless configured")
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+    out = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True, text=True).stdout
+    check("--obsidian-cli" in out and "--obsidian-vault" in out, "--help documents --obsidian-cli and --obsidian-vault")
 
 
 def main():
@@ -406,7 +1601,9 @@ def main():
         t_render(lib)
         t_mermaid(lib)
         t_http(lib)
-        t_pdf_build()
+        t_perf(pathlib.Path(tmp).resolve())
+        t_obsidian(pathlib.Path(tmp).resolve())
+        t_pdf_runtime()
     print()
     if FAILS:
         print(f"{len(FAILS)} check(s) failed:")
