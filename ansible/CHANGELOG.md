@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.3.0](https://github.com/HarshitRuwali/homelab-infra/compare/ansible-v0.2.0...ansible-v0.3.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* proxmox: `pve-guest.sh tenant` without `--uncapped` now needs an address in 10.10.90.0/24, the `lease` group and `lease_gw` alias in cluster.fw (`pve-guest.sh firewall` writes them on a new host and prints a diff for an existing one), a vmbr5 bridge and an OPNsense LEASE interface. Existing VMs are unchanged. Use `--uncapped` for the previous behaviour. The other modules in this change have no breaking change.
+
+### Features
+
+* **ansible:** boost the Dell CPU fan while its package is hot ([#31](https://github.com/HarshitRuwali/homelab-infra/issues/31)) ([ffd415a](https://github.com/HarshitRuwali/homelab-infra/commit/ffd415afe7acab4ee85e9320dfd380ffc27dc973))
+* **ansible:** desk_appliance role, X11 autologin appliance baseline for the Iris box ([#9](https://github.com/HarshitRuwali/homelab-infra/issues/9)) ([d29b619](https://github.com/HarshitRuwali/homelab-infra/commit/d29b619270a6c0c82aff82573f43de1d728914bd))
+* **ansible:** tailscale_node and image_registry roles (tailnet-only Matrix and the Iris image registry), drafts ([#10](https://github.com/HarshitRuwali/homelab-infra/issues/10)) ([0fdd827](https://github.com/HarshitRuwali/homelab-infra/commit/0fdd82735ea26f28ab6de9f06c735d47cbb25121))
+* **media:** add Plex and qBittorrent behind ProtonVPN as a module ([#20](https://github.com/HarshitRuwali/homelab-infra/issues/20)) ([bfdc530](https://github.com/HarshitRuwali/homelab-infra/commit/bfdc530dd547600d9c2706561be9705f0640e35c))
+* **media:** follow :latest images and update them nightly ([#30](https://github.com/HarshitRuwali/homelab-infra/issues/30)) ([c4b1136](https://github.com/HarshitRuwali/homelab-infra/commit/c4b1136d2de36115cfcf5b0336f067dd4e32ad21))
+* **monitoring:** add the skullsaints dashboard and fix the host's spelling ([#24](https://github.com/HarshitRuwali/homelab-infra/issues/24)) ([425e324](https://github.com/HarshitRuwali/homelab-infra/commit/425e3242a3b1f4df88225b07f5a0af7b310eac2f))
+* **monitoring:** onboard ingress and fix the private-ingest check in onboard.yml ([#26](https://github.com/HarshitRuwali/homelab-infra/issues/26)) ([aa5e508](https://github.com/HarshitRuwali/homelab-infra/commit/aa5e5083e3755664d468d57d9d93b9cec3e12cc1))
+* **monitoring:** routers, internet uptime, inter-LAN traffic and permanent network history ([#55](https://github.com/HarshitRuwali/homelab-infra/issues/55)) ([f466677](https://github.com/HarshitRuwali/homelab-infra/commit/f466677c3181ae5e27d21bca4c11078cd38a32cf))
+* put leased VMs on their own segment and log, limit and alert on tenant traffic ([#36](https://github.com/HarshitRuwali/homelab-infra/issues/36)) ([cf72b3b](https://github.com/HarshitRuwali/homelab-infra/commit/cf72b3b719a7c400a7e7f184b90759dfe69697d8))
+* **security:** add the security stack with Wazuh, CrowdSec, AdGuard Home and Greenbone ([#3](https://github.com/HarshitRuwali/homelab-infra/issues/3)) ([058beb0](https://github.com/HarshitRuwali/homelab-infra/commit/058beb0371eb178e1899d552b001c48129f66031))
+
+
+### Bug Fixes
+
+* **monitoring:** bring committed alert rules in line with the deployed ones ([#23](https://github.com/HarshitRuwali/homelab-infra/issues/23)) ([96b638e](https://github.com/HarshitRuwali/homelab-infra/commit/96b638e743ab7d9448fe83cb08cd7a47a22b0cbd))
+* **security:** size sec-wazuh at 40 GB, prune old alert archives, no rootcheck on LXC agents ([#46](https://github.com/HarshitRuwali/homelab-infra/issues/46)) ([cb99095](https://github.com/HarshitRuwali/homelab-infra/commit/cb9909571f9f6860241df200288f276b7a2c831e))
+
+
+### Performance
+
+* **ansible:** prune week-old unused Docker build cache in the nightly update ([#48](https://github.com/HarshitRuwali/homelab-infra/issues/48)) ([f42dc57](https://github.com/HarshitRuwali/homelab-infra/commit/f42dc57d3446d8d3b0586a80a72a21b103a451dc))
+
 ## [0.2.0](https://github.com/HarshitRuwali/homelab-infra/compare/ansible-v0.1.0...ansible-v0.2.0) (2026-10-20)
 
 

@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.2.0](https://github.com/HarshitRuwali/homelab-infra/compare/vault-viewer-v0.1.0...vault-viewer-v0.2.0) (2026-11-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **vault-viewer:** render PDFs without docker, cache the vault scan and poll less ([#50](https://github.com/HarshitRuwali/homelab-infra/issues/50))
+* **vault-viewer:** build the PDF image on Debian slim with only the headless shell ([#32](https://github.com/HarshitRuwali/homelab-infra/issues/32))
+
+### Features
+
+* **vault-viewer:** deploy.sh for other hosts and a copy button on code blocks ([#33](https://github.com/HarshitRuwali/homelab-infra/issues/33)) ([fd6be17](https://github.com/HarshitRuwali/homelab-infra/commit/fd6be17e12ce9618220e36591f4296bfcd930e98))
+* **vault-viewer:** serve zip archives as downloads ([#25](https://github.com/HarshitRuwali/homelab-infra/issues/25)) ([77d839f](https://github.com/HarshitRuwali/homelab-infra/commit/77d839f784c0da104c4680a29303d83ea808d921))
+
+
+### Bug Fixes
+
+* **vault-viewer:** embed PDF fonts as TrueType so exported text copies cleanly ([#27](https://github.com/HarshitRuwali/homelab-infra/issues/27)) ([f2328af](https://github.com/HarshitRuwali/homelab-infra/commit/f2328af1ac87b740ecd41694c609dd58e06802b8))
+
+
+### Performance
+
+* **vault-viewer:** build the PDF image on Debian slim with only the headless shell ([#32](https://github.com/HarshitRuwali/homelab-infra/issues/32)) ([43d9862](https://github.com/HarshitRuwali/homelab-infra/commit/43d98626ad526686f0ebe654ffa44251f66d3bba))
+* **vault-viewer:** render PDFs without docker, cache the vault scan and poll less ([#50](https://github.com/HarshitRuwali/homelab-infra/issues/50)) ([259b917](https://github.com/HarshitRuwali/homelab-infra/commit/259b917031243b2df496572253746ce8a5ff8e16))
+
 ## 0.1.0 (2026-10-20)
 
 

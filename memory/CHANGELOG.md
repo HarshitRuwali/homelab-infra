@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/HarshitRuwali/homelab-infra/compare/memory-v0.2.0...memory-v0.3.0) (2026-11-27)
+
+
+### Features
+
+* **security:** add the security stack with Wazuh, CrowdSec, AdGuard Home and Greenbone ([#3](https://github.com/HarshitRuwali/homelab-infra/issues/3)) ([058beb0](https://github.com/HarshitRuwali/homelab-infra/commit/058beb0371eb178e1899d552b001c48129f66031))
+
+
+### Performance
+
+* **memory:** cut the API image from 1.06 GB to 420 MB and add batch store ([#41](https://github.com/HarshitRuwali/homelab-infra/issues/41)) ([0f74435](https://github.com/HarshitRuwali/homelab-infra/commit/0f7443573f92107a3ade84bf8bebbca7edbaaffc))
+
 ## [0.2.0](https://github.com/HarshitRuwali/homelab-infra/compare/memory-v0.1.0...memory-v0.2.0) (2026-10-20)
 
 
