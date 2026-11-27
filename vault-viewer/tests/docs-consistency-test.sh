@@ -21,13 +21,14 @@ SURFACES=(README.md docs/*.md)
 # systemctl, Chromium, and argparse's built-in --help).
 OTHER_FLAGS=(--user --json --now --remote-debugging-pipe --no-sandbox --help
              --host-resolver-rules --proxy-server --proxy-bypass-list
-             --force-webrtc-ip-handling-policy)
+             --force-webrtc-ip-handling-policy --filter --network)
 is_other_flag() { printf '%s\n' "${OTHER_FLAGS[@]}" | grep -qxF -- "$1"; }
 
 in_install_parser()   { grep -qE -e "(^|[|[:space:]])$1([|)])" install.sh; }
 in_artifacts_parser() { grep -qE -e "add_argument\(\"$1\"" artifacts.py; }
 in_deploy_parser()    { grep -qE -e "(^|[|[:space:]])$1([|)])" deploy.sh; }
 in_e2e_parser()       { grep -qE -e "(^|[|[:space:]])$1([|)])" tests/e2e.sh; }
+in_setup_parser()     { grep -qE -e "(^|[|[:space:]])$1([|)])" obsidian/setup.sh; }
 
 # One logical command per line: join backslash continuations, and join the
 # indented continuation lines of a usage block to the line that opened it.
@@ -55,7 +56,7 @@ headings() {
 # hyphen become one hyphen.
 slug() { tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_ -]//g; s/^ +| +$//g; s/[ -]+/-/g'; }
 
-for need in install.sh deploy.sh artifacts.py mkdocs.yml tests/e2e.sh; do
+for need in install.sh deploy.sh artifacts.py mkdocs.yml tests/e2e.sh obsidian/setup.sh; do
   [[ -f "$need" ]] || { echo "missing $need, cannot check"; exit 1; }
 done
 
@@ -77,6 +78,7 @@ check_flags() {
         install.sh|*/install.sh)                  cmd=install;   break ;;
         deploy.sh|*/deploy.sh)                    cmd=deploy;    break ;;
         e2e.sh|*/e2e.sh)                          cmd=e2e;       break ;;
+        setup.sh|*/setup.sh)                      cmd=setup;     break ;;
         artifacts|artifacts.py|*/artifacts|*/artifacts.py) cmd=artifacts; break ;;
       esac
     done
@@ -94,6 +96,8 @@ check_flags() {
                      || { no "$label shows 'artifacts $flag' but artifacts.py has no such flag"; flagfail=1; } ;;
         e2e)       in_e2e_parser       "$flag" \
                      || { no "$label shows 'e2e.sh $flag' but tests/e2e.sh has no such flag"; flagfail=1; } ;;
+        setup)     in_setup_parser     "$flag" \
+                     || { no "$label shows 'setup.sh $flag' but obsidian/setup.sh has no such flag"; flagfail=1; } ;;
       esac
     done
   done < <(logical_lines "$file")
@@ -114,7 +118,7 @@ if [[ -f "$ROOT_README" ]]; then
     no "root README.md has no 'Serve a vault in the browser' snippet showing install.sh"; flagfail=1
   fi
 fi
-(( flagfail )) || ok "every flag shown with install.sh, deploy.sh or artifacts is in its parser"
+(( flagfail )) || ok "every flag shown with install.sh, deploy.sh, setup.sh or artifacts is in its parser"
 
 echo
 echo "== every --flag in the docs belongs to some tool we know =="
@@ -124,6 +128,7 @@ while read -r flag; do
   in_artifacts_parser "$flag" && continue
   in_deploy_parser "$flag" && continue
   in_e2e_parser "$flag" && continue
+  in_setup_parser "$flag" && continue
   is_other_flag "$flag" && continue
   no "docs mention '$flag', which is in no parser nor the known-other-tools list"; anyfail=1
 done < <(grep -ohE -- '--[a-z][a-z-]*' "${SURFACES[@]}" | sort -u)
@@ -137,6 +142,12 @@ while read -r path; do
   [[ -e "$path" ]] || { no "referenced but missing: $path"; pathfail=1; }
 done < <(grep -ohE '(^|[^/[:alnum:]_.~$}-])(artifacts\.py|install\.sh|mkdocs\.yml|(systemd|tests|docs)/[A-Za-z0-9._/-]+)' "${SURFACES[@]}" \
          | sed -E 's/^[^a-z]//; s/[.,)]+$//' | sort -u)
+# Files of the obsidian/ folder: one path segment (obsidian/some/note.md in an
+# example is a vault path, not a repo path).
+while read -r path; do
+  [[ -e "$path" ]] || { no "referenced but missing: $path"; pathfail=1; }
+done < <(grep -ohE '(^|[^/[:alnum:]_.~$}-])obsidian/[A-Za-z0-9._-]+([^/A-Za-z0-9._-]|$)' "${SURFACES[@]}" \
+         | sed -E 's/^[^a-z]//; s/[^A-Za-z0-9_-]+$//' | sort -u)
 (( pathfail )) || ok "every repo path named in README and docs exists"
 
 echo

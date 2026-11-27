@@ -1150,6 +1150,445 @@ setTimeout(() => {{ document.documentElement.dataset.ready = "1"; }}, 2500);
     check(tcp > 0, f"control: interception on the page only, no switches: the popup reaches the listener ({tcp} TCP, {udp} UDP)")
 
 
+# ---------------------------------------------------------------- canvas and bases
+
+CANVAS_TEXT = ("# Board heading\n\nHello [[Alpha]] and ![[pic.png]]\n\n```python\nprint(1)\n```\n\n"
+               "<script>alert('XSS1')</script>\n\n<img src=x onerror=alert('XSS2')>\n")
+CANVAS = {
+    "nodes": [
+        {"id": "t1", "type": "text", "x": -200, "y": -100, "width": 300, "height": 140, "color": "1", "text": CANVAS_TEXT},
+        {"id": "f1", "type": "file", "x": 200, "y": -100, "width": 260, "height": 160, "file": "Alpha.md"},
+        {"id": "f2", "type": "file", "x": 200, "y": 150, "width": 100, "height": 100, "file": "pic.png"},
+        {"id": "f3", "type": "file", "x": 320, "y": 150, "width": 100, "height": 100, "file": "nope/Missing.md"},
+        {"id": "l1", "type": "link", "x": -200, "y": 150, "width": 250, "height": 60, "color": "#00ff00",
+         "url": "https://example.com/ok"},
+        {"id": "l2", "type": "link", "x": -200, "y": 250, "width": 250, "height": 60, "url": "javascript:alert(1)"},
+        {"id": "g1", "type": "group", "x": -260, "y": -160, "width": 760, "height": 500, "label": "Group Label Zed",
+         "color": "#abcdef"},
+        {"id": "u1", "type": "weird", "x": 500, "y": 0, "width": 50, "height": 50},
+        {"id": "bad", "type": "text", "width": "wide"},
+    ],
+    "edges": [
+        {"id": "e1", "fromNode": "t1", "toNode": "f1", "fromEnd": "arrow", "label": "edge label one"},
+        {"id": "e2", "fromNode": "f1", "toNode": "l1", "fromSide": "bottom", "toEnd": "none", "color": "#ff0000"},
+        {"id": "e3", "fromNode": "t1", "toNode": "ghost"},
+    ],
+}
+BASE_YAML = "filters:\n  and: []\nviews:\n  - type: table\n    name: All notes\n  - type: cards\n    name: Gallery\n"
+FAKE_CLI = """#!{py}
+import json, sys
+open({log!r}, "a").write(json.dumps(sys.argv[1:]) + "\\n")
+args = dict(a.split("=", 1) for a in sys.argv[2:] if "=" in a)
+import os, subprocess, time
+if args.get("path") == "hang.base":
+    child = subprocess.Popen(["sleep", "60"])
+    open({pidfile!r}, "w").write(str(child.pid))
+    time.sleep(60)
+if args.get("path") == "slow.base":
+    time.sleep(1)
+if args.get("path") == "deep.base":
+    print("[" * 100000 + "]" * 100000); sys.exit(0)
+if args.get("path") == "big.base":
+    sys.stdout.write("x" * (3 << 20)); sys.exit(0)
+if args.get("path") == "sub/C.base":
+    print(json.dumps([{{"path": "sub/Beta.md", "k": 1}}])); sys.exit(0)
+if args.get("path") == "bad.base":
+    sys.stderr.write("Error: Base file not found: bad.base <b>x</b>\\n"); sys.exit(1)
+if args.get("view") == "All notes":
+    rows = [{{"path": "Alpha.md", "file name": "Alpha", "tags": ["a", "b"], "due": None, "flag": True, "n": 3,
+             "html": "<script>alert('XSS9')</script>"}},
+            {{"path": "gone.md", "file name": "Ghost", "tags": [], "due": "2026-11-25", "flag": False, "n": 0, "html": "&amp;"}}]
+elif args.get("view") == "Gallery":
+    rows = [{{"path": "Alpha.md", "title": "Gallery row"}}]
+else:
+    rows = [{{"path": "Alpha.md", "k": "default view"}}]
+print(json.dumps(rows))
+"""
+
+
+def build_obsidian_vault(base):
+    ob = base / "ob"
+    (ob / "sub").mkdir(parents=True)
+    (ob / "Alpha.md").write_text("# Alpha\n\nExcerpt body text <script>alert('XSS3')</script> end.\n")
+    (ob / "pic.png").write_bytes(PNG)
+    (ob / "Board.canvas").write_text(__import__("json").dumps(CANVAS))
+    (ob / "Broken.canvas").write_text("{not json")
+    (ob / "Empty.canvas").write_text("{}")
+    (ob / "Sheet.base").write_text(BASE_YAML)
+    (ob / "bad.base").write_text(BASE_YAML)
+    for name in ("hang", "deep", "big", "slow", "plain"):
+        (ob / f"{name}.base").write_text("filters:\n  and: []\n")
+    (ob / "many.base").write_text("views:\n" + "".join(f"  - type: table\n    name: v{i}\n" for i in range(25)))
+    (ob / "Deep.canvas").write_text('{"nodes": ' + "[" * 100000 + "]" * 100000 + "}")
+    (ob / "Colors.canvas").write_text(__import__("json").dumps({"nodes": [
+        {"id": "a", "type": "text", "x": 0, "y": 0, "width": 100, "height": 50, "text": "colored", "color": "red;background:url(x)"},
+        {"id": "b", "type": "text", "x": 200, "y": 0, "width": 100, "height": 50, "text": "other"}],
+        "edges": [{"id": "e", "fromNode": "a", "toNode": "b", "color": "red;background:url(x)"}]}))
+    (ob / "Forge.md").write_text("# Forge\n\nforged zzbaseembed5zz and zz0123456789abcdefn0zz here.\n\n"
+                                 "code `zzbaseembed0zz` span\n\n![[plain.base]]\n\n# ![[plain.base]]\n")
+    (ob / "NoEmbeds.md").write_text("# Plain\n\nlooks like a token: zzbaseembed0zz\n")
+    (ob / "ManyEmbeds.md").write_text("# Many\n\n" + "".join("![[plain.base]]\n\n" for _ in range(25)))
+    (ob / "sub" / "Inner.base").write_text("filters:\n  and: []\n")
+    (ob / "Embeds.md").write_text("# Embeds\n\nAll: ![[Sheet.base]]\n\nOne: ![[Sheet.base#Gallery]]\n\n"
+                                  "Bad: ![[Sheet.base#Nope]]\n\nCanvas: ![[Board.canvas]]\n\n```base\nviews: []\n```\n")
+    return ob
+
+
+def t_obsidian(base):
+    json_ = __import__("json")
+    ob = build_obsidian_vault(base)
+    log = base / "cli.log"
+    cli = base / "fake-obsidian"
+    pidfile = base / "child.pid"
+    cli.write_text(FAKE_CLI.format(py=sys.executable, log=str(log), pidfile=str(pidfile)))
+    cli.chmod(0o755)
+    failing = base / "failing-obsidian"
+    failing.write_text(f"#!{sys.executable}\nimport sys\nsys.stderr.write('Error: the Obsidian container is not running <i>x</i>\\n')\nsys.exit(3)\n")
+    failing.chmod(0o755)
+
+    def calls():
+        return [json_.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+
+    lib = A.Library([ob], ttl=0)
+    A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+    A.Handler.log_message = lambda self, fmt, *args: None
+    srv = A.ThreadingHTTPServer(("127.0.0.1", 0), A.Handler)
+    port = srv.server_address[1]
+    A.Handler.hosts = {f"127.0.0.1:{port}"}
+    A.Handler.library = lib
+    A.Handler.gate = A.TailnetGate(None)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    c = Client(port)
+    view = lambda name: c.get("/view/ob/" + urllib.parse.quote(name))  # noqa: E731
+    try:
+        print("canvas")
+        st, hdr, page = view("Board.canvas")
+        page = page.decode()
+        check(st == 200 and "<title>Board</title>" in page, "canvas: /view/ renders a page")
+        check("sandbox" in hdr.get("Content-Security-Policy", "") and "connect-src 'none'" in hdr["Content-Security-Policy"],
+              "canvas: served with the same sandbox CSP as notes")
+        check('class="cn cn-text"' in page and 'class="cn cn-file"' in page and 'class="cn cn-link"' in page
+              and 'class="cn cn-group"' in page and 'class="cn cn-unknown"' in page, "canvas: every node type is drawn")
+        check(page.index("cn-group") < page.index("cn-text"), "canvas: groups come first (behind)")
+        check("Group Label Zed" in page and "edge label one" in page, "canvas: group label and edge label appear")
+        check(page.count('<g class="edge"') == 2, "canvas: two edges drawn, the one to a missing node dropped")
+        check(page.count("<polygon") == 2, "canvas: arrowheads follow fromEnd and toEnd (both ends of e1, none on e2)")
+        check("--ec:#ff0000" in page and "--c:#00ff00" in page and "--c:#fb464c" in page,
+              "canvas: hex and preset colors reach the edge and node styles")
+        check('href="https://example.com/ok"' in page and 'rel="noopener noreferrer"' in page, "canvas: https link node is a link")
+        check('href="javascript:' not in page and "javascript:alert(1)" in page,
+              "canvas: javascript: link node is plain text, not a link")
+        check('data-id="ob/Alpha.md"' in page and "Excerpt body text" in page and "<script>alert('XSS3')" not in page,
+              "canvas: file node links to the note with a tag-free excerpt")
+        check('src="/raw/ob/pic.png' in page, "canvas: image file node shows the image via /raw/")
+        check("not in the vault" in page, "canvas: file node to a missing file says so")
+        check('data-id="ob/Alpha.md"' in page and "Board heading</h1>" in page.replace(' id="board-heading"', ""),
+              "canvas: text node goes through the Markdown pipeline (heading, wikilink)")
+        notes_html, _ = A.render_markdown(lib, CANVAS_TEXT, "ob/Board.canvas", {i["id"]: i for i in lib.scan()}, lib.index(lib.scan()))
+        check(notes_html in page and "<script>alert('XSS1')</script>" in notes_html and "onerror=alert('XSS2')" in notes_html,
+              "canvas: script and onerror payloads come out exactly as a note renders them (the sandbox contains them)")
+        check("language-python" in page, "canvas: code blocks in text nodes are highlighted like notes")
+        check('id="zin"' in page and 'id="zout"' in page and 'id="zfit"' in page and "wheel" in page and "pointerdown" in page,
+              "canvas: zoom buttons, wheel zoom and pointer pan are wired")
+        check("Open the raw JSON" not in page, "canvas: no error box on a good canvas")
+        node = shutil.which("node") or shutil.which("nodejs")
+        if node:
+            with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+                f.write("\n;\n".join(re.findall(r"<script>(.*?)</script>", page, re.S)))
+            r = subprocess.run([node, "--check", f.name], capture_output=True, text=True)
+            os.unlink(f.name)
+            check(r.returncode == 0, f"canvas: inline scripts parse as JavaScript {r.stderr.strip()[:200]}")
+        else:
+            skip("canvas JavaScript syntax check (needs node)")
+        st, hdr, body = c.get("/raw/ob/Board.canvas")
+        check(st == 200 and hdr["Content-Type"].startswith("application/json") and json_.loads(body)["nodes"][0]["id"] == "t1",
+              "canvas: /raw/ returns the JSON")
+        st, _, body = view("Broken.canvas")
+        check(st == 200 and b"could not be read" in body and b"/raw/ob/Broken.canvas" in body, "canvas: malformed JSON -> error page (200) with a raw link")
+        st, _, body = view("Empty.canvas")
+        check(st == 200 and b"canvas is empty" in body, "canvas: empty canvas renders")
+        for q, what in (("Group Label Zed", "group label"), ("edge label one", "edge label"), ("print(1)", "text node text")):
+            hits = json_.loads(c.get("/api/search?q=" + urllib.parse.quote(q))[2])
+            check(any(h["id"] == "ob/Board.canvas" and h["kind"] == "canvas" for h in hits), f"canvas: search finds the {what}")
+        check(c.get("/pdf/ob/Board.canvas")[0] == 404 and c.get("/pdf/ob/Sheet.base")[0] == 404, "canvas and base: no PDF export (404)")
+        check('["note", "text", "canvas", "base"].includes(it.kind)' in A.PAGE, "viewer page opens canvas and base items via /view/")
+        check(A.parse_canvas('{"nodes": [{"id": "a", "type": "text", "x": "q", "width": null}, 5, {"type": "text"}], "edges": "x"}')[0][0]["width"] == 250,
+              "canvas: odd fields fall back to defaults, junk nodes are dropped")
+
+        print("bases (through a fake Obsidian CLI)")
+        log.write_text("")
+        st, _, page = view("Sheet.base")
+        page = page.decode()
+        check(st == 200 and "<h1>Sheet</h1>" in page, "base: /view/ renders a page")
+        check(calls() == [["base:query", "path=Sheet.base", "view=All notes", "format=json"],
+                          ["base:query", "path=Sheet.base", "view=Gallery", "format=json"]],
+              f"base: the CLI got exactly base:query path= view= format=json per view (got {calls()})")
+        check("<h2>All notes</h2>" in page and "<h2>Gallery (cards)</h2>" in page, "base: one section per view, view type shown when not a table")
+        heads = re.findall(r"<th>(.*?)</th>", page)
+        check(heads[:6] == ["file name", "tags", "due", "flag", "n", "html"], f"base: columns in the CLI's order, path column dropped ({heads})")
+        check('<a class="internal" href="#ob/Alpha.md" data-id="ob/Alpha.md">Alpha</a>' in page, "base: path became a link to the note")
+        check(">Ghost</td>" in page and 'data-id="ob/gone.md"' not in page, "base: a row whose note is not in the vault is plain text")
+        check("<td>a, b</td>" in page and "<td></td>" in page and "<td>true</td>" in page and "<td>3</td>" in page,
+              "base: list joined with commas, null empty, booleans and numbers as text")
+        check("<script>alert('XSS9')" not in page and "&lt;script&gt;alert(&#x27;XSS9&#x27;)&lt;/script&gt;" in page
+              and "<td>&amp;amp;</td>" in page, "base: HTML in CLI values is escaped")
+        check("2 rows" in page and "1 row<" in page, "base: row counts shown")
+        check("<th>path</th><th>title</th>" in page, "base: without a file name column the path column stays, shown as a link")
+        check('>Alpha</a></td><td>Gallery row' in page, "base: path column (no file name) links with the file name")
+
+        n = len(calls())
+        view("Sheet.base")
+        check(len(calls()) == n, "base: a second view within the TTL does not call the CLI again")
+
+        log.write_text("")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        st, _, page = c.get("/view/ob/Embeds.md")
+        page = page.decode()
+        check(st == 200 and page.count('class="base-embed"') == 2 and "<h4>All notes</h4>" in page, "base embed: ![[X.base]] renders every view inline")
+        gallery = page.split("One:", 1)[1].split("Bad:", 1)[0]
+        check("<h4>Gallery (cards)</h4>" in gallery and "All notes" not in gallery, "base embed: ![[X.base#View]] renders only that view")
+        check('No view named "Nope"' in page, "base embed: an unknown view name gets the message")
+        check(not any("Nope" in " ".join(a) for a in calls()), "base embed: an unknown view name never reaches the CLI")
+        check('class="language-base"' in page and calls().count(["base:query", "path=Sheet.base", "view=Gallery", "format=json"]) == 1,
+              "base embed: a ```base fence stays a code block, and the cache served the repeat views")
+        check('class="embed-note embed-canvas"' in page and 'data-id="ob/Board.canvas"' in page, "canvas embed: ![[X.canvas]] is a card linking to the canvas")
+        check(isinstance(A.BASE_SLOTS, threading.BoundedSemaphore) and A.BASE_SLOTS._initial_value == 2, "base: CLI calls are bounded to 2 at once")
+
+        log.write_text("")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        st, _, page = view("bad.base")
+        check(st == 200 and b"Error: Base file not found: bad.base &lt;b&gt;x&lt;/b&gt;" in page and b"language-yaml" in page and b"Gallery" in page,
+              "base: a CLI error is shown escaped, with the YAML source, HTTP 200")
+        A.OBSIDIAN = A.BaseEngine(str(failing), ob)
+        st, _, page = view("Sheet.base")
+        check(st == 200 and b"container is not running &lt;i&gt;x&lt;/i&gt;" in page and b"language-yaml" in page, "base: a failing CLI -> message and YAML, 200")
+        A.OBSIDIAN = A.BaseEngine(None, ob)
+        st, _, page = view("Sheet.base")
+        check(st == 200 and b"not configured" in page and b"language-yaml" in page and b"All notes" in page, "base: CLI disabled -> message and YAML, 200")
+        check(A.BaseEngine("none", ob).argv is None, "base: --obsidian-cli none disables the CLI")
+        A.OBSIDIAN = A.BaseEngine(str(base / "no-such-cli"), ob)
+        st, _, page = view("Sheet.base")
+        check(st == 200 and b"could not be run" in page, "base: a missing CLI program -> message, 200")
+        log.write_text("")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob / "sub")
+        st, _, page = view("Sheet.base")
+        check(st == 200 and b"outside the Obsidian vault" in page and b"language-yaml" in page and calls() == [],
+              "base: a base outside --obsidian-vault is not queried; message and YAML, 200")
+        st, _, page = view("sub/Inner.base")
+        check(st == 200 and calls() == [["base:query", "path=Inner.base", "format=json"]] and b"default view" in page,
+              f"base: no views in the YAML -> default view, path relative to --obsidian-vault (got {calls()})")
+        log.write_text("")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        saved, A.yaml = A.yaml, None
+        try:
+            st, _, page = view("Sheet.base")
+        finally:
+            A.yaml = saved
+        check(st == 200 and calls() == [["base:query", "path=Sheet.base", "format=json"]], "base: without PyYAML only the default view is queried")
+        eng = A.BaseEngine(str(cli), ob)
+        check(eng.relpath(ob / "Sheet.base") == "Sheet.base" and eng.relpath(ob / "Alpha.md") is None
+              and eng.relpath(base / "ob" / ".." / "x.base") is None, "base: only .base files inside the vault have a CLI path")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+
+        print("review fixes: embeds, limits, process group, vault resolution")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        st, _, page = c.get("/view/ob/Forge.md")
+        page = page.decode()
+        check(st == 200 and "forged zzbaseembed5zz and zz0123456789abcdefn0zz here" in page, "embed token: forged tokens in note text stay literal, the note renders")
+        check("<code>zzbaseembed0zz</code>" in page, "embed token: a code span with a token-like string stays literal")
+        check(re.search(r'<h1 id="base"><a class="internal" href="#ob/plain.base"', page) is not None and page.count('class="base-embed"') == 1,
+              "embed token: an embed in a heading is a link with a clean id, not a table")
+        st, _, page = c.get("/view/ob/NoEmbeds.md")
+        check(st == 200 and b"looks like a token: zzbaseembed0zz" in page, "embed token: a note with a token-like string and no embeds renders")
+        orig_render = A.render_note
+        A.render_note = lambda *a, **k: 1 / 0
+        try:
+            st, _, page = c.get("/view/ob/Alpha.md")
+        finally:
+            A.render_note = orig_render
+        check(st == 200 and b"could not be rendered" in page, "/view/<note>: a render error gives an error page, not a dropped connection")
+
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        st, _, page = c.get("/view/ob/ManyEmbeds.md")
+        check(st == 200 and page.count(b'class="base-embed"') == A.BASE_MAX_EMBEDS and b"at most 20 base embeds per page" in page,
+              "limits: base embeds per page are capped, and the page says so")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        st, _, page = view("many.base")
+        check(st == 200 and len(calls()) == A.BASE_MAX_VIEWS and b"showing the first 20" in page, f"limits: views per base are capped and the page says so ({len(calls())} calls)")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        A.BASE_PAGE_BUDGET = 0.0
+        try:
+            st, _, page = view("Sheet.base")
+        finally:
+            A.BASE_PAGE_BUDGET = 30.0
+        check(st == 200 and page.count(b"Skipped: time limit") == 2 and calls() == [], "limits: past the per-page time budget views are skipped, no CLI call")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        A.BASE_SLOTS.acquire(); A.BASE_SLOTS.acquire()
+        A.BASE_SLOT_WAIT = 0.3
+        try:
+            st, _, page = view("Sheet.base")
+        finally:
+            A.BASE_SLOT_WAIT = 10.0
+            A.BASE_SLOTS.release(); A.BASE_SLOTS.release()
+        check(st == 200 and b"busy" in page, "limits: no free CLI slot -> a message, not a wait without end")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        A.BASE_MAX_OUTPUT = 2 << 20
+        try:
+            st, _, page = view("big.base")
+        finally:
+            A.BASE_MAX_OUTPUT = 8 << 20
+        check(st == 200 and b"more than 2 MiB" in page, "limits: CLI output over the byte cap is refused")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        st, _, page = view("deep.base")
+        check(st == 200 and b"did not return JSON" in page, "deeply nested CLI output gives the error message (no RecursionError)")
+        st, _, body = c.get("/api/search?q=Alpha")
+        check(st == 200 and any(h["id"] == "ob/Alpha.md" for h in json_.loads(body)), "deeply nested canvas does not break /api/search")
+        st, _, body = view("Deep.canvas")
+        check(st == 200 and b"could not be read" in body, "deeply nested canvas -> error page")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        results = []
+        eng = A.BaseEngine(str(cli), ob)
+        slow = lib.resolve("ob/slow.base")
+        ts = [threading.Thread(target=lambda: results.append(eng.query(slow, "ob/slow.base", None, 1))) for _ in range(3)]
+        [t.start() for t in ts]
+        [t.join() for t in ts]
+        check(len(calls()) == 1 and len(results) == 3 and all(r[1] is None for r in results), f"limits: overlapping identical calls share one CLI run ({len(calls())} runs)")
+
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        A.BASE_TIMEOUT = 1
+        pidfile.unlink(missing_ok=True)
+        try:
+            st, _, page = view("hang.base")
+        finally:
+            A.BASE_TIMEOUT = 15
+        pid = int(pidfile.read_text()) if pidfile.exists() else 0
+
+        def alive(pid):
+            try:
+                return pathlib.Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+            except OSError:
+                return False
+        for _ in range(30):
+            if not alive(pid):
+                break
+            time.sleep(0.1)
+        check(st == 200 and b"did not answer within 1 s" in page and pid and not alive(pid),
+              "timeout: the CLI's child process is killed with its process group")
+        if pid and alive(pid):
+            os.kill(pid, signal.SIGKILL)
+
+        space = base / "dir with space"
+        space.mkdir()
+        spaced = space / "fake obsidian"
+        shutil.copy(cli, spaced)
+        spaced.chmod(0o755)
+        A.OBSIDIAN = A.BaseEngine(str(spaced), ob)
+        log.write_text("")
+        st, _, page = view("Sheet.base")
+        check(st == 200 and len(calls()) == 2 and b"<h2>All notes</h2>" in page, "--obsidian-cli is one path: a path with a space runs")
+
+        A.yaml, saved = None, A.yaml
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+        log.write_text("")
+        try:
+            st, _, page = c.get("/view/ob/Embeds.md")
+        finally:
+            A.yaml = saved
+        check(["base:query", "path=Sheet.base", "view=Gallery", "format=json"] in calls(), "without PyYAML the embed's view reaches the CLI as view=")
+
+        st, _, page = view("Colors.canvas")
+        check(st == 200 and b"url(x)" not in page and b"colored" in page and b"other" in page and page.count(b'<g class="edge"') == 1,
+              "canvas: a color that is not a preset or #hex is not emitted (node and edge)")
+
+        wide = base / "wide"
+        (wide / "personal" / "sub").mkdir(parents=True)
+        (wide / "personal" / ".obsidian").mkdir()
+        (wide / "personal" / "Alpha.md").write_text("# Alpha\n\nbody\n")
+        (wide / "personal" / "sub" / "X.canvas").write_text(json_.dumps({"nodes": [
+            {"id": "f", "type": "file", "x": 0, "y": 0, "width": 200, "height": 100, "file": "Alpha.md"}]}))
+        wlib = A.Library([wide], ttl=0)
+        xc = wlib.resolve("wide/personal/sub/X.canvas")
+        A.OBSIDIAN = A.BaseEngine(None, wide / "personal")
+        check('data-id="wide/personal/Alpha.md"' in A.render_canvas(wlib, xc, "wide/personal/sub/X.canvas"),
+              "canvas files: paths resolve against --obsidian-vault when it is below the viewer root")
+        A.OBSIDIAN = A.BaseEngine(None, None)
+        check('data-id="wide/personal/Alpha.md"' in A.render_canvas(wlib, xc, "wide/personal/sub/X.canvas"),
+              "canvas files: without --obsidian-vault, the nearest folder with .obsidian is the vault")
+        (wide / "personal" / ".obsidian").rmdir()
+        check("not in the vault" in A.render_canvas(wlib, xc, "wide/personal/sub/X.canvas"),
+              "canvas files: with neither, paths are relative to the viewer root")
+
+        (wide / "personal" / "B.base").write_text("filters:\n  and: []\n")
+        (wide / "personal" / "sub" / "Beta.md").write_text("# Beta\n")
+        (wide / "personal" / "sub" / "C.base").write_text("filters:\n  and: []\n")
+        A.OBSIDIAN = A.BaseEngine(str(cli), wide / "personal")
+        wlib = A.Library([wide], ttl=0)
+        page = A.render_base(wlib, wlib.resolve("wide/personal/B.base"), "wide/personal/B.base")
+        check('data-id="wide/personal/Alpha.md"' in page, "base links: vault inside the viewer root")
+        slib = A.Library([wide / "personal" / "sub"], ttl=0)
+        page = A.render_base(slib, slib.resolve("sub/C.base"), "sub/C.base")
+        check('data-id="sub/Beta.md"' in page, "base links: viewer root inside the vault")
+        A.OBSIDIAN = A.BaseEngine(str(cli), ob)
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+    print("--obsidian-cli and env fallback (a real server process)")
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p2 = s.getsockname()[1]
+    s.close()
+    env = {**os.environ, "ARTIFACTS_OBSIDIAN_CLI": str(cli), "ARTIFACTS_OBSIDIAN_VAULT": str(ob)}
+    log.write_text("")
+    proc = subprocess.Popen([sys.executable, str(PROGRAM), "--port", str(p2), str(ob)], env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        c2, body = Client(p2), b""
+        for _ in range(50):
+            try:
+                st, _, body = c2.get("/view/ob/Sheet.base")
+                break
+            except OSError:
+                time.sleep(0.1)
+        check(b"<h2>All notes</h2>" in body and len(calls()) == 2, "base: the server process reads ARTIFACTS_OBSIDIAN_CLI and ARTIFACTS_OBSIDIAN_VAULT")
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+    # No auto-detection: an `obsidian` on PATH is not used unless --obsidian-cli or the env var names it.
+    bindir = base / "pathdir"
+    bindir.mkdir()
+    shutil.copy(cli, bindir / "obsidian")
+    (bindir / "obsidian").chmod(0o755)
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    p3 = s.getsockname()[1]
+    s.close()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ARTIFACTS_OBSIDIAN")}
+    env["PATH"] = f"{bindir}:{env.get('PATH', '')}"
+    log.write_text("")
+    proc = subprocess.Popen([sys.executable, str(PROGRAM), "--port", str(p3), str(ob)], env=env,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        body = b""
+        for _ in range(50):
+            try:
+                _, _, body = Client(p3).get("/view/ob/Sheet.base")
+                break
+            except OSError:
+                time.sleep(0.1)
+        check(b"not configured" in body and calls() == [], "base: an `obsidian` on PATH is not used unless configured")
+    finally:
+        proc.terminate()
+        proc.wait(timeout=10)
+    out = subprocess.run([sys.executable, str(PROGRAM), "--help"], capture_output=True, text=True).stdout
+    check("--obsidian-cli" in out and "--obsidian-vault" in out, "--help documents --obsidian-cli and --obsidian-vault")
+
+
 def main():
     print(f"program under test: {PROGRAM}")
     if A.markdown is None:
@@ -1163,6 +1602,7 @@ def main():
         t_mermaid(lib)
         t_http(lib)
         t_perf(pathlib.Path(tmp).resolve())
+        t_obsidian(pathlib.Path(tmp).resolve())
         t_pdf_runtime()
     print()
     if FAILS:

@@ -2,8 +2,9 @@
 
 A read-only web viewer for an Obsidian vault, served on a host's Tailscale
 address. Notes with wikilinks, embeds, callouts and backlinks, Mermaid
-diagrams, HTML artifacts and images, with search, live reload, PDF export and
-an **Obsidian** button that opens the file in the app.
+diagrams, HTML artifacts and images, Obsidian canvases (rendered by the viewer)
+and bases (evaluated through the Obsidian CLI), with search, live reload, PDF
+export and an **Obsidian** button that opens the file in the app.
 One stdlib Python program run as a systemd user service. The vault is written
 by agents, so the server treats everything in it as untrusted.
 
@@ -39,6 +40,14 @@ To install or update other machines from this checkout, over SSH:
 
 See [Deploy to other hosts](docs/operations.md#deploy-to-other-hosts).
 
+## Canvases and bases
+
+`.canvas` files render as a pannable, zoomable board with no extra tooling.
+`.base` files need the Obsidian CLI (`--obsidian-cli`, `--obsidian-vault`);
+without it the page shows the base's YAML. See
+[Canvases and bases](docs/index.md#canvases-and-bases) and
+[Obsidian](docs/obsidian.md).
+
 ## Layout
 
 ```text
@@ -57,6 +66,7 @@ mkdocs.yml                  Site configuration
 |---|---|
 | [Getting started](docs/index.md) | Features, prerequisites, installer options |
 | [Security](docs/security.md) | Threat model and each control |
+| [Obsidian](docs/obsidian.md) | The headless Obsidian app and CLI behind bases |
 | [PDF export](docs/pdf-export.md) | Contents, the runtime, the sandbox, limits, updating |
 | [Operations](docs/operations.md) | Upgrade, logs, uninstall, troubleshooting |
 

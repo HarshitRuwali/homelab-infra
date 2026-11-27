@@ -17,6 +17,7 @@ the note anything useful.
 | A request reaches a file outside the vault or a hidden file | [File access](#file-access) |
 | Another web site makes your browser start PDF renders | [Cross-site requests](pdf-export.md#limits) |
 | A note's HTML attacks the host through the PDF renderer | [PDF rendering](#pdf-rendering) |
+| A base or its query result abuses the Obsidian CLI | [The Obsidian CLI](#the-obsidian-cli) |
 
 ## Bind address
 
@@ -90,6 +91,51 @@ jsdelivr and unpkg, and fonts from Google Fonts. The **viewing device** needs
 internet access for diagrams and code highlighting; without it, text and tables
 still render. The server itself makes no outbound calls apart from
 `tailscale whois` and, for PDFs, the local renderer. PDFs need no internet at all.
+
+## The Obsidian CLI
+
+Bases (`.base`) are evaluated by running the command given with `--obsidian-cli`
+(for example a wrapper around a headless Obsidian). The viewer runs it only in
+this shape, as an argument list with no shell:
+
+```text
+CMD base:query path=<vault-relative .base file> [view=<view name>] format=json
+```
+
+- The file is one the viewer resolved itself: a `.base` file inside the vault
+  folders, hidden paths and symlinks that leave the vault refused (the same
+  checks as every other file), and also inside `--obsidian-vault`. A base
+  outside that folder is never passed to the command.
+- `path=` and `view=` are each one argument, and the command is one program
+  path, never split into words. A view name is passed only if it is a view
+  named in the base's own YAML, so a `![[X.base#Name]]` embed cannot send an
+  arbitrary string. Without PyYAML the views cannot be listed, and the name
+  from the embed is passed as it is, so the CLI judges it. Names with control
+  characters are refused.
+- The command is never found on its own: with no `--obsidian-cli` (or
+  `ARTIFACTS_OBSIDIAN_CLI`) nothing is run.
+- No other subcommand or option is ever built from vault content, and the
+  command inherits the service's environment but gets no input on stdin.
+- A call runs in its own process group and is killed, children included, after
+  15 s or once it has written more than 8 MiB (stdout is read with that cap, not
+  collected first). At most 2 calls run at once, a request waits at most 10 s
+  for a free slot, identical calls that overlap share one run, and results are
+  cached for 5 s. One page queries at most 20 views per base and 20 base embeds
+  and spends at most 30 s in all on the CLI; the rest is shown as skipped.
+- **The output is untrusted.** The command's JSON, and its error text, come from
+  an app that evaluates vault content. Every value is HTML-escaped before it
+  reaches a page, a `path` becomes a link only if it names a file the viewer
+  itself lists, and output that is not a JSON list of objects is shown as an
+  error. A ` ```base ` code block in a note is never sent to the command.
+
+The viewer trusts the command itself: point `--obsidian-cli` only at a program
+you control. `none` turns the feature off, and then bases show their YAML only.
+
+Canvases (`.canvas`) need no tool. They are rendered by the viewer, served with
+the same sandbox and CSP as notes, and their text nodes use the notes'
+Markdown pipeline, so they carry the same properties. A link node is a link only
+for an `http` or `https` URL, with `rel="noopener noreferrer"`; colors must be a
+preset number or a `#hex` value before they reach a style.
 
 ## PDF rendering
 

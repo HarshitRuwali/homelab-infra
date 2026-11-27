@@ -124,7 +124,7 @@ check "--help no longer offers the removed --pdf-base" lacks "$OUT" "--pdf-base"
 check "--help no longer offers the removed --build-pdf-image" lacks "$OUT" "--build-pdf-image"
 check "--help does not mention docker" lacks "$OUT" "docker"
 check "--help gives the runtime download and install sizes" has "$OUT" "about 180 MB"
-for flag in --bind --port --allow-host --tailnet-user --title --install-pdf-runtime --no-apparmor --dry-run -h --help; do
+for flag in --bind --port --allow-host --tailnet-user --title --install-pdf-runtime --no-apparmor --obsidian-cli --obsidian-vault --dry-run -h --help; do
   check "--help lists $flag" has "$OUT" "$flag"
 done
 run "$HOME_DIR" "$WITH_STUBS" "$ROOT"
@@ -209,7 +209,7 @@ check "program is mode 0755" test "$(stat -c %a "$BINP")" = 755
 check "unit written" test -f "$UNITP"
 EXEC="$(grep '^ExecStart=' "$UNITP")"
 WANT="ExecStart=/usr/bin/python3 $BINP --bind 10.1.2.3 --port 7788 --allow-host box --allow-host box.example.ts.net"
-WANT+=" --tailnet-user Me@github --title \"my vault\" \"$TMP/vault dir %%x\" $TMP/other"
+WANT+=" --tailnet-user Me@github --title \"my vault\" --obsidian-cli none \"$TMP/vault dir %%x\" $TMP/other"
 check "ExecStart is exactly the expected line" test "$EXEC" = "$WANT"
 check "unit has no unreplaced placeholder" bash -c '! grep -q "__[A-Z]*__" "$1"' _ "$UNITP"
 for line in "Restart=always" "RestartSec=5" "Nice=10" "After=network-online.target" "WantedBy=default.target"; do
@@ -380,6 +380,28 @@ check "a relative runtime dir is refused" test "$RC" -eq 1
 fresh_home; aa_open
 run "$HOME_DIR" "$WITH_STUBS" --bind 10.1.2.3 --no-apparmor "$ROOT"
 check "--no-apparmor without the restriction: no sandbox warning" lacks "$OUT" "sandbox unusable"
+
+echo "obsidian cli"
+OBS="$TMP/obs bin/obsidian"; mkdir -p "$TMP/obs bin"; printf '#!/bin/sh\n' > "$OBS"; chmod +x "$OBS"
+fresh_home
+run "$HOME_DIR" "$WITH_STUBS" --dry-run --bind 10.1.2.3 "$ROOT"
+check "without --obsidian-cli the unit turns Bases off" has "$OUT" "--obsidian-cli none"
+run "$HOME_DIR" "$WITH_STUBS" --dry-run --bind 10.1.2.3 --obsidian-cli none "$ROOT"
+check "--obsidian-cli none is accepted" test "$RC" -eq 0
+check "--obsidian-cli none turns Bases off" has "$OUT" "--obsidian-cli none"
+run "$HOME_DIR" "$WITH_STUBS" --dry-run --bind 10.1.2.3 --obsidian-cli "$OBS" --obsidian-vault "$ROOT2" "$ROOT"
+check "--obsidian-cli and --obsidian-vault exit 0" test "$RC" -eq 0
+check "the unit passes --obsidian-cli quoted for systemd" has "$OUT" "--obsidian-cli \"$OBS\""
+check "the unit passes --obsidian-vault" has "$OUT" "--obsidian-vault $ROOT2"
+run "$HOME_DIR" "$WITH_STUBS" --dry-run --bind 10.1.2.3 --obsidian-cli relative/obsidian "$ROOT"
+check "a relative --obsidian-cli exits 2" test "$RC" -eq 2
+run "$HOME_DIR" "$WITH_STUBS" --dry-run --bind 10.1.2.3 --obsidian-cli "$TMP/missing" "$ROOT"
+check "a missing --obsidian-cli fails" test "$RC" -eq 1
+check "a missing --obsidian-cli points at setup.sh" has "$OUT" "obsidian/setup.sh"
+run "$HOME_DIR" "$WITH_STUBS" --dry-run --bind 10.1.2.3 --obsidian-vault "$ROOT2" "$ROOT"
+check "--obsidian-vault without --obsidian-cli exits 2" test "$RC" -eq 2
+run "$HOME_DIR" "$WITH_STUBS" --dry-run --bind 10.1.2.3 --obsidian-cli "$OBS" --obsidian-vault "$TMP/missing" "$ROOT"
+check "a missing --obsidian-vault fails" test "$RC" -eq 1
 
 echo "no docker"
 check "install.sh keeps no docker call or check" bash -c '! grep -i docker "$1" | grep -v "was removed"' _ "$HERE/install.sh"

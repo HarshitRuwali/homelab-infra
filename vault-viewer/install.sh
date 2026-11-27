@@ -22,7 +22,8 @@ APPARMOR_PARSER="${ARTIFACTS_APPARMOR_PARSER:-apparmor_parser}"
 usage() {
   cat <<'USAGE'
 usage: install.sh --bind ADDR [--port N] [--allow-host NAME]... [--tailnet-user LOGIN]
-                  [--title NAME] [--install-pdf-runtime] [--no-apparmor] [--dry-run] ROOT...
+                  [--title NAME] [--install-pdf-runtime] [--no-apparmor]
+                  [--obsidian-cli CMD] [--obsidian-vault DIR] [--dry-run] ROOT...
        install.sh -h | --help
 
 Install the vault viewer (artifacts.py) and run it as the systemd user unit
@@ -42,6 +43,10 @@ artifacts.service, serving the vault folders ROOT....
   --no-apparmor         do not install the AppArmor profile that Chromium's
                         sandbox needs on Ubuntu 23.10+ (it is installed with
                         sudo when the kernel restricts user namespaces)
+  --obsidian-cli CMD    the Obsidian CLI the viewer runs to show Bases, an
+                        absolute path such as ~/.local/bin/obsidian from
+                        obsidian/setup.sh, or "none" (default: none)
+  --obsidian-vault DIR  the vault that Obsidian has open (default: the first ROOT)
   --dry-run             print the unit and the actions, change nothing
   -h, --help            show this help
 
@@ -83,6 +88,8 @@ PORT=7777
 ALLOW_HOSTS=()
 TAILNET_USER=""
 TITLE=""
+OBSIDIAN_CLI=""
+OBSIDIAN_VAULT=""
 INSTALL_PDF=0
 NO_APPARMOR=0
 DRY_RUN=0
@@ -91,7 +98,7 @@ ROOTS_IN=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --bind|--port|--allow-host|--tailnet-user|--title)
+    --bind|--port|--allow-host|--tailnet-user|--title|--obsidian-cli|--obsidian-vault)
       [ "$#" -ge 2 ] || die_usage "$1 needs a value"
       no_control "$1 value" "$2"
       case "$1" in
@@ -100,6 +107,8 @@ while [ "$#" -gt 0 ]; do
         --allow-host) ALLOW_HOSTS+=("$2") ;;
         --tailnet-user) TAILNET_USER="$2" ;;
         --title) TITLE="$2" ;;
+        --obsidian-cli) OBSIDIAN_CLI="$2" ;;
+        --obsidian-vault) OBSIDIAN_VAULT="$2" ;;
       esac
       shift 2 ;;
     --install-pdf-runtime) INSTALL_PDF=1; shift ;;
@@ -141,6 +150,20 @@ for r in "${ROOTS_IN[@]}"; do
   ROOTS+=("$(realpath "$r")")
 done
 
+# Bases are evaluated by the Obsidian app through its CLI (obsidian/setup.sh
+# installs a wrapper). Off unless asked for; "none" is the same as leaving it out.
+[ "$OBSIDIAN_CLI" != none ] || OBSIDIAN_CLI=""
+if [ -n "$OBSIDIAN_CLI" ]; then
+  [[ "$OBSIDIAN_CLI" == /* ]] || die_usage "--obsidian-cli must be an absolute path or none, got: $OBSIDIAN_CLI"
+  [ -x "$OBSIDIAN_CLI" ] || { echo "install.sh: --obsidian-cli is not an executable file: $OBSIDIAN_CLI" >&2
+    echo "            set it up first: $HERE/obsidian/setup.sh VAULT" >&2; exit 1; }
+fi
+if [ -n "$OBSIDIAN_VAULT" ]; then
+  [ -n "$OBSIDIAN_CLI" ] || die_usage "--obsidian-vault needs --obsidian-cli"
+  [ -d "$OBSIDIAN_VAULT" ] || { echo "install.sh: not a directory: $OBSIDIAN_VAULT" >&2; exit 1; }
+  OBSIDIAN_VAULT="$(realpath "$OBSIDIAN_VAULT")"
+fi
+
 # --- preflight ---------------------------------------------------------------
 if ! "$PYTHON" -c 'import markdown' 2>/dev/null; then
   echo "warning: $PYTHON cannot import markdown, notes will render as plain text" >&2
@@ -160,6 +183,12 @@ for h in "${ALLOW_HOSTS[@]+"${ALLOW_HOSTS[@]}"}"; do
 done
 [ -z "$TAILNET_USER" ] || ARGS+=" --tailnet-user $(unit_quote "$TAILNET_USER")"
 [ -z "$TITLE" ] || ARGS+=" --title $(unit_quote "$TITLE")"
+if [ -n "$OBSIDIAN_CLI" ]; then
+  ARGS+=" --obsidian-cli $(unit_quote "$OBSIDIAN_CLI")"
+  [ -z "$OBSIDIAN_VAULT" ] || ARGS+=" --obsidian-vault $(unit_quote "$OBSIDIAN_VAULT")"
+else
+  ARGS+=" --obsidian-cli none"
+fi
 for r in "${ROOTS[@]}"; do
   ARGS+=" $(unit_quote "$r")"
 done

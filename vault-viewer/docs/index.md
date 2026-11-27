@@ -12,7 +12,8 @@ input. See [Security](security.md) for the model.
 - **Renders the whole vault.** Notes with `[[wikilinks]]`, `![[embeds]]`,
   callouts, frontmatter and backlinks; Mermaid diagrams; self-contained HTML
   artifacts; SVG and raster images; text sources such as `.d2`, `.json` and
-  `.py`; `.zip` archives, which download instead of previewing.
+  `.py`; `.zip` archives, which download instead of previewing. Obsidian
+  canvases and bases render too; see [Canvases and bases](#canvases-and-bases).
 - **Navigates it.** A file tree with a "recent" list and search on the left,
   the selected file on the right. The page picks up changes on disk within
   about 12 seconds (it checks every 10 s, skips the check while its tab is
@@ -40,10 +41,48 @@ Keyboard shortcuts in the viewer:
 | `Alt` + `Left` | Back |
 | `Esc` | Clear search, close the drawer or the full-screen diagram |
 
+## Canvases and bases
+
+**Canvas** (`.canvas`, [JSON Canvas](https://jsoncanvas.org/spec/1.0/)) files
+open as a board you can drag to pan and zoom with the wheel, a pinch or the
+buttons; it fits the view on load and works on a phone. Text nodes go through the same Markdown pipeline as notes (wikilinks,
+image embeds, code, Mermaid). File nodes show a note's title and a short
+excerpt and link to it, images show the image. Link nodes are links only for
+`http` and `https` URLs. Colors, groups, edge arrows and labels are drawn.
+A canvas embedded in a note (`![[Board.canvas]]`) is a card that opens it, and
+search matches a canvas's text, group labels and edge labels. `/raw/` still
+serves the JSON. A file that is not valid JSON Canvas shows a message and a
+link to the raw file.
+
+**Base** (`.base`) files are queries that only Obsidian can evaluate, so the
+viewer asks the Obsidian CLI (`base:query`) and shows each view as a table, with
+the view's type in its heading, a row count, and the `path` column as a link to
+the note. `![[My.base]]` in a note shows every view inline and
+`![[My.base#View name]]` one view; a ` ```base ` code block in a note is never
+evaluated. Results are cached for 5 seconds. When the CLI is not configured, fails
+or the base is outside the Obsidian vault, the page says why and shows the base's
+YAML instead. Setting up the Obsidian app and the CLI is described in
+[Obsidian](obsidian.md).
+
+| Option | Meaning |
+|---|---|
+| `--obsidian-cli CMD` | The program that evaluates bases, one path (it is not split into words). Off unless you set it: an `obsidian` on `PATH` is never picked up on its own, and without this option bases show their YAML only. `none` also turns it off. Environment: `ARTIFACTS_OBSIDIAN_CLI`. |
+| `--obsidian-vault DIR` | The vault folder the CLI's app has open, and the base for the paths it is given. Only `.base` files inside it are evaluated. Defaults to the first vault folder. Environment: `ARTIFACTS_OBSIDIAN_VAULT`. |
+
+PyYAML (`python3-yaml`) is optional: with it the viewer lists a base's views
+and queries each one; without it only the base's default view is queried, and
+`![[My.base#View name]]` passes that name to the CLI, which reports an unknown
+view. One page evaluates at most 20 views per base and 20 base embeds, and
+spends at most 30 seconds in all on the CLI; what is left over is marked on
+the page. In a canvas, a file node's path is relative to the Obsidian vault:
+`--obsidian-vault` when the canvas is inside it, otherwise the nearest folder
+above the canvas that holds a `.obsidian` folder, otherwise the vault folder
+being served. Canvases and bases have no PDF export.
+
 ## Opening files in Obsidian
 
-The **Obsidian** button (**App** on a phone) opens the current note or image
-with an `obsidian://open` link. HTML artifacts, text files and archives have no
+The **Obsidian** button (**App** on a phone) opens the current note, image,
+canvas or base with an `obsidian://open` link. HTML artifacts, text files and archives have no
 button: Obsidian does not show them, so they stay in the viewer. The device
 needs the Obsidian app with a copy of the vault, for example synced through
 Nextcloud.
@@ -76,6 +115,7 @@ Both are stored in this browser only and never sent to the server.
 | Everything | `/usr/bin/python3` (the unit runs it by that path) and `systemd --user` |
 | Notes rendered as HTML | `python3-markdown` (Debian and Ubuntu package name). Optional: without it, notes render as plain text and the service logs `python3-markdown is missing` |
 | `--tailnet-user` | The `tailscale` CLI, logged in on the host |
+| Bases (`.base`) | The Obsidian CLI (`--obsidian-cli`), see [Obsidian](obsidian.md). Optional `python3-yaml` to list a base's views |
 | PDF export | The PDF runtime (installed with `--install-pdf-runtime`; no docker), and on Ubuntu 23.10 and later an AppArmor profile, which the installer writes with `sudo` |
 
 The installer installs no packages. By default it writes only under your home

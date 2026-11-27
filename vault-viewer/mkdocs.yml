@@ -58,4 +58,5 @@ nav:
   - Home: index.md
   - Security: security.md
   - PDF export: pdf-export.md
+  - Obsidian CLI and Bases: obsidian.md
   - Operations: operations.md
