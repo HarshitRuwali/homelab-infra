@@ -7,6 +7,12 @@
 
 name: open-memory-stack
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   qdrant:
     # Qdrant upgrades its storage only one minor release at a time. Before
@@ -16,6 +22,7 @@ services:
     image: qdrant/qdrant:latest
     container_name: open-memory-qdrant
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${QDRANT_HTTP_PORT:?QDRANT_HTTP_PORT must be set}:6333"
       - "${QDRANT_GRPC_PORT:?QDRANT_GRPC_PORT must be set}:6334"
@@ -38,6 +45,7 @@ services:
     image: postgres:16-alpine
     container_name: open-memory-postgres
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${POSTGRES_HOST_PORT:?POSTGRES_HOST_PORT must be set}:5432"
     volumes:
@@ -65,6 +73,7 @@ services:
     image: redis:8-alpine
     container_name: open-memory-redis
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${REDIS_HOST_PORT:?REDIS_HOST_PORT must be set}:6379"
     volumes:
@@ -90,6 +99,7 @@ services:
       context: ./api-service
     container_name: open-memory-api
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${FASTAPI_PORT:?FASTAPI_PORT must be set}:${APP_PORT:?APP_PORT must be set}"
     volumes:
@@ -109,6 +119,7 @@ services:
       AI_VM_HOST: ${AI_VM_HOST:?AI_VM_HOST must be set}
       LLM_PORT: ${LLM_PORT:?LLM_PORT must be set}
       EMBED_PORT: ${EMBED_PORT:?EMBED_PORT must be set}
+      EMBED_MODEL: ${EMBED_MODEL:-}
       APP_HOST: ${APP_HOST:?APP_HOST must be set}
       APP_PORT: ${APP_PORT:?APP_PORT must be set}
       LOG_LEVEL: ${LOG_LEVEL:?LOG_LEVEL must be set}
@@ -123,7 +134,11 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:${APP_PORT:?APP_PORT must be set}/health"]
+      test:
+        - CMD
+        - python
+        - -c
+        - "import os,urllib.request;urllib.request.urlopen(f'http://localhost:{os.environ[\"APP_PORT\"]}/health',timeout=5)"
       interval: 30s
       timeout: 10s
       retries: 3

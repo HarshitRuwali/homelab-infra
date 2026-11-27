@@ -20,7 +20,7 @@ The service builds two base URLs from these and proxies to them:
 
 | Setting | Becomes | Used by |
 |---|---|---|
-| `AI_VM_HOST:EMBED_PORT` | `POST /embedding` | `/embed`, and every `/memory` write and search |
+| `AI_VM_HOST:EMBED_PORT` | `POST /embedding`, or `POST /v1/embeddings` when `EMBED_MODEL` is set | `/embed`, and every `/memory` write and search |
 | `AI_VM_HOST:LLM_PORT` | `POST /v1/chat/completions` | `/llm/infer` |
 
 `host.docker.internal` reaches the Docker host from inside a container. On

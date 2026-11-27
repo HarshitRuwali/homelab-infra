@@ -49,6 +49,46 @@ curl -X POST http://localhost:8088/memory/store \
 
 ---
 
+## `POST /memory/store/batch`
+
+Embed and upsert up to 100 chunks in one request. Each entry is a full
+`POST /memory/store` body and keeps its own scope and metadata; the result is
+the same as storing them one by one, with far less work per chunk: one embed
+call per 25 chunks, one Qdrant upsert, one `memory_chunks` upsert, and one
+`memory_files` upsert per distinct (agent, project, file).
+
+**Request body:**
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `chunks` | object[] | yes | 1 to 100 entries, each shaped like the `/memory/store` body |
+
+If two entries resolve to the same chunk (same agent, project, `file_path` and
+`chunk_index`), the later entry wins. An embedding failure (service down, wrong
+vector size) returns 502 before anything is written.
+
+**Response (201):**
+
+| Field | Type | Description |
+|---|---|---|
+| `stored` | integer | Number of entries in the request |
+| `chunks` | object[] | One `/memory/store` response per entry, in request order |
+
+**Example:**
+
+```bash
+curl -X POST http://localhost:8088/memory/store/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chunks": [
+      {"file_path": "notes/2026-08-13.md", "chunk_index": 0, "chunk_text": "First chunk."},
+      {"file_path": "notes/2026-08-13.md", "chunk_index": 1, "chunk_text": "Second chunk."}
+    ]
+  }'
+```
+
+---
+
 ## `POST /memory/search`
 
 Return the top-k most semantically similar chunks to a natural-language query.

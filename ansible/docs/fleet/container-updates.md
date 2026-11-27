@@ -2,7 +2,7 @@
 
 Pulls new registry images and rebuilds local images with fresh base images for
 every Docker Compose project on a host. It applies changed images, checks for
-restart loops, then reclaims layers that fell out of use.
+restart loops, then reclaims layers and build cache that fell out of use.
 
 ```bash
 ansible-playbook playbooks/docker-updates.yml                        # configure, no pull
@@ -96,7 +96,7 @@ flowchart TD
     H -->|yes| I["count recreated containers"]
     H -->|no| Z
     I --> J["wait 60s, check for restart loops"]
-    J --> K["docker image prune -f"]
+    J --> K["docker image prune -f<br/>docker builder prune -f --filter until=168h"]
     K --> L["write fleet-docker.prom"]
 ```
 
@@ -176,17 +176,34 @@ absent from the current Compose model. Preserve them for manual review.
 local, so its output is not a reliable signal. Comparing the image IDs backing
 the project's containers before and after is.
 
-### Pruning is dangling-only
+### Pruning is dangling-only, plus old build cache
 
 ```bash
-docker image prune -f     # yes: layers no longer referenced by any tag
-docker image prune -a     # NO
+docker image prune -f                          # yes: layers no longer referenced by any tag
+docker builder prune -f --filter until=168h    # yes: unused build cache older than a week
+docker image prune -a                          # NO
 ```
 
 !!! danger "Never `prune -a`"
     It deletes any image with no **running** container, which includes the
     image of anything deliberately stopped. That turns a routine cleanup into
     a multi-gigabyte re-download the next time you start it.
+
+Local image builds (the Nextcloud build, the music images, the s3-backup
+runner) leave BuildKit cache that `docker image prune` never removes. On one
+host it reached 6.1 GB, with root going from 59% to 80% of a 38 GB disk in six
+days. After a successful update, with `docker_update_prune` on, the script
+runs `docker builder prune -f --filter until=<age>`, which removes only
+**unused** cache entries older than `docker_update_build_cache_max_age`
+(`168h` by default). A week keeps recent cache so routine rebuilds stay fast.
+Set the variable to `""` to turn this off. The prune never uses `--all`-style
+options that would remove cache in use.
+
+The script logs a `build cache: Total ...` line next to the image prune's
+`Total reclaimed space` line, and a failing prune logs an error and fails the
+run like the image prune. Both are parsed from Docker's human-readable size
+(`docker builder prune` prints `Total:` and `docker image prune` prints
+`Total reclaimed space:`) and summed into `fleet_docker_image_bytes_reclaimed`.
 
 ## Verification after the run
 
@@ -215,7 +232,7 @@ Metrics written to `fleet-docker.prom`:
 | `fleet_docker_containers_recreated` | containers moved to a new image |
 | `fleet_docker_containers_restarting` | stuck restarting after the update |
 | `fleet_docker_containers_unhealthy` | failing their healthcheck; any at all fails the run |
-| `fleet_docker_image_bytes_reclaimed` | freed by pruning |
+| `fleet_docker_image_bytes_reclaimed` | freed by pruning dangling images and old build cache |
 
 Two alerts consume them: `fleet-docker-update-failed` (critical) and
 `fleet-docker-update-stale` (warning at 50 hours).

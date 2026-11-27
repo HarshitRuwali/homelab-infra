@@ -6,6 +6,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 
 from app.config import get_settings
+from app.http_client import get_http_client
 from app.schemas import EmbedRequest, EmbedResponse
 
 router = APIRouter(prefix="/embed", tags=["embed"])
@@ -15,20 +16,19 @@ settings = get_settings()
 @router.post("", response_model=EmbedResponse)
 async def embed(request: EmbedRequest) -> EmbedResponse:
     """Generate a float32 embedding vector from the AI VM embedding model."""
-    url = f"{settings.embed_url}/embedding"
-    payload = {"content": request.text}
+    url, payload = settings.embed_request(request.text)
 
-    async with httpx.AsyncClient(timeout=30) as client:
-        try:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Embed model returned {exc.response.status_code}: {exc.response.text}",
-            )
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"Cannot reach AI VM: {exc}")
+    client = get_http_client()
+    try:
+        resp = await client.post(url, json=payload, timeout=30)
+        resp.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Embed model returned {exc.response.status_code}: {exc.response.text}",
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"Cannot reach AI VM: {exc}")
 
     data = resp.json()
     # Handle various llama.cpp embed response formats:

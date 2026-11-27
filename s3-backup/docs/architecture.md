@@ -11,14 +11,30 @@ Ubuntu.
 ```
 host: /opt/s3-backup/bin/s3-backup   (bash, root)
   |
-  |-- docker exec ---> immich_postgres   pg_dumpall  ---> staging/*.sql.gz
-  |-- docker exec ---> nextcloud-db      mysqldump   ---> staging/*.sql.gz
+  |-- docker exec ---> immich_postgres   pg_dumpall  ---> staging/*.sql
+  |-- docker exec ---> nextcloud-db      mysqldump   ---> staging/*.sql
   |-- docker exec ---> nextcloud         occ maintenance:mode
   |
   '-- docker run ----> s3-backup-runner
                          |-- restic backup  staging/ + nextcloud data/config  --> s3://BUCKET/restic/
                          '-- rclone sync    immich library/profile/upload     --> s3://BUCKET/immich/
 ```
+
+### Why dumps are stored uncompressed
+
+restic splits files into content-defined chunks, deduplicates them, and
+compresses what it stores (repository format v2, zstd). A plain SQL dump
+therefore costs only its changed chunks each night. A `.sql.gz` changes from
+the first differing byte to the end of the stream, so every night would be
+stored in full. The price is local staging space: an uncompressed dump is
+larger than its gzip, and `STAGING_KEEP` dumps (default 2) plus the one being
+written live in `STAGING_DIR`. Snapshots taken before this change hold
+`.sql.gz`; restores and the drill read both forms.
+
+An older repository may still be format v1 (no compression, dedupe still
+works). Check with `sudo s3-backup snapshots` and, inside the runner,
+`restic cat config` (`"version": 2`); `restic migrate upgrade_repo_v2` upgrades
+it in place.
 
 ### Why dumps run inside the database containers
 

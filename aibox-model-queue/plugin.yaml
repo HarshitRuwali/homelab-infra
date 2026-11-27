@@ -1,5 +1,5 @@
 name: aibox-model-queue
 version: 0.2.0  # x-release-please-version
-description: "Serializes inference across a single-GPU LM Studio host so profiles bound to different models queue instead of racing. Two concurrent requests for different models otherwise kill one with 'Model is unloaded'; a model fallback would 'fix' that by silently answering on the weaker model, which defeats the point of binding a room to a stronger one."
+description: "Proxy in front of the AI box's llama.cpp llama-server (default :8090). Serializes requests for different models (a no-op with one resident model), cleans tool schemas the grammar compiler rejects, and translates the Hermes reasoning off-switch. A model fallback is deliberately not used: it would silently answer on a weaker model."
 author: harshit
 kind: standalone

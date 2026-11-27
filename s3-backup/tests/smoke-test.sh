@@ -139,10 +139,11 @@ RC=$?
 check '[[ $RC -eq 0 ]]' "s3-backup run exits 0"
 [[ $RC -ne 0 ]] && { echo "--- output ---"; cat "$T/out.log"; }
 
-check 'ls "$T"/staging/immich-db-*.sql.gz >/dev/null 2>&1'    "Immich dump written to staging"
-check 'ls "$T"/staging/nextcloud-db-*.sql.gz >/dev/null 2>&1' "Nextcloud dump written to staging"
-check 'gzip -t "$T"/staging/immich-db-*.sql.gz'               "Immich dump passes gzip integrity"
-check 'zcat "$T"/staging/immich-db-*.sql.gz | tail -1 | grep -q "dump complete"' \
+check 'ls "$T"/staging/immich-db-*.sql >/dev/null 2>&1'    "Immich dump written to staging"
+check 'ls "$T"/staging/nextcloud-db-*.sql >/dev/null 2>&1' "Nextcloud dump written to staging"
+check '! ls "$T"/staging/*.sql.gz >/dev/null 2>&1' \
+      "dumps are stored uncompressed (a gzip stream would defeat restic dedupe)"
+check 'tail -1 "$T"/staging/immich-db-*.sql | grep -q "dump complete"' \
       "Immich dump has a completion trailer"
 
 check '[[ -f "$FAKE_DOCKER_STATE/repo" ]]'       "restic repo was initialised on first use"
@@ -165,6 +166,68 @@ check 'grep -q "single-transaction" "$FAKE_DOCKER_LOG"' \
       "mysqldump used --single-transaction"
 check 'grep -q "pg_dumpall" "$FAKE_DOCKER_LOG"' \
       "Immich used pg_dumpall, not pg_dump"
+
+echo
+echo "== a dump without its completion trailer fails the run =="
+rm -rf "$T/staging"/*; : > "$FAKE_DOCKER_LOG"
+FAKE_DUMP_TRUNCATED=1 run_backup run
+check '[[ $? -ne 0 ]]' "a truncated dump aborts the run"
+check 'grep -q "no completion trailer" "$T/out.log"' "  ...naming the missing trailer"
+check '! ls "$T"/staging/*.sql >/dev/null 2>&1' "  ...and the bad dump is not left in staging"
+: > "$FAKE_DOCKER_LOG"; run_backup run   # restore a good staging state for later suites
+
+echo
+echo "== dump_complete tolerates trailing lines after the marker =="
+# pg_dump 17.6+ style: marker, then "--", blank, \unrestrict, blank, plus extras.
+for pad in 0 6; do
+  { echo "SELECT 1;"; echo "-- PostgreSQL database dump complete"; echo "--"; echo
+    echo '\unrestrict abc123'; echo; for _ in $(seq 1 "$pad"); do echo "-- x"; done; } > "$T/trailer.sql"
+  check "( . \"$REPO/bin/lib/common.sh\"; dump_complete \"$T/trailer.sql\" )" \
+        "marker with $((pad + 4)) lines after it is accepted (plain)"
+done
+gzip -kf "$T/trailer.sql"
+check "( . \"$REPO/bin/lib/common.sh\"; dump_complete \"$T/trailer.sql.gz\" )" "same trailer accepted in a legacy .gz"
+{ echo "-- PostgreSQL database dump complete"; for _ in $(seq 1 25); do echo "x"; done; } > "$T/trailer.sql"
+check '! ( . "$REPO/bin/lib/common.sh"; dump_complete "$T/trailer.sql" )' "marker 25 lines from the end is rejected"
+rm -f "$T"/trailer.sql*
+
+echo
+echo "== staging pruning covers plain and legacy gzip dumps =="
+for n in 1 2 3 4; do
+  touch -d "2025-01-0${n}" "$T/staging/immich-db-2025010${n}T000000Z.sql.gz"
+done
+run_backup run
+check '[[ $(ls "$T"/staging/immich-db-* | wc -l) -eq 2 ]]' \
+      "only STAGING_KEEP dumps remain across both formats"
+check '! ls "$T"/staging/immich-db-*.sql.gz >/dev/null 2>&1' \
+      "  ...and the legacy .sql.gz files were the ones removed"
+
+echo
+echo "== retention =="
+check 'grep -E "restic .*forget " "$FAKE_DOCKER_LOG" | grep -qE -- "--group-by host( |$)"' \
+      "forget groups by host only, so the keep policy spans nights"
+check '! grep -E "restic .*forget " "$FAKE_DOCKER_LOG" | grep -qE -- "--group-by [a-z,]*(tags|paths)"' \
+      "  ...not by tags (every snapshot has its own date tag) or paths"
+check 'grep -E "restic .*backup " "$FAKE_DOCKER_LOG" | grep -qE -- "--tag [0-9]{4}-?[0-9]{2}-?[0-9]{2}"' \
+      "backups still carry the per-run date tag"
+
+echo
+echo "== Immich comparison mode =="
+sync_args() { grep -E "rclone .*sync " "$FAKE_DOCKER_LOG" | head -1; }
+: > "$FAKE_DOCKER_LOG"; run_backup run
+check 'sync_args | grep -q -- "--size-only"' "default compares by size only (no per-object HEAD)"
+check 'sync_args | grep -q -- "--fast-list"' "  ...with --fast-list"
+for mode in checksum modtime; do
+  sed "s|^IMMICH_SYNC_DIRS=.*|IMMICH_SYNC_DIRS=\"library profile\"\nRCLONE_COMPARE=$mode|" "$T/backup.env" > "$T/cmp.env"; chmod 600 "$T/cmp.env"
+  : > "$FAKE_DOCKER_LOG"; "$BK" --config "$T/cmp.env" run >"$T/cmp.log" 2>&1
+  case "$mode" in
+    checksum) check 'sync_args | grep -q -- "--checksum" && ! sync_args | grep -q -- "--size-only"' "RCLONE_COMPARE=checksum uses --checksum" ;;
+    modtime)  check '! sync_args | grep -qE -- "--(checksum|size-only)"' "RCLONE_COMPARE=modtime adds no comparison flag" ;;
+  esac
+done
+sed "s|^IMMICH_SYNC_DIRS=.*|RCLONE_COMPARE=bogus|" "$T/backup.env" > "$T/cmp.env"
+"$BK" --config "$T/cmp.env" preflight >"$T/cmp.log" 2>&1
+check '[[ $? -ne 0 ]] && grep -q "RCLONE_COMPARE must be" "$T/cmp.log"' "an unknown RCLONE_COMPARE value is rejected"
 
 echo
 echo "== restic invocation =="
@@ -241,12 +304,18 @@ echo "== restores default to a fresh directory, never over live data =="
 rm -rf "$RESTORE_ROOT_T"
 rst db immich
 check '[[ $? -eq 0 ]]' "db immich succeeds"
-check 'ls "$RESTORE_ROOT_T"/*-db-immich/var/lib/s3-backup/staging/immich-db-*.sql.gz >/dev/null 2>&1' \
+check 'ls "$RESTORE_ROOT_T"/*-db-immich/var/lib/s3-backup/staging/immich-db-*.sql >/dev/null 2>&1' \
       "  ...into a timestamped directory under RESTORE_ROOT"
 check 'grep -q "verified immich-db" "$T/rst.log"' "  ...having verified the dump it restored"
 check 'grep -q "docker compose down -v" "$T/rst.log"' \
       "  ...and printed the load procedure, including the required volume wipe"
 check 'grep -q "set_config" "$T/rst.log"' "  ...including the search_path sed Immich needs"
+check 'grep -qE "^  cat .*immich-db-.*\.sql " "$T/rst.log"' "  ...streaming the plain dump with cat"
+
+rm -rf "$RESTORE_ROOT_T"
+FAKE_RESTORE_LEGACY_GZ=1 rst db immich
+check '[[ $? -eq 0 ]]' "a legacy .sql.gz snapshot still restores"
+check 'grep -qE "gunzip -c .*immich-db-.*\.sql\.gz" "$T/rst.log"' "  ...and the printed load command uses gunzip"
 
 rst db nextcloud
 check 'grep -q "DROP DATABASE IF EXISTS nextcloud" "$T/rst.log"' \
@@ -254,14 +323,17 @@ check 'grep -q "DROP DATABASE IF EXISTS nextcloud" "$T/rst.log"' \
 
 echo
 echo "== a corrupt or truncated dump is caught, not handed back as good =="
-FAKE_RESTORE_CORRUPT=1 rst db immich
-check '[[ $? -ne 0 ]]' "a dump failing gzip integrity aborts the restore"
+rm -rf "$RESTORE_ROOT_T"; FAKE_RESTORE_CORRUPT=1 rst db immich
+check '[[ $? -ne 0 ]]' "a legacy dump failing gzip integrity aborts the restore"
 check 'grep -q "gzip integrity" "$T/rst.log"' "  ...saying which check failed"
 
-FAKE_RESTORE_TRUNCATED=1 rst db immich
-check '[[ $? -ne 0 ]]' "a valid-gzip but truncated dump is also rejected"
+rm -rf "$RESTORE_ROOT_T"; FAKE_RESTORE_TRUNCATED=1 rst db immich
+check '[[ $? -ne 0 ]]' "a truncated dump is also rejected"
 check 'grep -q "no completion trailer" "$T/rst.log"' \
-      "  ...caught by the completion trailer, which gzip alone would miss"
+      "  ...caught by the completion trailer"
+rm -rf "$RESTORE_ROOT_T"; FAKE_RESTORE_LEGACY_GZ=1 FAKE_RESTORE_TRUNCATED=1 rst db immich
+check '[[ $? -ne 0 ]] && grep -q "no completion trailer" "$T/rst.log"' \
+      "a valid-gzip but truncated legacy dump is rejected by the trailer, which gzip alone would miss"
 
 echo
 echo "== dry run writes nothing =="
@@ -278,6 +350,20 @@ check 'grep -q "restic snapshots" "$T/rst.log"' "  ...showing restic snapshots"
 check 'grep -q "Immich mirror" "$T/rst.log"' "  ...and the Immich mirror"
 
 echo
+echo "############ s3-backup-restore-drill ############"
+DRILL="$REPO/bin/s3-backup-restore-drill"
+drill() { "$DRILL" --config "$T/backup.env" >"$T/drill.log" 2>&1; }
+drill
+check '[[ $? -eq 0 ]]' "the drill passes on a current (uncompressed) snapshot"
+check 'grep -q "dump trailer present: immich-db" "$T/drill.log"' "  ...checking the trailer of the plain dump"
+check '! grep -q "gzip integrity" "$T/drill.log"' "  ...without a gzip check, which a plain dump has no container for"
+FAKE_RESTORE_LEGACY_GZ=1 drill
+check '[[ $? -eq 0 ]] && grep -q "gzip integrity: immich-db" "$T/drill.log"' \
+      "the drill still passes on a legacy .sql.gz snapshot, checking its gzip stream"
+FAKE_RESTORE_TRUNCATED=1 drill
+check '[[ $? -ne 0 ]] && grep -q "no completion trailer" "$T/drill.log"' "the drill fails on a dump with no trailer"
+
+echo
 echo "############ Immich only (no Nextcloud) ############"
 # Reproduces the real-server failure: s3-backup-discover finds no Nextcloud,
 # writes NEXTCLOUD_DB_ENGINE="UNKNOWN", and every command then refused to run
@@ -289,7 +375,7 @@ sed -e 's|^NEXTCLOUD_ENABLED=.*|NEXTCLOUD_ENABLED=0|' \
 chmod 600 "$NOCLOUD"
 rm -rf "$FAKE_DOCKER_STATE"; mkdir -p "$FAKE_DOCKER_STATE"
 : > "$FAKE_DOCKER_LOG"
-rm -f "$T"/staging/*.sql.gz   # earlier suites left dumps here
+rm -f "$T"/staging/*.sql "$T"/staging/*.sql.gz   # earlier suites left dumps here
 nc_off() { "$BK" --config "$NOCLOUD" "$@" >"$T/nc.log" 2>&1; }
 
 nc_off preflight
@@ -300,8 +386,8 @@ nc_off run
 RC=$?
 check '[[ $RC -eq 0 ]]' "a full run succeeds with Immich only"
 [[ $RC -ne 0 ]] && { echo "--- output ---"; cat "$T/nc.log"; }
-check 'ls "$T"/staging/immich-db-*.sql.gz >/dev/null 2>&1' "Immich database still dumped"
-check '! ls "$T"/staging/nextcloud-db-*.sql.gz >/dev/null 2>&1' "no Nextcloud dump attempted"
+check 'ls "$T"/staging/immich-db-*.sql >/dev/null 2>&1' "Immich database still dumped"
+check '! ls "$T"/staging/nextcloud-db-*.sql >/dev/null 2>&1' "no Nextcloud dump attempted"
 check '! grep -q "maintenance:mode" "$FAKE_DOCKER_LOG"' "Nextcloud maintenance mode never touched"
 check '! grep -q "mysqldump" "$FAKE_DOCKER_LOG"' "mysqldump never run"
 check '[[ -f "$FAKE_DOCKER_STATE/sync-ran" ]]' "Immich mirror still synced"

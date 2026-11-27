@@ -30,7 +30,8 @@ release at a time. On an existing install more than one minor behind, run
 `docker compose up -d`; the script's header explains how to pick the tags.
 
 You also need an embedding model reachable at `AI_VM_HOST:EMBED_PORT` exposing
-llama.cpp's native `POST /embedding` — the stack embeds nothing itself. Without
+llama.cpp's native `POST /embedding`, or an OpenAI-style `POST /v1/embeddings`
+with `EMBED_MODEL` set to its model id (LM Studio) — the stack embeds nothing itself. Without
 one, `/health` is green but every write returns 502.
 
 Full walkthrough: [Getting started](docs/getting-started/index.md).

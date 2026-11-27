@@ -118,9 +118,10 @@ sudo s3-backup-restore db immich
 sudo s3-backup-restore db nextcloud
 ```
 
-This restores the newest dump, verifies it (gzip integrity **and** the
-completion trailer, which is what catches a dump truncated mid-write), and
-prints the exact load commands for your containers and file paths.
+This restores the newest dump (`.sql`, or `.sql.gz` from snapshots taken
+before dumps went uncompressed), verifies it (the completion trailer, which is
+what catches a dump truncated mid-write, plus gzip integrity for a legacy
+`.sql.gz`), and prints the exact load commands for your containers and file paths.
 
 **Loading is deliberately not automated.** For Immich it requires destroying
 the Postgres volume first, and a script that gets that wrong is unrecoverable.

@@ -14,8 +14,8 @@ Alloy, behind a reverse proxy that authenticates the ingest paths.
 
 | Shape | When | Guide |
 |---|---|---|
-| **Direct LXC** | a Debian or Ubuntu LXC on Proxmox, native systemd units. What this fleet actually runs. | [Central stack install](install.md#direct-lxc) |
-| **Docker Compose** | anywhere with Docker, and the quicker way to try it. | [Central stack install](install.md#docker-compose) |
+| **Direct LXC** | a Debian or Ubuntu LXC on Proxmox, native systemd units. What this fleet actually runs. | [Central stack install](install.md) |
+| **Docker Compose** | anywhere with Docker, and the quicker way to try it. | [Central stack install](install.md) |
 
 Both end in the same place: services bound to `127.0.0.1`, state that survives
 a teardown, and configuration that Ansible subsequently owns.

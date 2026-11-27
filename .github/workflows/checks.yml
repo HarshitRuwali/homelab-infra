@@ -1,6 +1,6 @@
 name: Checks
 
-# Keeps the release automation honest. Two jobs:
+# Keeps the release automation honest, and tests the module helper. Three jobs:
 #
 #   pr-title        Pull requests only. The title must be a Conventional Commit,
 #                   because a squash merge uses it as the commit subject on
@@ -22,6 +22,9 @@ name: Checks
 #                   PR that release-please opens is created with GITHUB_TOKEN, so
 #                   no workflow runs on it; this job is what catches drift before
 #                   that PR is built from it.
+#   helper          Runs tests/homelab-sh-test.sh, which drives homelab.sh
+#                   against stubs (a fake ssh, docker and apt-get); it reaches
+#                   no host.
 #
 # Checks only: it reads the repository, uses no repository secret, and never
 # starts a stack, runs a playbook or reaches a host. Event fields (the PR title
@@ -94,3 +97,13 @@ jobs:
 
       - name: Test the release configuration
         run: .github/scripts/release-config-test.sh
+
+  helper:
+    name: Module helper
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Test homelab.sh
+        run: bash tests/homelab-sh-test.sh

@@ -24,9 +24,9 @@ itself three weeks ago"**.
 | 📊 | [**`monitoring/`**](monitoring/README.md) | Central Grafana, Prometheus, Loki and Alloy. Dashboards, alert rules, Matrix notifications. | [site](https://harshitruwali.github.io/homelab-infra/monitoring/) |
 | 🧠 | [**`memory/`**](memory/README.md) | Self-hosted semantic memory for AI agents. PostgreSQL and Qdrant behind FastAPI, with an MCP server. | [site](https://harshitruwali.github.io/homelab-infra/memory/) |
 | 💾 | [**`s3-backup/`**](s3-backup/README.md) | Nightly off-site backup of Immich and Nextcloud to Amazon S3, with restores drilled monthly. | [site](https://harshitruwali.github.io/homelab-infra/s3-backup/) |
-| 🤖 | [**`aibox-model-queue/`**](aibox-model-queue/README.md) | Serializing proxy so one GPU's LM Studio host is shared without model-swap races. | [README](aibox-model-queue/README.md) |
+| 🤖 | [**`aibox-model-queue/`**](aibox-model-queue/README.md) | Proxy in front of the AI box's llama.cpp llama-server (:8090): model serialization, tool-schema cleaning, reasoning off-switch. | [README](aibox-model-queue/README.md) |
 | 🖥️ | [**`proxmox/`**](proxmox/README.md) | Builds a VM template and creates VMs and containers from the images already on the hypervisor, plus firewalled VMs leased to other people. Dry run by default. | [README](proxmox/README.md) |
-| 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, AdGuard Home and Greenbone on four small guests, with Suricata and ntopng on the firewall. Open source throughout. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
+| 🛡️ | [**`security/`**](security/README.md) | Wazuh, CrowdSec, AdGuard Home and Greenbone on four small guests, with Suricata and NetFlow capture on the firewall and its logs in Loki. Open source throughout. | [site](https://harshitruwali.github.io/homelab-infra/security/) |
 | 📓 | [**`vault-viewer/`**](vault-viewer/README.md) | Read-only web viewer for an Obsidian vault on a Tailscale address, with search, live reload and PDF export. Treats vault content as untrusted. | [site](https://harshitruwali.github.io/homelab-infra/vault-viewer/) |
 | 🎬 | [**`media/`**](media/README.md) | Plex, and qBittorrent behind a ProtonVPN WireGuard tunnel with port forwarding, as one Docker Compose stack. Remote Plex access through a Cloudflare tunnel, the WebUI on the tailnet only. | [site](https://harshitruwali.github.io/homelab-infra/media/) |
 | 🌐 | [**`ingress/`**](ingress/README.md) | HTTPS `.lan` names for web UIs on the LAN and the tailnet. One small LXC runs Caddy with its own CA and two dnsmasq instances. | [site](https://harshitruwali.github.io/homelab-infra/ingress/) |
@@ -66,6 +66,28 @@ two, and it is why they are separate modules with separate docs.
 ## Quick start
 
 Pick the module you need. Every command runs from the repository root.
+
+To put a module on the host it runs on, `homelab.sh` does it over SSH: it
+checks the host's prerequisites, runs the module's own dry run there, and
+installs with `--apply` (missing apt packages included). `./homelab.sh --help`
+has the details.
+
+```bash
+./homelab.sh list                                        # modules, hosts, prerequisites
+./homelab.sh check media root@media-host                 # prerequisites only
+./homelab.sh install media root@media-host               # dry run, changes nothing
+./homelab.sh install media root@media-host --apply
+./homelab.sh install memory root@db-host --role storage --dest /root/memory
+```
+
+Without a checkout, the one-line installer fetches the repository and runs
+`homelab.sh` (HOST `local` is the machine it runs on; `HOMELAB_REF` pins a tag
+or commit):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/HarshitRuwali/homelab-infra/master/get.sh | sudo bash -s -- install media local
+curl -fsSL https://raw.githubusercontent.com/HarshitRuwali/homelab-infra/master/get.sh | sudo bash -s -- install media local --apply
+```
 
 <details>
 <summary><b>🤖 Configure the fleet</b></summary>
@@ -146,7 +168,7 @@ cd vault-viewer
 
 Installs one Python file and a systemd user unit, then checks that the server
 answers. Open `http://100.64.0.10:7777` from your own tailnet devices. Add
-`--build-pdf-image` for PDF export, which needs docker.
+`--install-pdf-runtime` for PDF export (a pinned headless Chromium, no docker).
 
 </details>
 
@@ -193,6 +215,8 @@ root certificate your devices need to trust once.
 ## Layout
 
 ```text
+homelab.sh      Installs or updates a module on its host over SSH, dry run first
+get.sh          One-line installer: fetches the repository and runs homelab.sh
 ansible/        Playbooks, roles, inventory. At the root, not under monitoring/,
                 because patching and onboarding apply to every machine
 monitoring/     Central stack, dashboards, alert rules, install scripts

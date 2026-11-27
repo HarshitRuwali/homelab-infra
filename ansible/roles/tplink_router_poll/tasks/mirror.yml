@@ -9,11 +9,11 @@
     database: passwd
     key: "{{ ansible_user }}"
 
-# Facts come from the play's become user (root), so not ansible_env.HOME.
+# The home comes from getent, not the environment: the play becomes root.
 - name: Resolve the mirror source and the login user's home
   ansible.builtin.set_fact:
     tplink_router_poll_mirror_src: "{{ hostvars[tplink_router_poll_mirror_from] }}"
-    tplink_router_poll_mirror_home: "{{ ansible_facts.getent_passwd[ansible_user][4] }}"
+    tplink_router_poll_mirror_home: "{{ getent_passwd[ansible_user][4] }}"
 
 - name: Check the mirror source polls a router
   ansible.builtin.assert:

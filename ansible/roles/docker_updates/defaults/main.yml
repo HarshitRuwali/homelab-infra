@@ -38,6 +38,16 @@ docker_update_skip_projects: []
 # growing by the size of one image set per release.
 docker_update_prune: true
 
+# After a successful update, and only when docker_update_prune is on, remove
+# UNUSED build cache older than this with
+# `docker builder prune -f --filter until=<age>`. Local image builds (the
+# Nextcloud build, the music images, the s3-backup runner) leave BuildKit cache
+# that `docker image prune` never touches, and it grew to several GB on a
+# 38 GB root disk. A week keeps recent cache so routine rebuilds stay fast.
+# Never widened to options that would remove cache still in use. An empty
+# string turns build cache pruning off.
+docker_update_build_cache_max_age: "168h"
+
 # Seconds to wait after recreating containers before checking whether they
 # stayed up. Long enough for a database to finish its startup checks and for a
 # crash loop to become visible; short enough not to stall the timer.

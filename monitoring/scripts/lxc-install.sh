@@ -36,6 +36,7 @@ Useful environment variables:
   GRAFANA_ADMIN_PASSWORD   required for central mode
   GRAFANA_ROOT_URL         default: http://localhost:3000
   PROMETHEUS_RETENTION     default: 7d
+  LOKI_RETENTION_PERIOD    default: 720h
   MONITOR_HOSTNAME         default: current hostname
   MONITOR_ROLE             default: central-lxc in central mode, lxc in collector mode
   PROMETHEUS_REMOTE_WRITE_URL collector mode explicit metrics ingest URL
@@ -201,6 +202,26 @@ scrape_configs:
     static_configs:
       - targets:
           - localhost:9090
+
+  # Loki and Grafana expose /metrics. The histogram buckets are dropped: no
+  # dashboard or alert charts them, and they are most of the series count.
+  - job_name: loki
+    static_configs:
+      - targets:
+          - localhost:3100
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '.+_bucket'
+        action: drop
+
+  - job_name: grafana
+    static_configs:
+      - targets:
+          - localhost:3000
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: '.+_bucket'
+        action: drop
 EOF
 
   install -d -m 0755 /etc/systemd/system/prometheus.service.d
@@ -227,6 +248,9 @@ server:
   http_listen_address: ${listen_addr}
   http_listen_port: 3100
   grpc_listen_port: 9096
+  # Loki logs every query at info, and Alloy ships that journal back into
+  # Loki, so each alert evaluation fed more log lines than it read.
+  log_level: warn
 
 common:
   instance_addr: 127.0.0.1
@@ -258,7 +282,7 @@ schema_config:
         period: 24h
 
 limits_config:
-  retention_period: ${LOKI_RETENTION_PERIOD:-168h}
+  retention_period: ${LOKI_RETENTION_PERIOD:-720h}
   allow_structured_metadata: true
   volume_enabled: true
   # Defaults are 4MB/s ingest and 3MB/s per stream. Onboarding a whole fleet
@@ -369,6 +393,12 @@ EOF
   write_env_assignment "$env_file" GF_SECURITY_COOKIE_SAMESITE "strict"
   write_env_assignment "$env_file" GF_SECURITY_DISABLE_GRAVATAR "true"
   write_env_assignment "$env_file" GF_SNAPSHOTS_EXTERNAL_ENABLED "false"
+  # No telemetry or update checks (the retries show up as a blocked-DNS
+  # flood). Warn level keeps errors but drops the per-query plugin lines.
+  write_env_assignment "$env_file" GF_ANALYTICS_REPORTING_ENABLED "false"
+  write_env_assignment "$env_file" GF_ANALYTICS_CHECK_FOR_UPDATES "false"
+  write_env_assignment "$env_file" GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES "false"
+  write_env_assignment "$env_file" GF_LOG_LEVEL "warn"
 
   # Consumed by $__env{} in grafana/provisioning/alerting/contactpoints.yaml.
   # Kept out of git by living only in this 0600 file.

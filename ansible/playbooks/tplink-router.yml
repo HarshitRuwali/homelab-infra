@@ -12,5 +12,6 @@
 - name: Deploy the TP-Link router poller
   hosts: monitored
   become: true
+  gather_facts: false
   roles:
     - tplink_router_poll

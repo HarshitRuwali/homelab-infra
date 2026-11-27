@@ -6,9 +6,12 @@ Wants=network-online.target
 [Service]
 Type=simple
 Environment=MODEL_PROXY_UPSTREAM=__UPSTREAM__
-Environment=MODEL_PROXY_HOST=127.0.0.1
-Environment=MODEL_PROXY_PORT=8099
-ExecStart=__PYTHON__ __HERE__/proxy.py
+Environment=MODEL_PROXY_HOST=__HOST__
+Environment=MODEL_PROXY_PORT=__PORT__
+# Optional secrets and overrides (for example MODEL_PROXY_TOKEN=...). The leading dash
+# makes the file optional. Keep it mode 600; it is not part of this repository.
+EnvironmentFile=-%h/.config/hermes-model-queue.env
+ExecStart=__PYTHON__ __INSTALL_DIR__/proxy.py
 Restart=always
 RestartSec=3
 

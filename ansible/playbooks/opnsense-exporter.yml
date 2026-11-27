@@ -12,5 +12,6 @@
 - name: Deploy the OPNsense API exporter
   hosts: monitored
   become: true
+  gather_facts: false
   roles:
     - opnsense_exporter

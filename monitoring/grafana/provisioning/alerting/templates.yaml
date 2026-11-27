@@ -35,7 +35,8 @@ templates:
       {{ end }}
 
   # One message per signature (policies.yaml groups by it), listing the flows
-  # behind it. Capped at ten: a scan can produce hundreds of flow pairs, and a
+  # behind it. security-suricata-ssh-scan carries a scan_window label and no
+  # dest_ip: its lines are per source, with alert and destination counts. Capped at ten: a scan can produce hundreds of flow pairs, and a
   # message nobody can read to the end helps nobody. The same markdown rules
   # as above apply: addresses go in code spans, URLs in <>.
   - orgId: 1
@@ -47,9 +48,9 @@ templates:
       not share, which left "()" when two instances disagreed. Firing only:
       resolve messages are off, but a notification can still carry resolved
       alerts alongside firing ones, and they listed the same flow twice. */ -}}
-      Severity {{ .CommonLabels.alert_severity }} ({{ if eq .CommonLabels.alert_severity "1" }}critical{{ else }}warning{{ end }}) | SID {{ .CommonLabels.alert_signature_id }} | {{ len .Alerts.Firing }} flow(s) in the last 5 minutes
+      Severity {{ .CommonLabels.alert_severity }} ({{ if eq .CommonLabels.alert_severity "1" }}critical{{ else }}warning{{ end }}) | SID {{ .CommonLabels.alert_signature_id }} | {{ len .Alerts.Firing }} {{ if .CommonLabels.scan_window }}source(s) in the last {{ .CommonLabels.scan_window }}{{ else }}flow(s) in the last 5 minutes{{ end }}
       {{ range $i, $a := .Alerts.Firing }}{{ if lt $i 10 }}
-      * `{{ $a.Labels.src_ip }}` to `{{ $a.Labels.dest_ip }}`{{ with $a.Values.B }}, {{ . }} alert(s){{ end }}
+      * `{{ $a.Labels.src_ip }}`{{ with $a.Labels.dest_ip }} to `{{ . }}`{{ end }}{{ with $a.Values.B }}, {{ . }} alert(s){{ end }}{{ with $a.Values.E }} to {{ . }} destination(s){{ end }}
       {{ end }}{{ end }}{{ if gt (len .Alerts.Firing) 10 }}
       Showing 10 of {{ len .Alerts.Firing }}; the dashboard has the rest.
       {{ end }}
@@ -57,5 +58,5 @@ templates:
       {{- /* Silences the whole signature. The per-alert SilenceURL matched
       every label, src_ip and dest_ip included, so it muted one flow and the
       next flow of the same signature paged again. */}}
-      silence signature: <{{ .ExternalURL }}alerting/silence/new?alertmanager=grafana&matcher=__alert_rule_uid__%3Dsecurity-suricata-alert&matcher=alert_signature_id%3D{{ .CommonLabels.alert_signature_id }}>
+      silence signature: <{{ .ExternalURL }}alerting/silence/new?alertmanager=grafana&matcher=__alert_rule_uid__%3D{{ if .CommonLabels.scan_window }}security-suricata-ssh-scan{{ else }}security-suricata-alert{{ end }}&matcher=alert_signature_id%3D{{ .CommonLabels.alert_signature_id }}>
       {{ end }}

@@ -33,7 +33,6 @@ Settings live in `.env.example`, which the installer copies to
 | `MEDIA_ROOT` | `/mnt/storage` | The media share on the host |
 | `MEDIA_UID`, `MEDIA_GID` | `100000` | Owner of the files on the share |
 | `QBT_WEBUI_PORT` | `8081` | qBittorrent WebUI port, on `127.0.0.1` and the tailnet only |
-| `PLEX_MEM_LIMIT` | `1536m` | Memory cap for `plex`, see [Resource limits](operations.md#resource-limits-logs-and-health) |
 | `QBT_MEM_LIMIT` | `512m` | Memory cap for `qbittorrent` |
 | `GLUETUN_MEM_LIMIT` | `192m` | Memory cap for `gluetun` |
 | `PLEX_TUNNEL_MEM_LIMIT` | `128m` | Memory cap for `plex-tunnel` |

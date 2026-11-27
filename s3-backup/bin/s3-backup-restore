@@ -225,17 +225,22 @@ cmd_db() {
   info "restoring the newest ${svc} dump from snapshot $SNAPSHOT into $TARGET"
   RESTIC_MOUNTS=(-v "${TARGET}:${TARGET}")
   restic_run restore "$SNAPSHOT" --host "$(hostname -s)" \
+    --include "${STAGING_DIR}/${svc}-db-*.sql" \
     --include "${STAGING_DIR}/${svc}-db-*.sql.gz" --target "$TARGET" ${DRY_RUN:+--dry-run} \
     || die "restic restore failed"
   [[ -n "$DRY_RUN" ]] && return 0
 
   local dump
-  dump="$(find "$TARGET" -name "${svc}-db-*.sql.gz" | sort | tail -1)"
+  # Newest by the timestamp in the name. Snapshots from before dumps went
+  # uncompressed hold .sql.gz, newer ones .sql; both are accepted.
+  dump="$(find "$TARGET" \( -name "${svc}-db-*.sql" -o -name "${svc}-db-*.sql.gz" \) | sort | tail -1)"
   [[ -n "$dump" ]] || die "no ${svc} dump found in snapshot $SNAPSHOT"
 
-  gzip -t "$dump" || die "restored dump fails its gzip integrity check: $dump"
-  zcat "$dump" | tail -5 | grep -qiE 'dump complete|Dump completed on' \
+  dump_integrity_ok "$dump" || die "restored dump fails its gzip integrity check: $dump"
+  dump_complete "$dump" \
     || die "restored dump has no completion trailer; it was truncated: $dump"
+  # What the printed load commands use to stream the file.
+  local dump_reader="cat"; [[ "$dump" == *.gz ]] && dump_reader="gunzip -c"
   info "verified $(basename "$dump") ($(human "$(stat -c %s "$dump")"))"
 
   if [[ "$svc" == "immich" ]]; then
@@ -249,7 +254,7 @@ leaves a mix of old and new rows.
   docker compose pull && docker compose create
   docker start ${IMMICH_DB_CONTAINER}
   sleep 15
-  gunzip -c ${dump} \\
+  ${dump_reader} ${dump} \\
     | sed "s/SELECT pg_catalog.set_config('search_path', '', false);/SELECT pg_catalog.set_config('search_path', 'public, pg_catalog', true);/g" \\
     | docker exec -i ${IMMICH_DB_CONTAINER} psql --username=postgres --dbname=postgres
   docker compose up -d
@@ -265,7 +270,7 @@ To load it:
   docker compose up -d ${NEXTCLOUD_DB_CONTAINER}
   sleep 20
   docker exec -i ${NEXTCLOUD_DB_CONTAINER} sh -c 'mysql -u root -p"\$MYSQL_ROOT_PASSWORD" -e "DROP DATABASE IF EXISTS nextcloud; CREATE DATABASE nextcloud CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"'
-  gunzip -c ${dump} | docker exec -i ${NEXTCLOUD_DB_CONTAINER} sh -c 'mysql -u root -p"\$MYSQL_ROOT_PASSWORD"'
+  ${dump_reader} ${dump} | docker exec -i ${NEXTCLOUD_DB_CONTAINER} sh -c 'mysql -u root -p"\$MYSQL_ROOT_PASSWORD"'
 EOF
   else
     cat <<EOF
@@ -274,7 +279,7 @@ To load it:
 
   docker compose up -d ${NEXTCLOUD_DB_CONTAINER}
   sleep 20
-  gunzip -c ${dump} | docker exec -i ${NEXTCLOUD_DB_CONTAINER} sh -c 'PGPASSWORD="\$POSTGRES_PASSWORD" psql -U "\$POSTGRES_USER" -d "\$POSTGRES_DB"'
+  ${dump_reader} ${dump} | docker exec -i ${NEXTCLOUD_DB_CONTAINER} sh -c 'PGPASSWORD="\$POSTGRES_PASSWORD" psql -U "\$POSTGRES_USER" -d "\$POSTGRES_DB"'
 EOF
   fi
 }

@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     ai_vm_host: str
     llm_port: int
     embed_port: int
+    # Empty: llama.cpp's native POST /embedding. Set: OpenAI-style
+    # POST /v1/embeddings for that model id (LM Studio, vLLM, llama-server).
+    embed_model: str = ""
 
     @property
     def llm_url(self) -> str:
@@ -43,6 +46,15 @@ class Settings(BaseSettings):
     @property
     def embed_url(self) -> str:
         return f"http://{self.ai_vm_host}:{self.embed_port}"
+
+    def embed_request(self, text: str | list[str]) -> tuple[str, dict]:
+        """URL and JSON body for one embedding call, in the configured API shape.
+
+        ``text`` may be a list: both shapes embed one vector per entry.
+        """
+        if self.embed_model:
+            return f"{self.embed_url}/v1/embeddings", {"model": self.embed_model, "input": text}
+        return f"{self.embed_url}/embedding", {"content": text}
 
     # Redis
     redis_host: str

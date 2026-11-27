@@ -54,19 +54,22 @@ echo
 echo "== 2. restore latest DB dumps from S3 =="
 RESTIC_MOUNTS=(-v "${WORK}:${WORK}")
 if restic_run restore latest --host "$(hostname -s)" \
-     --include "${STAGING_DIR}/*.sql.gz" --target "$WORK" >/dev/null 2>&1; then
+     --include "${STAGING_DIR}/*.sql" --include "${STAGING_DIR}/*.sql.gz" --target "$WORK" >/dev/null 2>&1; then
   pass "restic restore"
 else
   fail "restic restore"; echo; echo "$FAILURES failure(s)"; exit 1
 fi
 
-mapfile -t DUMPS < <(find "$WORK" -name '*.sql.gz' | sort)
-(( ${#DUMPS[@]} )) || { fail "no .sql.gz found in the restored snapshot"; exit 1; }
+mapfile -t DUMPS < <(find "$WORK" \( -name '*.sql' -o -name '*.sql.gz' \) | sort)
+(( ${#DUMPS[@]} )) || { fail "no .sql or .sql.gz dump found in the restored snapshot"; exit 1; }
 
 for d in "${DUMPS[@]}"; do
-  if gzip -t "$d" 2>/dev/null; then pass "gzip integrity: $(basename "$d")"; else fail "gzip integrity: $(basename "$d")"; fi
-  # A dump truncated mid-write still gunzips; only the trailer proves it finished.
-  if zcat "$d" | tail -5 | grep -qiE 'PostgreSQL database (cluster )?dump complete|Dump completed on'; then
+  # Only legacy .sql.gz dumps have a container to check.
+  if [[ "$d" == *.gz ]]; then
+    if gzip -t "$d" 2>/dev/null; then pass "gzip integrity: $(basename "$d")"; else fail "gzip integrity: $(basename "$d")"; fi
+  fi
+  # A dump truncated mid-write still parses; only the trailer proves it finished.
+  if dump_complete "$d"; then
     pass "dump trailer present: $(basename "$d")"
   else
     fail "dump has no completion trailer - it was truncated: $(basename "$d")"
@@ -100,7 +103,7 @@ if (( DEEP )); then
     for _ in $(seq 60); do
       docker exec "$c" pg_isready -U postgres >/dev/null 2>&1 && break; sleep 2
     done
-    if zcat "$immich_dump" | docker exec -i "$c" psql -q -U postgres -d postgres >/dev/null 2>&1; then
+    if dump_cat "$immich_dump" | docker exec -i "$c" psql -q -U postgres -d postgres >/dev/null 2>&1; then
       n="$(docker exec "$c" psql -tAX -U postgres -d immich -c \
             'select count(*) from asset' 2>/dev/null || echo ERR)"
       if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 0 )); then
@@ -121,9 +124,32 @@ if (( DEEP )); then
     for _ in $(seq 90); do
       docker exec "$c" mysqladmin ping -u root -pdrill >/dev/null 2>&1 && break; sleep 2
     done
-    if zcat "$nc_dump" | docker exec -i "$c" mysql -u root -pdrill >/dev/null 2>&1; then
+    if dump_cat "$nc_dump" | docker exec -i "$c" mysql -u root -pdrill >/dev/null 2>&1; then
       n="$(docker exec "$c" mysql -N -B -u root -pdrill -e \
             'select count(*) from nextcloud.oc_filecache' 2>/dev/null || echo ERR)"
+      if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 0 )); then
+        pass "nextcloud dump restored; ${n} rows in oc_filecache"
+      else
+        fail "nextcloud dump restored but oc_filecache is empty or missing"
+      fi
+    else
+      fail "nextcloud dump would not load into a clean $img"
+    fi
+  fi
+
+  if [[ -n "$nc_dump" && "$NEXTCLOUD_DB_ENGINE" == "postgres" ]]; then
+    img="$(docker inspect -f '{{.Config.Image}}' "$NEXTCLOUD_DB_CONTAINER")"
+    c="drill-nc-$$"; SCRATCH+=("$c")
+    # Same role and database names the dump was taken with (pg_dump --no-owner
+    # loads into whatever database it is piped to, but the names must exist).
+    docker run -d --name "$c" -e POSTGRES_PASSWORD=drill -e POSTGRES_USER=nextcloud \
+      -e POSTGRES_DB=nextcloud "$img" >/dev/null
+    for _ in $(seq 60); do
+      docker exec "$c" pg_isready -U nextcloud >/dev/null 2>&1 && break; sleep 2
+    done
+    if dump_cat "$nc_dump" | docker exec -i "$c" psql -q -U nextcloud -d nextcloud >/dev/null 2>&1; then
+      n="$(docker exec "$c" psql -tAX -U nextcloud -d nextcloud -c \
+            'select count(*) from oc_filecache' 2>/dev/null || echo ERR)"
       if [[ "$n" =~ ^[0-9]+$ ]] && (( n > 0 )); then
         pass "nextcloud dump restored; ${n} rows in oc_filecache"
       else

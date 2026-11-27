@@ -19,11 +19,16 @@ TMP="$(mktemp "${OUT}.XXXXXX")"
 trap 'rm -f "${TMP}"' EXIT
 START="$(date +%s.%N)"
 
+# One simulation, parsed twice below. apt-get --just-print dist-upgrade is the
+# expensive call in this script (several seconds of CPU on a Pi), so it runs
+# once and both the by-origin counts and the security count read its output.
+simulation="$(apt-get --just-print dist-upgrade 2>/dev/null || true)"
+
 {
   # --- pending upgrades, grouped by origin -------------------------------
   echo '# HELP apt_upgrades_pending Apt packages pending upgrade, by origin.'
   echo '# TYPE apt_upgrades_pending gauge'
-  pending="$(apt-get --just-print dist-upgrade 2>/dev/null \
+  pending="$(printf '%s\n' "${simulation}" \
     | awk -F'[()]' '/^Inst/ { print $2 }' \
     | awk '{ print $NF }' \
     | sort | uniq -c \
@@ -35,7 +40,7 @@ START="$(date +%s.%N)"
   fi
 
   # --- the security subset, as one series that is easy to alert on -------
-  sec="$(apt-get --just-print dist-upgrade 2>/dev/null \
+  sec="$(printf '%s\n' "${simulation}" \
     | grep -c -E '^Inst .*(Debian-Security|-security)' || true)"
   echo '# HELP apt_upgrades_security_pending Security upgrades pending.'
   echo '# TYPE apt_upgrades_security_pending gauge'

@@ -61,6 +61,26 @@ class MemoryStoreResponse(BaseModel):
     session_id: str | None = None
 
 
+class MemoryStoreBatchRequest(BaseModel):
+    chunks: list[MemoryStoreRequest] = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        description=(
+            "Chunks to store. Each carries its own scope, exactly like "
+            "POST /memory/store. If two entries resolve to the same chunk, the "
+            "later one wins."
+        ),
+    )
+
+
+class MemoryStoreBatchResponse(BaseModel):
+    stored: int = Field(..., description="Number of chunks in the request (all upserted).")
+    chunks: list[MemoryStoreResponse] = Field(
+        ..., description="One entry per request chunk, in request order."
+    )
+
+
 # ── Memory search ─────────────────────────────────────────────────────────────
 
 class MemorySearchRequest(BaseModel):

@@ -40,7 +40,7 @@ load_config() {
   : "${RESTIC_PRUNE_DAY:=7}"
   : "${IMMICH_ENABLED:=1}"; : "${NEXTCLOUD_ENABLED:=1}"
   : "${IMMICH_PREFIX:=immich}"
-  : "${IMMICH_SYNC_DIRS:=library profile upload backups}"
+  : "${IMMICH_SYNC_DIRS:=library profile upload}"
   : "${IMMICH_S3_STORAGE_CLASS:=GLACIER_IR}"
   : "${NEXTCLOUD_DB_ENGINE:=mysql}"
   : "${NEXTCLOUD_OCC_USER:=www-data}"; : "${NEXTCLOUD_OCC_PATH:=occ}"
@@ -50,6 +50,7 @@ load_config() {
   : "${RUNNER_IMAGE:=s3-backup-runner:1.0.0}"
   : "${LOCK_FILE:=/var/lock/s3-backup.lock}"
   : "${RCLONE_TRANSFERS:=8}"; : "${RCLONE_CHECKERS:=16}"; : "${RCLONE_BWLIMIT:=}"
+  : "${RCLONE_COMPARE:=size-only}"
   : "${S3_ENDPOINT:=}"; : "${S3_PROVIDER:=AWS}"
   : "${METRICS_DIR:=}"; : "${HEALTHCHECK_URL:=}"
   : "${SECRETS_BACKEND:=file}"
@@ -105,6 +106,11 @@ load_config() {
     : "${IMMICH_DB_CONTAINER:?IMMICH_DB_CONTAINER must be set when IMMICH_ENABLED=1}"
     : "${IMMICH_UPLOAD_LOCATION:?IMMICH_UPLOAD_LOCATION must be set when IMMICH_ENABLED=1}"
   fi
+
+  case "$RCLONE_COMPARE" in
+    size-only|modtime|checksum) ;;
+    *) die "RCLONE_COMPARE must be 'size-only', 'modtime' or 'checksum', got '$RCLONE_COMPARE'" ;;
+  esac
 
   export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION
 
@@ -185,3 +191,38 @@ check_deployment_freshness() {
 }
 
 human() { numfmt --to=iec-i --suffix=B "${1:-0}" 2>/dev/null || echo "${1:-0}"; }
+
+# Database dumps are stored as plain .sql so restic can deduplicate them
+# (a gzip stream changes end to end on any change, so nothing dedupes).
+# Snapshots taken before that change still hold .sql.gz, and restores and the
+# drill must keep reading them, so every reader goes through these helpers.
+
+# dump_cat <file>: the dump as plain SQL on stdout, whichever form it is stored in.
+dump_cat() {
+  case "$1" in
+    *.gz) zcat "$1" ;;
+    *)    cat "$1" ;;
+  esac
+}
+
+# dump_integrity_ok <file>: the container is sound (gzip -t for legacy .gz;
+# a plain file has no container, so this is always true for it).
+dump_integrity_ok() {
+  case "$1" in
+    *.gz) gzip -t "$1" ;;
+    *)    return 0 ;;
+  esac
+}
+
+# dump_complete <file>: the completion trailer is present. A dump cut off
+# mid-write still parses as valid gzip and as valid SQL; only the trailer proves
+# the dump tool finished. Covers pg_dump, pg_dumpall and mysqldump. Looks at the
+# last 20 lines: pg_dump 17.6+ appends a "\unrestrict" line and blanks after
+# the marker, and a future version may add more. A plain file is seekable, so
+# tail reads only its end instead of streaming the whole dump.
+dump_complete() {
+  case "$1" in
+    *.gz) zcat "$1" | tail -n 20 ;;
+    *)    tail -n 20 "$1" ;;
+  esac | grep -qiE 'dump complete|Dump completed on'
+}
