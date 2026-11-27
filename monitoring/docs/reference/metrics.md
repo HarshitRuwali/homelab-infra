@@ -327,6 +327,133 @@ sum by (name, mac) (sum_over_time({host="skullsaints", unit="tplink-router-poll.
     hardware, past the counters its statistics page uses. A wired client would
     not appear in the Wi-Fi counters at all; none was connected.
 
+## Internet probe
+
+Written to `internet-probe.prom` every 15 s (and at once when an outage starts or
+ends) by `internet-probe`, from `ansible/roles/internet_probe`, on one host per
+site (`home`, `blr`, `homelab`). Every series carries `site`; Alloy adds `host` and
+`instance`. Target series also carry `kind` (`tcp`, `dns`, `http`) and `target`
+(`HOST:PORT`); LAN series carry `name` and `target`, path series `name` (and `target` for per-target series). A round reaches the internet when any `tcp` or `dns` target
+answers; `http` and the gateway never decide.
+
+| Metric | Meaning |
+|---|---|
+| `internet_probe_up` | 0 if any round failed to reach the internet within the last 15 s (the write interval), else 1; the window is by time, not by write, so a blip or short outage between two scrapes still shows |
+| `internet_probe_outage_active` | 1 while a confirmed outage is open |
+| `internet_probe_outage_seconds` | seconds into the open outage, 0 when none |
+| `internet_probe_down_seconds_total` | seconds of confirmed outage: the closed outages in the ledger plus the open one; restored from the ledger at start-up, so it survives restarts |
+| `internet_probe_outages_total` | confirmed outages, counted from the ledger |
+| `internet_probe_blips_total` | failed rounds too short to confirm, since the process started |
+| `internet_probe_rounds_total`, `internet_probe_failed_rounds_total` | rounds, and rounds that did not reach the internet, since the process started |
+| `internet_probe_target_up{kind,target}` | 1 if the target answered in the last round |
+| `internet_probe_target_rtt_seconds{kind,target}` | round trip of the last round; absent when it failed |
+| `internet_probe_target_failures_total{kind,target}` | failed probes since the process started |
+| `internet_probe_gateway_up{gateway}` | 1 if the gateway answered or refused in the last round |
+| `internet_probe_gateway_rtt_seconds{gateway}` | gateway round trip; absent when down |
+| `internet_probe_last_outage_start_timestamp_seconds`, `internet_probe_last_outage_end_timestamp_seconds` | the latest closed outage; absent until there is one |
+| `internet_probe_last_outage_duration_seconds{cause}` | its length; `cause` is `local` (the gateway did not answer) or `upstream` (it did) |
+| `internet_probe_lan_up{name,target}` | 0 if any round failed to reach the LAN target within the last 15 s, else 1; a connect that succeeds or is refused is up. Never changes `internet_probe_up` |
+| `internet_probe_lan_rtt_seconds{name,target}` | connect time in the last round; absent when it failed |
+| `internet_probe_lan_failures_total{name,target}` | failed rounds since the process started |
+| `internet_probe_lan_outage_active{name}` | 1 while a confirmed LAN outage is open (same `--confirm-rounds` as the internet) |
+| `internet_probe_lan_down_seconds_total{name}`, `internet_probe_lan_outages_total{name}` | restored from the ledger table `lan_outages`, so they survive restarts; the first includes the open outage |
+| `internet_probe_path_up{name}` | 0 if any round failed to reach the internet over the named path within the last 15 s, else 1; the path is up when any of its `tcp` or `dns` targets answers. Never changes `internet_probe_up` |
+| `internet_probe_path_rtt_seconds{name,target}` | round trip of a path target in the last round; absent when it failed |
+| `internet_probe_path_failures_total{name,target}` | failed probes of a path target since the process started |
+| `internet_probe_path_outage_active{name}` | 1 while a confirmed path outage is open (same `--confirm-rounds` as the internet) |
+| `internet_probe_path_down_seconds_total{name}`, `internet_probe_path_outages_total{name}` | restored from the ledger table `path_outages`, so they survive restarts; the first includes the open outage |
+| `internet_probe_ledger_ok` | 1 if the last ledger operation succeeded, 0 if it failed or the ledger could not be opened (a failed ledger is re-checked every minute, so it recovers without waiting for an outage); the probe keeps running and counts in memory (`ledger_error` line in the journal) |
+| `internet_probe_interval_seconds` | seconds between rounds |
+| `internet_probe_timestamp_seconds` | when the file was written; stale means the host or the probe is down |
+
+Downtime over the time picker, robust to restarts:
+
+```promql
+sum by (site) (increase(internet_probe_down_seconds_total[$__range]))
+```
+
+The probe also writes logfmt lines to its journal, which Alloy ships to Loki
+under `{host="<probe host>", unit="internet-probe.service"}`. The event is the
+first word:
+
+| Line | Fields |
+|---|---|
+| `startup` | `site`, `interval`, `confirm_rounds`, `targets`, `gateway` |
+| `outage_start` | `site`, `start`, `cause`, `gateway_up` |
+| `outage_end` | `site`, `start`, `end`, `duration_seconds`, `cause`, `closed_by` (`probe`, or `restart` if the process died during the outage) |
+| `blip` | `site`, `start`, `duration_seconds`, `gateway_up` |
+| `lan_down` | `site`, `name`, `target`, `start` |
+| `lan_up` | `site`, `name`, `target`, `start`, `end`, `duration_seconds`, `closed_by` (`probe` or `restart`) |
+| `lan_blip` | `site`, `name`, `target`, `start`, `duration_seconds` |
+| `path_down` | `site`, `name`, `start` |
+| `path_up` | `site`, `name`, `start`, `end`, `duration_seconds`, `closed_by` (`probe` or `restart`) |
+| `path_blip` | `site`, `name`, `start`, `duration_seconds` |
+| `ledger_error`, `textfile_error` | `site`, `op` (ledger only), `error`; at most one per operation per 10 minutes |
+
+```logql
+{unit="internet-probe.service"} |~ "^outage_end " | logfmt
+```
+
+Prometheus keeps 7 days and Loki 30. The ledger on the probe host keeps every
+outage; read it with `internet-probe.py --report outages` or `--report daily` (see
+the `internet_probe` section of the Ansible playbooks reference).
+
+## ER605 home router
+
+Written to `er605.prom` every 30 s by `er605-poll`, from `ansible/roles/er605_snmp`
+on ubuntu-dev, which reads the ER605 over SNMPv3 through a local `snmp_exporter`.
+Alloy adds `host` (`ubuntu-dev`). The router forwards in hardware and syncs its
+counters tens of seconds late, so rates under a minute are not meaningful; totals
+are exact. A failed poll writes only `er605_poll_success 0`, the poll duration and
+the last good `er605_last_scrape_timestamp_seconds`, so the counters show a gap
+instead of a frozen value.
+
+| Metric | Meaning |
+|---|---|
+| `er605_if_octets_total{interface,role,direction}` | bytes on every WAN port (`role="wan"`, `interface` is the port, for example `eth1`; `in` is download, `out` is upload) and on `eth0` (`role="lan"`, the LAN side); `sum(...{role="wan"})` is the household total whatever the number of WANs; restarts from zero on a router reboot |
+| `er605_if_errors_total{interface,role,direction}` | input errors on `eth1` and `eth0` |
+| `er605_if_discards_total{interface,role,direction}` | input and output discards on `eth1` |
+| `er605_last_scrape_timestamp_seconds` | when the poller last read the router; stale means the poller stopped or the router did not answer |
+| `er605_cpu_percent{core}` | load per core (0 to 3) |
+| `er605_memory_bytes{state}` | `total`, `used`, `cached` and `buffers` |
+| `er605_uptime_seconds` | time since the router booted |
+| `er605_if_up{interface,role}` | 1 if the interface is up: each WAN port (`wan`), `eth0` (`lan`) and each PPPoE session interface such as `pe-wan1_poe` (`pppoe`) |
+| `er605_wan_info{wan,interface,pppoe,isp}` | one series per configured WAN, value 1; `pppoe` and `isp` are empty when unset. Source of the `wan` variable on the dashboards |
+| `er605_wan_up{wan}` | 1 if the WAN port is up and, for a PPPoE WAN, its session interface exists and is up. A configured WAN whose interface the router does not report is 0 |
+| `er605_pppoe_session_seconds{wan}` | age of the WAN's current PPPoE session (uptime minus the last change of its session interface); drops to zero on a reconnect |
+| `er605_pppoe_reconnects_total{wan}` | PPPoE reconnects per WAN, counted from the ledger table `reconnects`, so it survives poller restarts; a router reboot is not counted |
+| `er605_pppoe_octets_total{wan,direction}` | bytes of the WAN's current PPPoE session; restarts from zero on a reconnect |
+| `er605_poll_success` | 1 if the last poll read the router, 0 if it failed |
+| `er605_poll_duration_seconds` | how long the last poll took |
+
+Household download over the range, robust to counter restarts:
+
+```promql
+sum(increase(er605_if_octets_total{role="wan",direction="in"}[$__range]))
+```
+
+The poller also writes logfmt lines to its stdout. Alloy ships container logs to
+Loki under `{host="ubuntu-dev", job="docker", container="er605-poll"}`
+(`compose_service` is `er605-poll` too). The event is the first word:
+
+| Line | Fields |
+|---|---|
+| `startup` | `interval`, `keep_days`, `data` |
+| `usage` | `hour` (UTC hour start), `wan`, `download_bytes`, `upload_bytes` from that WAN's port; one per WAN per closed hour |
+| `pppoe_reconnect` | `at` (start of the new session), `wan`, `previous_session_seconds` |
+| `wan_down` | `at`, `wan`; the WAN's `er605_wan_up` went to 0 (also logged once for a WAN first seen down or whose interface is missing) |
+| `wan_up` | `at`, `wan`, `duration_seconds` |
+| `router_reboot` | `at` (estimated boot time) |
+| `poll_error` | `error`; at most one per 10 minutes |
+
+```logql
+sum(sum_over_time({host="ubuntu-dev", job="docker", container="er605-poll"} |~ "^usage " | logfmt | unwrap download_bytes [1d]))
+```
+
+Prometheus keeps 7 days and Loki 30. The ledger `usage.db` keeps every hour, and
+the raw CSV days are kept 400 days; read the ledger with `--report hour|day|month|reconnects|wan`
+(see the `er605_snmp` section of the Ansible playbooks reference).
+
 ## OPNsense
 
 Scraped by the central Alloy from the firewall's LAN (`alloy_extra_scrape_targets`
@@ -354,6 +481,50 @@ in `ansible/inventory/group_vars/central`), with `host="opnsense"`,
 | `container_start_time_seconds` | restarts and uptime |
 | `container_oom_events_total` | per-container OOM |
 | `container_health_state` | **[ambiguous](../monitoring/container-metrics.md#container_health_state-does-not-mean-what-it-looks-like)** |
+
+## Inter-segment traffic
+
+Written by `segflows.py` on the firewall (cron, every 5 minutes) to
+`/var/tmp/node_exporter/segflows.prom`, which `os-node_exporter` serves as the
+`opnsense-node` job (`host="opnsense"`, `role="firewall"`). The counters come
+from NetFlow records, each counted once, and are restored from the firewall's
+state file, so they only reset if that file is deleted. Setup and the
+permanent ledger: [Routers and firewall](../monitoring/routers.md#inter-segment-traffic).
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `opnsense_segflow_bytes_total` | counter | `src_segment`, `dst_segment` | bytes of flows from one segment to another |
+| `opnsense_segflow_packets_total` | counter | `src_segment`, `dst_segment` | packets of the same flows |
+| `opnsense_segflow_flows_total` | counter | `src_segment`, `dst_segment` | NetFlow records (a long connection is several) |
+| `opnsense_segflow_last_run_timestamp_seconds` | gauge | none | Unix time the last run finished |
+| `opnsense_segflow_run_duration_seconds` | gauge | none | how long the last run took |
+| `opnsense_segflow_lag_seconds` | gauge | none | now minus the receive time of the newest flow processed |
+| `opnsense_segflow_capture_interfaces` | gauge | `interface`, `segment` | 1 for each interface that has a NetFlow capture node; `segment` is the OPNsense interface label (`TENANT`, `LEASE`, `WAN`, ...) |
+
+Segment values: `LAN`, `TENANT`, `DMZ`, `LAB`, `LEASE` (the firewall's own
+subnets), `HOME` (the home LAN, `10.10.0.0/24`, `10.10.1.0/24`, `10.10.2.0/24`,
+`192.168.0.0/16`), `TAILNET` (`100.64.0.0/10`), `FIREWALL` (the firewall's own
+addresses), `LINKLOCAL` (multicast, broadcast and link-local), `PRIVATE` (any
+other private range) and `INTERNET` (everything else). Only traffic that
+crosses a captured interface is a flow: traffic inside one segment is not
+counted. Used by the [Inter-LAN dashboard](../monitoring/dashboards.md#inter-lan).
+
+## Network history
+
+Written by `net-history.py` (the `network_history` role) on the central host to
+`net-history.prom`, which the central Alloy ships. No labels except where noted.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `net_history_last_run_timestamp_seconds` | gauge | none | Unix time the last aggregator run finished, successful or not |
+| `net_history_run_success` | gauge | none | 1 if the last run succeeded, 0 if Prometheus, Loki or the database failed |
+| `net_history_rows` | gauge | `table` | rows stored in each table of schema `net` in PostgreSQL (`internet_daily`, `lan_daily`, `path_daily`, `wan_daily`, ..., `outage_events`); written only after a successful run, so absent after any failed run (Prometheus, Loki or the database failing) |
+
+The 90-day tier (`prometheus-network.service`) holds the same metrics as the
+central Prometheus for the network dashboards, copied by federation, so it adds
+no metric names of its own except `up{job="federate-central"}` inside that store.
+The permanent tables and views are listed by `SELECT * FROM net.catalog`; see
+[Data flow](../architecture/data-flow.md#long-term-network-history).
 
 ## Query recipes
 

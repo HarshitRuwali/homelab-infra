@@ -42,6 +42,56 @@ Devices that cannot run Alloy (the firewall, the routers) are covered in
 [Routers and firewall](../monitoring/routers.md#telemetry-flow): they are
 scraped by the central Alloy or polled by a host on their LAN.
 
+## Long-term network history
+
+The network dashboards reach back further than the central Prometheus keeps data.
+Three tiers sit behind them, plus the logs and the device ledgers:
+
+| Tier | Keeps | Resolution | Where | Read by |
+|---|---|---|---|---|
+| Prometheus | every metric | 15 s, 7 days | `prometheus.service` on the central host, `127.0.0.1:9090` | all dashboards, alert rules; Grafana datasource `prometheus` |
+| `prometheus-network.service` | only the network metrics (internet probe, ER605, OPNsense, TP-Link, tailnet and guest NICs) | 30 s, 90 days, capped at 4 GB | a second Prometheus on `127.0.0.1:9091` that federates `/federate` from the first | the four network dashboards by default, through the `ds` variable; Grafana datasource `prometheus-90d` |
+| `net-history` | one row per IST day per key, forever, plus monthly views and every outage | 1 day, 1 month | PostgreSQL database `net_history` on the memory LXC, written hourly by `net-history.timer` | the "Monthly history (permanent)" row of those dashboards through the datasource `net-history`; `nethist` and the agent skill |
+| Loki | journal lines, including the outage events | 30 days | `loki.service` | the Loki panels; `net-history` copies outage events into PostgreSQL |
+| Device ledgers | hourly usage and every outage, on the device's host | 1 hour, forever | `usage.db`, `outages.db`, `segflows` state | `--report` of each poller; the ER605 ledger can seed `wan_daily` |
+
+```mermaid
+flowchart LR
+    A[Alloy on every host] -->|remote_write, 15 s| P[(Prometheus, 7 d)]
+    P -->|/federate every 30 s, network metrics only| N[(prometheus-network, 90 d)]
+    P -->|days the 90-day store does not cover| H
+    N -->|increase over each IST day, hourly| H[net-history]
+    L[(Loki, 30 d)] -->|outage events| H
+    H -->|upsert| D[(PostgreSQL net_history, daily rows forever)]
+    N --> G[Grafana]
+    D --> G
+    D --> C[nethist and agents]
+```
+
+`net-history` computes each day with `increase()` evaluated at the end of the IST
+day (Asia/Kolkata) and upserts today and the two days before on every run. The
+role seeds the last 7 days once (`--backfill 7`, from the central Prometheus,
+because the 90-day store starts empty); it does not back-fill further, and a
+later `--backfill N` run recomputes N days from whichever store covers each day
+best. A source that has no
+data yet skips its table and the run still succeeds. The monthly views group the
+daily rows; availability is recomputed from the sums of seconds, never averaged.
+Run state is `net_history_run_success`, `net_history_last_run_timestamp_seconds` and
+`net_history_rows{table}` ([metrics](../reference/metrics.md#network-history)).
+The setup and every setting are in the
+[`network_history` role](https://harshitruwali.github.io/homelab-infra/ansible/reference/playbooks/#network_history).
+
+!!! info "A gap in the central Prometheus is a gap in the 90-day tier"
+    The 90-day tier only copies what the central Prometheus has, and starts empty.
+    `net-history` therefore asks both stores when their data for each table began,
+    computes every day from the store that covers most of it, and stores that share
+    as the row's `coverage`. A stored row is never replaced by one of lower
+    coverage (today's row is always recomputed), and the monthly views count
+    days below 1 as `partial_days`. Days before the role was deployed exist in
+    PostgreSQL only as far back as the central 7 days reached, plus what was
+    imported from the ER605 ledger with `--import-wan-daily` (source
+    `er605-ledger`, which wins over Prometheus rows of lower coverage).
+
 ## The textfile bridge
 
 Anything a shell script can compute becomes a Prometheus metric by writing a

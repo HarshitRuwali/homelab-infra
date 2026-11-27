@@ -83,7 +83,10 @@ tests/                         consistency checks, run by hand; see the header o
 | `update-metrics.yml` | apt and reboot-required textfile exporter |
 | `dell-fan-boost.yml` | runs the Dell CPU fan at full speed while its package is hot, where `host_vars` enables it |
 | `tplink-router.yml` | polls a TP-Link router for per-client traffic from a host on its LAN, where the host's inventory entry enables it |
+| `internet-probe.yml` | tracks internet outages from one host per site (probes, ledger, metrics), where the host's inventory entry enables it |
 | `opnsense-exporter.yml` | the OPNsense API exporter in a container on a LAN Docker host, where the host's inventory entry enables it |
+| `er605-snmp.yml` | household ISP monitoring: the ER605 over SNMPv3 (snmp_exporter and a poller in containers), where the host's inventory entry enables it |
+| `network-history.yml` | long-term network history: a 90-day Prometheus tier, permanent daily rows and monthly views in PostgreSQL, the Grafana datasources, and `nethist` plus an agent skill where the host's inventory entry enables them |
 | `unattended-upgrades.yml` | package patching policy |
 | `docker-updates.yml` | container image update script, unit and timer |
 | `force-updates.yml` | install every pending package **now**; still never reboots |
@@ -107,7 +110,10 @@ Full reference: [Playbooks](docs/reference/playbooks.md).
 | `gpu_exporter` | NVIDIA GPU telemetry, autodetected off the host |
 | `dell_fan_boost` | a fan boost controller for a Dell workstation's CPU fan, per host only |
 | `tplink_router_poll` | per-client traffic from a TP-Link router (DEV2 web API) as textfile metrics, per host only |
+| `internet_probe` | stdlib Python poller that probes the internet and the gateway, keeps an outage ledger and writes textfile metrics, per host only |
 | `opnsense_exporter` | `opnsense-exporter` for OPNsense API metrics, in a container, per host only; the firewall-side scripts in `files/opnsense/` |
+| `network_history` | `prometheus-network` (90 days, federated), the `net-history` aggregator into PostgreSQL on the memory LXC, the Grafana datasources, and the `nethist` client with its skill |
+| `er605_snmp` | the ER605 home router over SNMPv3: `snmp_exporter` and a stdlib poller in a compose project, with an hourly usage ledger, per host only |
 | `unattended_upgrades` | apt patching policy, applied by group membership only |
 | `docker_updates` | container image update timer |
 | `grafana_dashboards` | the committed dashboard JSON |

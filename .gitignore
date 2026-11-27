@@ -39,3 +39,7 @@ GEMINI.md
 .cursor/
 .aider*
 .claude/
+
+# Python bytecode from running the tests and scripts in place.
+__pycache__/
+*.pyc

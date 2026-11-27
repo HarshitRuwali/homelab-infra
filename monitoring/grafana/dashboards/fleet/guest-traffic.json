@@ -5,7 +5,7 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": null,
-  "links": [],
+  "links": [{"title": "Internet and Usage", "type": "link", "url": "/d/internet-usage/internet-and-usage", "icon": "dashboard", "keepTime": true}],
   "panels": [
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},

@@ -287,17 +287,17 @@ role_section = playbooks_doc.split("### `tplink_router_poll`", 1)[1].split("\n##
 for flag in set(re.findall(r"(?<![\w-])(--[a-z][a-z-]+)", role_section)):
     check(flag in parser_flags, f"playbooks.md shows {flag}, which the poller does not accept")
 report_choices = set(re.search(r'"--report", choices=\[([^\]]+)\]', script_src).group(1).replace('"', "").replace(" ", "").split(","))
-documented = set(re.findall(r"--report (\w+)", playbooks_doc))
+documented = set(re.findall(r"--report (\w+)", role_section))
 check(documented and documented <= report_choices, f"documented --report values not accepted: {documented - report_choices}")
 for kind in report_choices:
-    check(f"--report {kind}" in playbooks_doc, f"--report {kind} is not documented in playbooks.md")
+    check(f"--report {kind}" in role_section, f"--report {kind} is not documented in playbooks.md")
 
 dash = json.loads(DASHBOARD.read_text())
 check(dash["title"] == "Router TPLink Blr" and dash["uid"] == "router-tplink-blr", "dashboard title or uid changed")
 queried = set()
 for p in dash["panels"]:
     for t in p.get("targets", []):
-        queried |= set(re.findall(r"\b(tplink_router_\w+)", t["expr"]))
+        queried |= set(re.findall(r"\b(tplink_router_\w+)", t.get("expr", "")))
 check(queried and queried <= set(poller.HELP), f"dashboard queries unknown metrics: {sorted(queried - set(poller.HELP))}")
 
 if errors:

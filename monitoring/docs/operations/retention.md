@@ -10,6 +10,8 @@ How long data is kept, and the disk arithmetic that decided it.
 | Loki, direct LXC install | `LOKI_RETENTION_PERIOD`, default `720h` (30d) in `scripts/lxc-install.sh` | `.env` on the central node |
 | Loki, Docker Compose | `retention_period` in `loki/loki-config.yml`, committed as `720h` | the file itself; the Compose path does not read `LOKI_RETENTION_PERIOD` |
 | systemd journal (local) | `SystemMaxUse`, uncapped by default | `journald_system_max_use` per group |
+| Prometheus, network tier | `--storage.tsdb.retention.time=90d` and `--storage.tsdb.retention.size=4GB`, set by the `network_history` role | `prometheus-network.service` on the central host, federated from the main Prometheus; see [Data flow](../architecture/data-flow.md#long-term-network-history) |
+| PostgreSQL `net_history` | none: daily rows are never deleted | the memory LXC; hourly `net-history.timer` |
 
 Prometheus was shortened from 30 days to 7. That was not a preference; it was
 arithmetic. Loki stays at 30 days because it is small: the live store holds

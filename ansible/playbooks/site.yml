@@ -16,7 +16,9 @@
 #      packages. If an update breaks a host, you want the metrics that show it.
 #   2. update-metrics next, so apt and reboot state is visible, then the
 #      Dell fan boost, which is inert except where host_vars enables it.
-#   3. dashboards before alerting. Both touch the central stack, and
+#   3. network-history before dashboards (the dashboards query its datasources;
+#      its datasource file is one more reason Grafana restarts once), then
+#      dashboards before alerting. Both touch the central stack, and
 #      central-alerting.yml restarts Grafana; running dashboards first means
 #      that single restart also picks up any provider change, instead of
 #      needing a second one.
@@ -36,8 +38,17 @@
 - name: Deploy the TP-Link router poller
   ansible.builtin.import_playbook: tplink-router.yml
 
+- name: Deploy the internet outage probe
+  ansible.builtin.import_playbook: internet-probe.yml
+
 - name: Deploy the OPNsense API exporter
   ansible.builtin.import_playbook: opnsense-exporter.yml
+
+- name: Deploy the ER605 SNMP monitoring
+  ansible.builtin.import_playbook: er605-snmp.yml
+
+- name: Deploy the long-term network history
+  ansible.builtin.import_playbook: network-history.yml
 
 - name: Deploy the Grafana dashboards
   ansible.builtin.import_playbook: dashboards.yml

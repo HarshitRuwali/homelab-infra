@@ -40,6 +40,7 @@ What is collected, where it is displayed, and what alerts on it.
 | systemd journal | `loki.source.journal` | Services and Logs |
 | Container stdout/stderr | `loki.source.docker` | Services and Logs |
 | Per-client router traffic, connections, router log (remote site) | `tplink-router-poll`, textfile and journal | Router TPLink Blr |
+| Household internet usage, PPPoE reconnects and ER605 health (home) | `er605-poll` over SNMPv3, textfile and container log | Home ISP |
 | OPNsense host, interfaces, firewall, gateways, services | node_exporter plugin and `opnsense-exporter`, scraped by the central Alloy | Prometheus jobs `opnsense-node`, `opnsense-api`; see [Routers and firewall](routers.md) |
 
 ## What is deliberately not collected

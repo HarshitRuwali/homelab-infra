@@ -134,6 +134,14 @@ See [Security notes](docs/security.md).
   reasons, and which process is holding the VRAM
 - **Guest Traffic**: what each Proxmox guest sends and receives, read from the
   hypervisor's side of its NIC
+- **Internet and Usage**: whether the internet is up at each site, outages and
+  their cause, latency and loss, and data used per segment, guest and client
+- **Home ISP**: the household internet and the ER605 router: usage and its
+  p95 and peak rate, PPPoE reconnects, latency, router health and outages
+  (SNMPv3, `ansible/roles/er605_snmp`)
+- **Inter-LAN**: whether each site and segment can reach the others, and how
+  much traffic flows between each pair of segments (NetFlow on the firewall,
+  `security/opnsense/segflows/`)
 - **Suricata Alerts**: the IDS alerts the firewall ships into Loki
 - **Tenant Activity**: what the work and lease VMs are doing, from the
   firewall's filter log, state counters, resolver log and Suricata, and from
@@ -144,6 +152,13 @@ See [Security notes](docs/security.md).
 containers, pending updates and logs, scoped to a single host instead of
 filtered through `$host`. Hosts with an NVIDIA GPU also get GPU utilization,
 VRAM, temperature, power and fan.
+
+**Long-term network history** for the network dashboards (Internet and Usage, Home ISP,
+Inter-LAN, Router TPLink Blr): a second Prometheus keeps the network metrics for 90 days
+(a `Prometheus` picker chooses it or the 7-day central one), and daily rows are kept
+forever in PostgreSQL with monthly views, shown in a "Monthly history (permanent)" row and
+readable by agents with `nethist`. Deployed by the `network_history` role; see
+[Data flow](docs/architecture/data-flow.md#long-term-network-history).
 
 **Alert rules** in `grafana/provisioning/alerting/`: committed rule files, plus
 a `rules-availability.yaml` **generated from the inventory** so adding a host
