@@ -1,0 +1,39 @@
+# Managed by ansible/roles/network_history. Do not edit by hand.
+# Rolls the network metrics up into permanent daily rows in PostgreSQL (see net-history.timer).
+[Unit]
+Description=net-history: daily network aggregates into PostgreSQL
+After=network-online.target prometheus-network.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ network_history_home }}/venv/bin/python {{ network_history_home }}/net-history.py \
+  --prometheus http://{{ network_history_prometheus_listen }} \
+  --central-prometheus http://{{ network_history_central_prometheus }} \
+  --loki {{ network_history_loki_url }} \
+  --er605-selector {{ network_history_er605_selector | quote }} \
+  --db-host {{ network_history_db_address }} \
+  --db-port {{ network_history_db_port }} \
+  --db-name {{ network_history_db_name }} \
+  --db-user {{ network_history_db_writer }} \
+  --password-file {{ network_history_secret_dir }}/writer.password \
+  --textfile {{ network_history_textfile }}
+StateDirectory=net-history
+
+# Root only so it can read the root-only password file and write the root-owned
+# textfile directory. No capability is kept; the filesystem is read-only apart
+# from the textfile directory; the network is limited to IP.
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+ReadWritePaths={{ network_history_textfile | dirname }}
+MemoryMax=256M

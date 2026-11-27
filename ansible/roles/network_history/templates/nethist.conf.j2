@@ -1,0 +1,9 @@
+# Managed by ansible/roles/network_history. Do not edit by hand.
+# Connection settings for nethist. The password is in reader.password next to this file.
+[nethist]
+host = {{ network_history_db_address }}
+port = {{ network_history_db_port }}
+database = {{ network_history_db_name }}
+user = {{ network_history_db_reader }}
+password_file = {{ network_history_client_home }}/.config/net-history/reader.password
+image = {{ network_history_client_image }}

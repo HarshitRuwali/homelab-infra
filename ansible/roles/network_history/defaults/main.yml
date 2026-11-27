@@ -1,0 +1,100 @@
+---
+# Long-term network history, in three tiers (see monitoring/docs/architecture/data-flow.md):
+#   Prometheus on this host     every metric, 15 s, 7 days   (installed by monitoring/scripts/lxc-install.sh)
+#   prometheus-network.service  network metrics, 30 s, 90 days (second Prometheus federating from the first)
+#   net-history.timer           daily rows forever in PostgreSQL on the memory LXC, monthly views, outage events
+#
+# Runs on the `central` group (tasks/main.yml), delegates the database setup to
+# the PostgreSQL host (tasks/database.yml), and installs the `nethist` client and
+# agent skill on hosts that set network_history_client_enabled (tasks/client.yml).
+# Idempotent; a clean fleet is changed=0.
+
+# --- 90-day Prometheus tier ---------------------------------------------------
+network_history_prometheus_bin: /usr/bin/prometheus
+network_history_prometheus_listen: 127.0.0.1:9091
+# Where it federates from: the central Prometheus.
+network_history_central_prometheus: 127.0.0.1:9090
+network_history_prometheus_user: prometheus
+network_history_prometheus_group: prometheus
+network_history_prometheus_config_dir: /etc/prometheus-network
+network_history_prometheus_data_dir: /var/lib/prometheus-network
+network_history_retention_time: 90d
+network_history_retention_size: 4GB
+network_history_scrape_interval: 30s
+network_history_memory_max: 256M
+
+# The /federate match[] selectors: EXACTLY the metrics the network dashboards query
+# from ${ds} plus what net-history reads. Narrow on purpose: the node_network
+# selectors keep only tailscale0, the Proxmox guest NICs and the t7920 uplink.
+# tests/network-history-test.py checks every dashboard metric is matched here.
+network_history_federation_selectors:
+  - '{__name__=~"internet_probe_(up|down_seconds_total|outages_total|outage_seconds|last_outage_end_timestamp_seconds|last_outage_duration_seconds|timestamp_seconds|ledger_ok|gateway_up|gateway_rtt_seconds|target_rtt_seconds|failed_rounds_total|rounds_total|target_failures_total)"}'
+  - '{__name__=~"internet_probe_lan_(up|down_seconds_total|outages_total|rtt_seconds)"}'
+  - '{__name__=~"internet_probe_path_(up|rtt_seconds|failures_total|outage_active|down_seconds_total|outages_total)"}'
+  - '{__name__=~"er605_(if_octets_total|if_errors_total|if_discards_total|if_up|wan_info|wan_up|pppoe_session_seconds|pppoe_reconnects_total|pppoe_octets_total|uptime_seconds|last_scrape_timestamp_seconds|cpu_percent|memory_bytes)"}'
+  - '{__name__=~"opnsense_interfaces_(received|transmitted)_bytes_total",interface=~"LAN|TENANT|DMZ|LAB|LEASE|WAN"}'
+  - '{__name__=~"opnsense_segflow_(bytes_total|packets_total|flows_total|lag_seconds|last_run_timestamp_seconds|run_duration_seconds|capture_interfaces)"}'
+  - '{__name__=~"tplink_router_(poll_success|poll_timestamp_seconds|client_info|uptime_seconds|wan_online|cpu_percent|memory_bytes|log_forwarding|wan_bytes_total|wifi_client_bytes_total|wifi_client_signal_dbm|wifi_client_link_rate_bits|wifi_client_retransmissions_total)"}'
+  - '{__name__=~"node_network_(receive|transmit)_bytes_total",device=~"tailscale0|(tap|veth)[0-9]+i[0-9]+"}'
+  - '{__name__=~"node_network_(receive|transmit)_bytes_total",host="t7920",device="nic1"}'
+  - '{__name__="fleet_pve_guest_nic_info"}'
+
+# --- Grafana ----------------------------------------------------------------------
+network_history_grafana_provisioning_dir: /etc/grafana/provisioning/datasources
+network_history_grafana_group: grafana
+
+# --- PostgreSQL (permanent tier) ------------------------------------------------------
+# Inventory name of the PostgreSQL host (the memory LXC) and the address Grafana
+# and the clients reach it on. The database is created and the roles are set up
+# there by tasks/database.yml, delegated to that host. Do not point this at the
+# memory store's database: the role only ever creates net_history.
+network_history_db_host: memory
+# Defaults to that host's ansible_host, so the inventory entry is the one place the address lives.
+network_history_db_address: "{{ (hostvars[network_history_db_host].ansible_host | default(network_history_db_host)) if network_history_db_host in hostvars else network_history_db_host }}"
+network_history_db_port: 5432
+network_history_db_name: net_history
+network_history_db_writer: net_history_writer
+network_history_db_reader: net_history_reader
+# The docker container running PostgreSQL on the database host and its superuser.
+network_history_db_container: postgres
+network_history_db_superuser: jarvis
+# The database the superuser connects to first. psql defaults to a database named
+# after the user, which need not exist (here it does not).
+network_history_db_admin_database: postgres
+# Passwords are generated here on first run and kept root-only. Never in git.
+network_history_secret_dir: /etc/net-history
+# Inventory name of the host that holds the passwords (this role's central host).
+network_history_central_host: monitor-lxc
+
+# --- Aggregator ---------------------------------------------------------------------
+network_history_home: /opt/net-history
+# pg8000 is pure python; pinned.
+network_history_pg8000: pg8000==1.31.6
+network_history_loki_url: http://127.0.0.1:3100
+# Hourly at this minute, and two minutes after boot.
+network_history_timer_minute: "07"
+network_history_boot_delay: 2min
+network_history_textfile: "{{ alloy_textfile_dir }}/net-history.prom"
+# Loki stream selector of the ER605 poller's journal lines (the wan_up events).
+network_history_er605_selector: '{host="ubuntu-dev", container="er605-poll"}'
+# On the first install, fill daily rows from the central Prometheus (7 days) once,
+# because the 90-day store starts empty.
+network_history_seed_from_central: true
+network_history_seed_days: 7
+
+# --- Client (agents on a workstation) -------------------------------------------------
+# OFF BY DEFAULT, ENABLED PER HOST in its inventory entry:
+#   network_history_client_enabled: true
+network_history_client_enabled: false
+network_history_client_user: "{{ ansible_user }}"
+network_history_client_home: "/home/{{ network_history_client_user }}"
+# Copy the reader password from the central host (true), or place
+# ~/.config/net-history/reader.password by hand (false, the file must exist).
+network_history_client_fetch_password: true
+# postgres image that provides psql for nethist; pinned like the server.
+network_history_client_image: postgres:16-alpine
+# Skill directories under the client's home. ~/.hermes/skills is added when it exists.
+network_history_skill_dirs:
+  - .claude/skills
+  - .agents/skills
+network_history_hermes_skill_dir: .hermes/skills
