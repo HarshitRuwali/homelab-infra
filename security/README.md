@@ -1,7 +1,7 @@
 # Security Stack
 
-Four small guests, plus Suricata and ntopng on the firewall, that give a homelab
-intrusion detection, host integrity monitoring, DNS filtering, flow visibility
+Four small guests, plus Suricata and NetFlow capture on the firewall, that give a
+homelab intrusion detection, host integrity monitoring, DNS filtering, flow visibility
 and vulnerability scanning. Every piece is chosen so a single-hypervisor estate
 can run it without a dedicated budget or a dedicated box.
 
@@ -12,10 +12,10 @@ firewall only sees traffic that crosses it, so anything sharing a layer 2
 segment, or any multi-homed host, is invisible to it. That is why this stack
 pairs a network sensor with host agents rather than relying on either alone.
 
-Four guests, **8 vCPU, 15.5 GB RAM, 96 GB disk** in total, sized for roughly
-15 monitored hosts at 30 day retention, plus about 2 GB RAM and 2 vCPU added to
-the firewall VM for ntopng. Full specs, and the working behind each number, in
-[docs/reference](docs/reference/index.md).
+Four guests, **8 vCPU, 15.5 GB RAM, 81 GB disk** in total, sized for roughly
+15 monitored hosts at 30 day retention. Suricata and the NetFlow capture run on
+the firewall itself and need no guest. Full specs, and the working behind each
+number, in [docs/reference](docs/reference/index.md).
 
 ## Quick start
 
@@ -75,6 +75,10 @@ the fleet or the dashboard:
   [Host monitoring](docs/getting-started/index.md#host-monitoring-in-grafana).
 - **Alerts** are forwarded into Loki so `monitoring/`'s Grafana stays the single
   pane. The Wazuh dashboard is kept for deep investigation only.
+- **Firewall streams** reach Loki beside Suricata's alerts: the filter log, the
+  resolver log and a per-minute state table line. The Tenant Activity dashboard
+  and the `tenant-*` alert rules in `monitoring/` read them. See
+  [Wiring](docs/wiring/index.md#3-firewall-streams-and-flow-visibility).
 
 ## What's here
 
@@ -82,6 +86,7 @@ the fleet or the dashboard:
 |---|---|
 | `provision-security-stack.sh` | Creates the four guests on Proxmox. Dry run by default. |
 | `install/` | One installer per guest, same dry-run convention. |
+| `opnsense/pfstats/` | The per-minute `pfstats` line the firewall writes to syslog, and its installer. Run on the firewall, not on a guest. See [Wiring](docs/wiring/index.md#pfstats). |
 | `docs/` | The MkDocs site published at the link below. |
 
 ## Documentation
@@ -101,8 +106,7 @@ or in [`docs/`](docs/index.md):
 
 ## Licences
 
-Suricata, CrowdSec, Wazuh, AdGuard Home, ntopng and Greenbone are all open
-source. Per-tool licences are in
+Suricata, CrowdSec, Wazuh, AdGuard Home and Greenbone are all open source. Per-tool licences are in
 [docs/reference](docs/reference/index.md#licences).
 
 ## Authenticated bootstrap

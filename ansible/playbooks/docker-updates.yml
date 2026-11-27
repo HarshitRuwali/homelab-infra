@@ -25,6 +25,10 @@
     {{ (groups['monitored'] | default([]) | difference(groups['autoupdate'] | default([])))
        | union(groups['no_autoupdate'] | default([])) }}
   become: true
+  # No role here reads an ansible_* fact, so skip the setup round trip (about
+  # 5 to 8 seconds per play on this fleet). Add `ansible.builtin.setup` to the
+  # role that first needs one.
+  gather_facts: false
   tasks:
     - name: Check for installed updater units
       ansible.builtin.stat:
@@ -61,6 +65,10 @@
 - name: Configure Docker container and image updates
   hosts: "autoupdate:!no_autoupdate"
   become: true
+  # No role here reads an ansible_* fact, so skip the setup round trip (about
+  # 5 to 8 seconds per play on this fleet). Add `ansible.builtin.setup` to the
+  # role that first needs one.
+  gather_facts: false
   vars:
     # Serialised on purpose. These pulls are large and every host shares one
     # egress IP, so running the fleet in parallel is how you meet Docker Hub's

@@ -8,7 +8,9 @@ the source of the subtlest bug it has had.
 `prometheus/prometheus.yml` has **no scrape configs for hosts**. Everything
 arrives through `--web.enable-remote-write-receiver`. So `up{job="host-unix"}`
 is not Prometheus's own judgement about whether a target answered. It is a
-series the collector **pushes about itself**.
+series the collector **pushes about itself**. The only scrape jobs are
+Prometheus itself and, on the central node, Loki and Grafana (`/metrics`, with
+histogram buckets dropped).
 
 The consequence:
 

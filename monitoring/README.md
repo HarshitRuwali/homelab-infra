@@ -116,7 +116,7 @@ See [Security notes](docs/security.md).
 
 ## What is provisioned
 
-**7 fleet dashboards** in the `Monitoring` folder, loaded from
+**Fleet dashboards** in the `Monitoring` folder, loaded from
 `grafana/dashboards/fleet/`:
 
 - **VM Fleet Overview**: fleet freshness, pending updates, which hosts need a
@@ -132,6 +132,12 @@ See [Security notes](docs/security.md).
   meters, the process list. Only lists hosts with the opt-in process exporter
 - **GPU**: nvtop as a dashboard, utilisation and VRAM graphs, clocks, throttle
   reasons, and which process is holding the VRAM
+- **Guest Traffic**: what each Proxmox guest sends and receives, read from the
+  hypervisor's side of its NIC
+- **Suricata Alerts**: the IDS alerts the firewall ships into Loki
+- **Tenant Activity**: what the work and lease VMs are doing, from the
+  firewall's filter log, state counters, resolver log and Suricata, and from
+  the hypervisor's view of each guest
 
 **One dashboard per host** in the `Servers` folder, loaded from
 `grafana/dashboards/servers/`: CPU, memory, disk, network, systemd units,

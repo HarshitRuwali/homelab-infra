@@ -39,6 +39,12 @@ Everything below runs from `monitoring/`.
     starts the services. The other actions are `init`, `validate`, `down`,
     `restart`, `status` and `logs`.
 
+    The images are pinned to the versions the apt deployment runs; the APT
+    install is canonical. Dependabot (`.github/dependabot.yml`) opens a pull
+    request for each new minor or patch release of a pinned image: merge it
+    once the apt deployment runs that version. Major versions are not proposed
+    and are upgraded deliberately.
+
     State lives in four **external** Docker volumes
     (`monitoring-grafana-data`, `-prometheus-data`, `-loki-data`,
     `-alloy-data`), which is why `docker compose down -v` does not destroy it.

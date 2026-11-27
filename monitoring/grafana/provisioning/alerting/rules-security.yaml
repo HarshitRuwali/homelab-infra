@@ -3,8 +3,10 @@ apiVersion: 1
 # Security alerts. Everything here carries `route: security`, which
 # policies.yaml sends to the matrix-security room and never to the fleet room.
 #
-# Suricata runs on the firewall and ships EVE alerts as syslog into Loki as
-# host="opnsense"; see security/docs/wiring/index.md, section 2. The Suricata
+# Suricata runs on the firewall and ships EVE alerts as syslog into Loki with
+# job="suricata" (and host="opnsense", like every firewall stream); see
+# security/docs/wiring/index.md, section 2. The rules select job="suricata", the
+# Suricata stream alone. The Suricata
 # Alerts dashboard shows every alert. This rule decides which ones are worth a
 # message, which is a different and much smaller set.
 groups:
@@ -21,10 +23,13 @@ groups:
       #
       # EXCLUDED SIDS are known noise in THIS network, still visible on the
       # dashboard, just never messaged:
-      #   2019102  SSDP amplification: ordinary UPnP discovery from guests
-      #            to the firewall, 50+ a day
+      #   2019102  SSDP amplification: Tailscale's port mapper probing the
+      #            gateway, ~3,000 a day. Disabled in OPNsense since
+      #            2026-11-08; kept here in case it is re-enabled.
       #   2012811  .tk lookups   } the torrent client resolving trackers
       #   2027757  .to lookups   }
+      #   2003068  SSH scan outbound: has its own rule below, which pages on
+      #            volume instead of on every hit.
       # Pure noise with no investigative value is better disabled in
       # OPNsense (Rules tab, by SID). Exclude here only what should stay on
       # the dashboard. The list is a regex; add to it with `|`.
@@ -60,10 +65,10 @@ groups:
               queryType: instant
               expr: |
                 sum by (alert_signature_id, alert_signature, alert_severity, src_ip, dest_ip) (
-                  count_over_time({host="opnsense"} |= "event_type" | json
+                  count_over_time({job="suricata"} |= "event_type" | json
                     | event_type="alert"
                     | alert_severity=~"1|2"
-                    | alert_signature_id!~"2019102|2012811|2027757"
+                    | alert_signature_id!~"2019102|2012811|2027757|2003068"
                     | __error__="" [5m])
                 )
           - refId: B
@@ -83,3 +88,79 @@ groups:
                 - evaluator:
                     type: gt
                     params: [0]
+
+      # ---------------------------------------------------------------
+      # 2003068, ET SCAN Potential SSH Scan OUTBOUND, fires on every fifth SYN
+      # to port 22 within 120 s from one inside host. Ordinary work trips it:
+      # git over SSH (GitHub's addresses change and were never listable) and
+      # SSH or Ansible from the dev and work VMs to their own servers. In the
+      # 30 days to 2026-11-13 it fired 73 times, all from ubuntu-dev and
+      # optimuslabs, at most 7 alerts and 4 destinations per source in any
+      # 15 minutes. A scan or an outbound brute force trips it every few
+      # seconds, so this rule pages per SOURCE on volume instead: 20 alerts
+      # (about 100 SYNs) or 10 different destinations in 15 minutes. Every
+      # single hit stays on the Suricata Alerts dashboard. A slow scan below
+      # that (one SYN every ~9 s) does not page; lower the numbers if that
+      # matters more than the occasional false alarm from a large Ansible run.
+      #
+      # The scan_window label tells the security.message template to word the
+      # message per source rather than per flow. The template only shows
+      # values B (alerts) and E (destinations); keep those refIds.
+      - uid: security-suricata-ssh-scan
+        title: Suricata Outbound SSH Scan
+        condition: C
+        for: 0m
+        labels:
+          route: security
+          severity: warning
+          scan_window: 15 minutes
+        annotations:
+          summary: 'Suricata: outbound SSH scan from {{ $labels.src_ip }}'
+          runbook: "Suricata Alerts dashboard, Search = 2003068, for the destinations; then what on that host is connecting out on port 22"
+          __dashboardUid__: suricata-alerts
+          __panelId__: "10"
+        noDataState: OK
+        execErrState: Error
+        data:
+          - refId: A
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: loki
+            model:
+              refId: A
+              editorMode: code
+              queryType: instant
+              expr: |
+                sum by (alert_signature_id, alert_signature, alert_severity, src_ip) (
+                  count_over_time({job="suricata"} |= "2003068" | json
+                    | event_type="alert"
+                    | alert_signature_id="2003068"
+                    | __error__="" [15m])
+                )
+          - refId: D
+            relativeTimeRange: {from: 900, to: 0}
+            datasourceUid: loki
+            model:
+              refId: D
+              editorMode: code
+              queryType: instant
+              expr: |
+                count by (alert_signature_id, alert_signature, alert_severity, src_ip) (
+                  sum by (alert_signature_id, alert_signature, alert_severity, src_ip, dest_ip) (
+                    count_over_time({job="suricata"} |= "2003068" | json
+                      | event_type="alert"
+                      | alert_signature_id="2003068"
+                      | __error__="" [15m])
+                  )
+                )
+          - refId: B
+            datasourceUid: __expr__
+            model: {refId: B, type: reduce, expression: A, reducer: last}
+          - refId: E
+            datasourceUid: __expr__
+            model: {refId: E, type: reduce, expression: D, reducer: last}
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: math
+              expression: "$B >= 20 || $E >= 10"
