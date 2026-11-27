@@ -1,0 +1,137 @@
+---
+# Internet outage tracker. See defaults/main.yml for the per-host settings.
+
+- name: Report the resolved internet probe shape
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: internet_probe_enabled={{ internet_probe_enabled }}"
+
+- name: Install the internet probe
+  when: internet_probe_enabled | bool
+  block:
+    - name: Check the per-host settings
+      ansible.builtin.assert:
+        that:
+          - internet_probe_site is regex('^[a-z0-9-]+$')
+          - internet_probe_lan_targets | select('match', '^[a-z0-9-]+=\\S+:[0-9]+$') | list | length == internet_probe_lan_targets | length
+          - internet_probe_lan_targets | map('regex_replace', '=.*$', '') | unique | list | length == internet_probe_lan_targets | length
+          - internet_probe_paths | select('match', '^[a-z0-9-]+=(tcp|dns):[^\\s,]+:[0-9]+(,(tcp|dns):[^\\s,]+:[0-9]+)*$') | list | length == internet_probe_paths | length
+          - internet_probe_paths | map('regex_replace', '=.*$', '') | unique | list | length == internet_probe_paths | length
+        fail_msg: >-
+          {{ inventory_hostname }} enables internet_probe but needs internet_probe_site
+          (lowercase letters, digits, dashes) in its inventory entry, and every
+          internet_probe_lan_targets entry as NAME=HOST:PORT with a unique NAME
+          of lowercase letters, digits and dashes, and every internet_probe_paths
+          entry as NAME=KIND:HOST:PORT[,KIND:HOST:PORT...] (KIND tcp or dns) with a unique NAME.
+
+    - name: Ensure the probe directory exists
+      ansible.builtin.file:
+        path: "{{ internet_probe_home }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the probe script
+      ansible.builtin.copy:
+        src: internet-probe.py
+        dest: "{{ internet_probe_home }}/internet-probe.py"
+        owner: root
+        group: root
+        mode: "0755"
+        validate: /usr/bin/python3 -m py_compile %s
+      notify: Restart internet-probe
+
+    - name: Ensure the textfile collector directory exists
+      ansible.builtin.file:
+        path: "{{ internet_probe_textfile | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install the probe systemd service
+      ansible.builtin.template:
+        src: internet-probe.service.j2
+        dest: /etc/systemd/system/internet-probe.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart internet-probe
+
+    - name: Enable and start the probe
+      ansible.builtin.systemd:
+        name: internet-probe.service
+        enabled: true
+        state: started
+        daemon_reload: true
+      when: not ansible_check_mode
+
+    # A file left by an earlier run must not satisfy the check below, so note
+    # the time first and wait for a file written after it.
+    - name: Note the time before the restart
+      ansible.builtin.command: date +%s.%N
+      register: internet_probe_marker
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Flush handlers so the first round runs before the check
+      ansible.builtin.meta: flush_handlers
+
+    # The first file is written after the first round, which is bounded by the
+    # probe timeout; 20 s is generous. On a host that already ran the probe the
+    # file exists, so the check after this waits for a fresh timestamp.
+    - name: Wait for the first metrics file
+      ansible.builtin.wait_for:
+        path: "{{ internet_probe_textfile }}"
+        search_regex: 'internet_probe_timestamp_seconds'
+        timeout: 20
+      when: not ansible_check_mode
+
+    - name: Read the first round result, written after the restart
+      ansible.builtin.command: grep -E '^internet_probe_(up|timestamp_seconds)' {{ internet_probe_textfile }}
+      register: internet_probe_first
+      changed_when: false
+      until: >-
+        internet_probe_first.rc == 0 and
+        (internet_probe_first.stdout_lines | select('match', '^internet_probe_timestamp_seconds') | list | first
+         | regex_replace('^.* ', '') | float) > (internet_probe_marker.stdout | float)
+      retries: 12
+      delay: 2
+      when: not ansible_check_mode
+
+    - name: Report the first round result
+      ansible.builtin.debug:
+        msg: "{{ internet_probe_first.stdout_lines }}"
+      when: not ansible_check_mode
+
+- name: Remove the internet probe where it is not enabled
+  when: not (internet_probe_enabled | bool)
+  block:
+    - name: Check for a leftover probe service
+      ansible.builtin.stat:
+        path: /etc/systemd/system/internet-probe.service
+      register: internet_probe_unit
+
+    - name: Stop and disable the leftover probe
+      ansible.builtin.systemd:
+        name: internet-probe.service
+        enabled: false
+        state: stopped
+      when: internet_probe_unit.stat.exists and not ansible_check_mode
+
+    # The data directory, with the ledger, is deliberately left alone. The
+    # textfile goes too, or Alloy would keep shipping its last values.
+    - name: Remove the leftover probe files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/internet-probe.service
+        - "{{ internet_probe_home }}"
+        - "{{ internet_probe_textfile }}"
+      when: internet_probe_unit.stat.exists
+
+    - name: Reload systemd after removing the leftover probe unit
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: internet_probe_unit.stat.exists and not ansible_check_mode

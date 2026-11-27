@@ -1,0 +1,55 @@
+# Managed by ansible/roles/internet_probe. Do not edit by hand.
+# Probes the internet from site "{{ internet_probe_site }}" every {{ internet_probe_interval }} s:
+# textfile metrics for Alloy, outage lines in the journal, a ledger in {{ internet_probe_data_dir }}.
+[Unit]
+Description=Internet outage probe for site {{ internet_probe_site }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 {{ internet_probe_home }}/internet-probe.py \
+  --site {{ internet_probe_site }} \
+  --interval {{ internet_probe_interval }} \
+  --timeout {{ internet_probe_timeout }} \
+  --confirm-rounds {{ internet_probe_confirm_rounds }} \
+{% for t in internet_probe_targets %}
+  --target {{ t }} \
+{% endfor %}
+{% for t in internet_probe_lan_targets %}
+  --lan-target {{ t }} \
+{% endfor %}
+{% for t in internet_probe_paths %}
+  --path {{ t }} \
+{% endfor %}
+{% if internet_probe_gateway | length > 0 %}
+  --gateway {{ internet_probe_gateway }} \
+{% endif %}
+  --dns-name {{ internet_probe_dns_name }} \
+  --textfile {{ internet_probe_textfile }} \
+  --textfile-every {{ internet_probe_textfile_every }} \
+  --data-dir {{ internet_probe_data_dir }}
+Restart=always
+RestartSec=5
+
+# Root only so it can write into the root-owned textfile directory; every
+# capability is dropped and the filesystem is read-only apart from the two
+# paths it writes. Nothing here needs a credential.
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+StateDirectory={{ internet_probe_data_dir | basename }}
+ReadWritePaths={{ internet_probe_textfile | dirname }}
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,87 @@
+---
+# `nethist` and the agent skill, on a workstation where agents run. Needs Docker
+# there (nethist runs psql from a pinned postgres image). Runs as the login user,
+# not root: the password file and the skills live in that user's home.
+
+- name: Install nethist and the network-history skill
+  when: network_history_client_enabled | bool
+  become: false
+  block:
+    - name: Ensure the nethist directories exist
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ network_history_client_home }}/.local/bin", mode: "0755" }
+        - { path: "{{ network_history_client_home }}/.local/share/net-history", mode: "0755" }
+        - { path: "{{ network_history_client_home }}/.config/net-history", mode: "0700" }
+
+    - name: Install nethist
+      ansible.builtin.copy:
+        src: nethist.py
+        dest: "{{ network_history_client_home }}/.local/share/net-history/nethist.py"
+        mode: "0755"
+        validate: /usr/bin/python3 -m py_compile %s
+
+    - name: Install the nethist launcher
+      ansible.builtin.template:
+        src: nethist.j2
+        dest: "{{ network_history_client_home }}/.local/bin/nethist"
+        mode: "0755"
+
+    - name: Install the nethist connection settings
+      ansible.builtin.template:
+        src: nethist.conf.j2
+        dest: "{{ network_history_client_home }}/.config/net-history/nethist.conf"
+        mode: "0600"
+
+    - name: Read the reader password from the central host
+      ansible.builtin.slurp:
+        src: "{{ network_history_secret_dir }}/reader.password"
+      delegate_to: "{{ network_history_central_host }}"
+      become: true
+      register: nh_client_pw
+      no_log: true
+      when: network_history_client_fetch_password | bool and not ansible_check_mode
+
+    - name: Install the reader password
+      ansible.builtin.copy:
+        content: "{{ nh_client_pw.content | b64decode | trim }}\n"
+        dest: "{{ network_history_client_home }}/.config/net-history/reader.password"
+        mode: "0600"
+      no_log: true
+      when: network_history_client_fetch_password | bool and not ansible_check_mode
+
+    - name: Check the reader password file exists
+      ansible.builtin.stat:
+        path: "{{ network_history_client_home }}/.config/net-history/reader.password"
+      register: nh_client_pw_file
+      when: not (network_history_client_fetch_password | bool)
+
+    - name: Fail if the reader password file is missing
+      ansible.builtin.fail:
+        msg: >-
+          {{ network_history_client_home }}/.config/net-history/reader.password is missing on
+          {{ inventory_hostname }}. Place the reader password there (mode 0600), or set
+          network_history_client_fetch_password: true.
+      when: not (network_history_client_fetch_password | bool) and not nh_client_pw_file.stat.exists
+
+    - name: Look for the Hermes skills directory
+      ansible.builtin.stat:
+        path: "{{ network_history_client_home }}/{{ network_history_hermes_skill_dir }}"
+      register: nh_hermes
+
+    - name: Ensure the skill directories exist
+      ansible.builtin.file:
+        path: "{{ network_history_client_home }}/{{ item }}/network-history"
+        state: directory
+        mode: "0755"
+      loop: "{{ network_history_skill_dirs + ([network_history_hermes_skill_dir] if nh_hermes.stat.exists else []) }}"
+
+    - name: Install the network-history skill
+      ansible.builtin.copy:
+        src: SKILL.md
+        dest: "{{ network_history_client_home }}/{{ item }}/network-history/SKILL.md"
+        mode: "0644"
+      loop: "{{ network_history_skill_dirs + ([network_history_hermes_skill_dir] if nh_hermes.stat.exists else []) }}"

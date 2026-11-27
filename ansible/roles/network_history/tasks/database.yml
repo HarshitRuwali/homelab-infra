@@ -1,0 +1,51 @@
+---
+# Creates the net_history database, the writer and reader roles and the grants on
+# the PostgreSQL host (the memory LXC), through the superuser over the container's
+# local socket. The SQL goes in on stdin and the passwords never appear on a
+# command line or in task output. It touches no other database.
+#
+# In --check mode the SQL is shown (with the passwords masked) and nothing runs.
+
+- name: Read the database passwords
+  ansible.builtin.slurp:
+    src: "{{ network_history_secret_dir }}/{{ item }}.password"
+  loop:
+    - writer
+    - reader
+  register: nh_pw
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Show the SQL that will run on the PostgreSQL host
+  ansible.builtin.debug:
+    msg: "{{ lookup('ansible.builtin.template', 'db-provision.sql.j2') }}"
+  vars:
+    network_history_writer_password: "<writer password>"
+    network_history_reader_password: "<reader password>"
+
+- name: Apply the database setup on the PostgreSQL host
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - -i
+      - "{{ network_history_db_container }}"
+      - psql
+      - -U
+      - "{{ network_history_db_superuser }}"
+      - -d
+      - "{{ network_history_db_admin_database }}"
+      - -v
+      - ON_ERROR_STOP=1
+      - -X
+      - -f
+      - "-"
+    stdin: "{{ lookup('ansible.builtin.template', 'db-provision.sql.j2') }}"
+  vars:
+    network_history_writer_password: "{{ nh_pw.results[0].content | b64decode | trim }}"
+    network_history_reader_password: "{{ nh_pw.results[1].content | b64decode | trim }}"
+  delegate_to: "{{ network_history_db_host }}"
+  register: nh_db
+  changed_when: "'net_history: created' in nh_db.stdout"
+  no_log: true
+  when: not ansible_check_mode

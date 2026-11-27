@@ -102,10 +102,13 @@
   until: gd_health is succeeded
   when: not ansible_check_mode
 
+- name: Resolve the Grafana admin login
+  ansible.builtin.include_tasks: admin_user.yml
+
 - name: Read back the provisioned dashboards
   ansible.builtin.uri:
     url: "{{ grafana_api_url }}/api/search?type=dash-db&limit=500"
-    user: "{{ grafana_admin_user }}"
+    user: "{{ grafana_api_user }}"
     password: "{{ vault_grafana_admin_password }}"
     force_basic_auth: true
     status_code: [200]

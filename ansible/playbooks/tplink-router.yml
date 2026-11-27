@@ -1,0 +1,17 @@
+---
+# Per-client traffic from a TP-Link router, polled from a host on its LAN.
+#
+#   ansible-playbook playbooks/tplink-router.yml --limit skullsaints --check --diff
+#   ansible-playbook playbooks/tplink-router.yml --limit skullsaints
+#
+# Inert unless the host's inventory entry sets tplink_router_poll_enabled and
+# the per-host values listed in roles/tplink_router_poll/defaults/main.yml.
+# The router password is placed on the host by hand, never by Ansible.
+# Dashboard: monitoring/grafana/dashboards/fleet/router-tplink-blr.json (playbooks/dashboards.yml).
+
+- name: Deploy the TP-Link router poller
+  hosts: monitored
+  become: true
+  gather_facts: false
+  roles:
+    - tplink_router_poll

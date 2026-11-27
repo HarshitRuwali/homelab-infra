@@ -1,0 +1,12 @@
+# Managed by ansible/roles/network_history. Do not edit by hand.
+[Unit]
+Description=Run net-history hourly and after boot
+
+[Timer]
+OnBootSec={{ network_history_boot_delay }}
+OnCalendar=*:{{ network_history_timer_minute }}
+Persistent=true
+Unit=net-history.service
+
+[Install]
+WantedBy=timers.target

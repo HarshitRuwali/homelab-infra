@@ -149,6 +149,188 @@ except the physical NICs.
     another, so it usually tops **Busiest Guest Now** and shows traffic on both
     bridges. It is doing exactly that much work.
 
+## Router TPLink Blr
+
+`uid: router-tplink-blr`: per-client traffic on the TP-Link router on
+skullsaints' LAN, a different network from the home LAN. Data comes from
+`ansible/roles/tplink_router_poll` on skullsaints; see
+[the metrics](../reference/metrics.md#tp-link-router).
+
+| Panel | Query intent |
+|---|---|
+| Poller, Last poll | whether the poller is reading the router, and how long ago it ran |
+| Clients online, Downloaded, Uploaded | totals over the time picker, from the Wi-Fi counters |
+| Usage per client in the selected range | download, upload and total per client, largest first |
+| Hourly usage per client, Daily usage per client | stacked bars, download plus upload |
+| Download / Upload rate per client | five-minute averages in bits per second |
+| Clients | every client the router knows, with IP, MAC, band and whether it is online |
+| Signal, Link rate, Retransmissions per client | Wi-Fi quality |
+| Internet, Router CPU, Router memory used | the router itself |
+| Router's own internet counter vs Wi-Fi clients | for comparison only; the router's counter misses hardware-forwarded traffic |
+| Router log forwarding | whether the router's own log still reaches skullsaints |
+| History, 30 days (Loki) | usage per client and per day over up to 30 days, every connection and disconnection, and the router's log |
+| Monthly history (permanent) | Usage per client per month, Top 10 clients per month | `net.monthly_client` for router `blr`, kept forever |
+
+The `$client` picker filters the per-client panels by MAC. Two devices can share
+a hostname, so every legend shows the MAC as well.
+
+!!! info "Gaps are expected"
+    The poller skips a minute while someone is logged in to the router's web
+    page, and nothing is collected while skullsaints is off or on another
+    network. Alloy on skullsaints buffers what it has collected while the link
+    to central is down and sends it on reconnect. Usage totals use
+    `increase()`, which adds across counter restarts. A gap just loses the
+    traffic inside it.
+
+!!! info "How far back"
+    The live panels read Prometheus, which keeps 7 days. The History row reads
+    Loki, which keeps 30. Beyond that, the usage ledger on skullsaints
+    (`/var/lib/tplink-router-poll/usage.db`) keeps every hour and every
+    connection for good, and is copied to ubuntu-dev nightly
+    (`~/.local/share/tplink-router-blr`). Read it with `--report`; see
+    [the role](https://harshitruwali.github.io/homelab-infra/ansible/reference/playbooks/#tplink_router_poll).
+
+## Network dashboards: tiers and the history row
+
+[Internet and Usage](#internet-and-usage), [Home ISP](#home-isp), [Inter-LAN](#inter-lan)
+and [Router TPLink Blr](#router-tplink-blr) share two additions, described in
+[Data flow](../architecture/data-flow.md#long-term-network-history).
+
+- **A `Prometheus` picker (`ds`)** at the top chooses the tier every Prometheus panel
+  reads: `Prometheus (network, 90 d)` (the default, 30 s resolution, 90 days) or
+  `Prometheus` (the central one, 15 s, 7 days, every metric). A range beyond 7 days
+  needs the 90-day tier. Right after the role is first deployed the 90-day store is
+  empty; pick `Prometheus` until it fills. Loki panels do not follow the picker.
+  The quick ranges include the last 30 and 90 days.
+- **A row "Monthly history (permanent)"** at the bottom, built on the PostgreSQL
+  datasource `Network history` (read-only role `net_history_reader`). These panels
+  always show the last 24 months and ignore the time picker. They read the monthly
+  views of the `net` schema; the outage lists read `net.outage_events`. They stay empty
+  until `net-history` has run. Monthly availability is `1 - downtime / observed time`
+  from the monthly sums.
+
+## Internet and Usage
+
+`uid: internet-usage`: is the internet up at each site, how long were the
+outages, and how much data was used and by whom. Default range 7 days. The
+`$site` picker (home, blr, homelab; multi, All by default) filters the probe
+panels. Outage data comes from `internet-probe` on rpi5, skullsaints and
+ubuntu-dev; see [Routers and firewall](routers.md#internet-uptime) and
+[the metrics](../reference/metrics.md).
+
+| Row | Panels | Query intent |
+|---|---|---|
+| Internet now | Internet now, Availability, Outages, Downtime, Current outage, Last outage ended, Last outage duration, Probe freshness, Ledger | one value per selected site; availability is `1 - downtime / range` from confirmed outages; freshness is red over 60 s; Ledger is red when the poller cannot write its outage ledger |
+| Uptime | Internet up or down, Gateway up or down, Downtime per day, Outages per day | state timelines (lowest value per interval, so a short outage is not averaged away) and daily bars |
+| Outages (30 days, Loki) | Outages, Outage events and blips | one row per closed outage (site, start, end, duration, cause, closed by) and the raw event lines, both from the `internet-probe.service` journal |
+| Latency and loss | Round-trip time per target, Gateway round-trip time, Failed-round ratio, Target failures per minute | probe round-trip times and how often rounds and single targets fail |
+| Home internet (ER605) | Download and upload rate, Downloaded and Uploaded in range, Daily usage, Hourly usage | the ER605 WAN port counters (`er605_if_octets_total{role="wan"}`, in is download, out is upload) |
+| Home internet per WAN | Daily usage per WAN, Household usage per WAN in range | `er605_if_octets_total{role="wan"}` joined to `er605_wan_info` on `interface`; with one WAN, or before the poller exports `er605_wan_info`, everything is `wan1` |
+| Who used how much | Homelab vs home internet, Homelab segments (bar gauge and table), Top 10 guests sent and received, Blr usage per client and per day, What is not measured | OPNsense per segment, the hypervisor's view per guest (the Guest Traffic queries), the Archer C5's Wi-Fi clients (the Router TPLink Blr queries) |
+| Monthly history (permanent) | Availability, Downtime, Outages per month; Household download and upload, usage per WAN, bytes per segment per month; Top 5 guests per month; Outage history | `net.monthly_internet`, `monthly_wan`, `monthly_segment`, `monthly_guest` and `net.outage_events` (kinds `internet`, `path`, `wan`) |
+
+Links at the top open [Router TPLink Blr](#router-tplink-blr),
+[Guest Traffic](#guest-traffic) and [Network](#network); each of those links
+back here.
+
+!!! warning "Downtime means confirmed outages only"
+    An outage is 2 failed rounds in a row (about 10 s at the default 5 s round).
+    A single failed round is a blip: it shows in the up/down timeline and the
+    event log but not in the availability, outage or downtime figures.
+
+!!! warning "OPNsense WAN is an upper bound for the homelab"
+    OPNsense WAN also carries traffic between the home LAN and the homelab
+    (Plex to a Mac at home, for example), so it overstates the homelab's
+    internet use, and ER605 WAN minus OPNsense WAN is not the household's
+    share. Per-guest bars count all guest traffic, not only internet.
+
+!!! info "No per-device usage for home devices"
+    The ER605 forwards in hardware and its per-IP statistics see about 4% of
+    the traffic. Per-device home usage needs the planned port mirror; see
+    [ER605](routers.md#er605-home-router). Home usage is a household total.
+
+!!! info "How far back"
+    Panels that read Prometheus (everything except the Outages table and the
+    event log) reach back 7 days, Loki 30. Beyond that, each host's outage
+    ledger keeps every outage; read it with `internet-probe.py --report`.
+
+## Inter-LAN
+
+`uid: inter-lan`: is each site and segment reachable from the others, and how
+much traffic flows between each pair of segments. Default range 24 hours. The
+`$site` picker filters the connectivity row; `$src_segment` (From) and
+`$dst_segment` (To) filter the traffic row. Connectivity comes from the
+`internet-probe` LAN targets; segment pairs come from `segflows.py` on the
+firewall; see [Routers and firewall](routers.md#inter-segment-traffic) and
+[the metrics](../reference/metrics.md#inter-segment-traffic).
+
+| Row | Panels | Query intent |
+|---|---|---|
+| Connectivity | LAN targets up or down, LAN availability and outages in range, LAN round-trip time per target, LAN outages (30 days, Loki) | one lane per site and target from `internet_probe_lan_up` (lowest value per interval, so a short outage shows); availability is `1 - downtime / range` from confirmed outages; the Loki table lists closed outages from the `lan_up` journal lines |
+| Traffic between segments | Bytes between segments (bar gauge), Segment pairs table, Matrix, Rate between segments | `increase()` and `rate()` of `opnsense_segflow_*_total` per source and destination segment; the matrix has the source in rows and the destination in columns |
+| Segments | Received per segment, Transmitted per segment | `opnsense_interfaces_{received,transmitted}_bytes_total` for LAN, TENANT, DMZ, LAB, LEASE and WAN; these see every interface, unlike the pair counters |
+| Tailnet | Tailnet received per host, Tailnet transmitted per host | `node_network_{receive,transmit}_bytes_total{device="tailscale0"}`, the inter-site link |
+| Coverage | Collector lag, Last run, Run duration, Interfaces NetFlow captures, Segments NetFlow does not capture, What is not measured | whether `segflows.py` is running and what it can see; WAN is never captured and is not listed, so an empty table means every internal interface is captured |
+| Monthly history (permanent) | LAN availability and outages per target, bytes per segment pair, bytes per segment, tailnet per host, LAN outage history | `net.monthly_lan`, `monthly_segflow`, `monthly_segment`, `monthly_tailnet` and `net.outage_events` (kind `lan`) |
+
+Links at the top open [Internet and Usage](#internet-and-usage),
+[Guest Traffic](#guest-traffic) and [Network](#network).
+
+!!! warning "Only captured interfaces produce flows"
+    The pair panels count what crosses a NetFlow-captured firewall interface;
+    the captured interfaces are listed in the Coverage row. A flow between two
+    uncaptured segments is invisible, and traffic inside one segment or inside
+    the home LAN switch never reaches the firewall, captured or not. The
+    Segments row reads whole-interface counters, so it still shows the volume
+    of an uncaptured segment.
+
+!!! info "How far back"
+    Panels read Prometheus (7 days) except the Loki outage table (30 days).
+    Beyond that, the firewall's ledger keeps hourly pair totals and the top
+    host pairs per day for good: `segflows.py --report pairs|hosts|hour|day`.
+
+## Home ISP
+
+The household internet and the ER605 router behind it: usage, quality, router
+health and outages. Folder Monitoring (`fleet/`), uid `home-isp`, default range 24 hours,
+refresh 1 minute. The ER605 is read over SNMPv3 every 30 s by
+[`er605_snmp`](https://harshitruwali.github.io/homelab-infra/ansible/reference/playbooks/#er605_snmp)
+on ubuntu-dev; availability and latency come from the `internet-probe` poller on
+rpi5 (`site="home"`), which sits behind the ER605 only. Metrics are in
+[the reference](../reference/metrics.md#er605-home-router). Links at the top open
+[Internet and Usage](#internet-and-usage) and [Router TPLink Blr](#router-tplink-blr).
+
+| Row | Panels | Query intent |
+|---|---|---|
+| Overview | Internet now, Availability over the range, WAN download now and upload now, Downloaded and Uploaded in range, PPPoE session age, PPPoE reconnects in range, Router uptime, Poller last read | the state of the line and the router at a glance; availability is `1 - downtime / range` from confirmed outages; the poller is red over 600 s |
+| Usage | Household WAN throughput, Hourly volume, Daily volume, Daily volume 30 days (ledger), Downloaded and Uploaded last 24 h, p95 and peak 1-minute rate, Household vs t7920, Homelab (OPNsense WAN) vs household, Homelab share | WAN counters `er605_if_octets_total{role="wan"}`; p95 and peak are `quantile_over_time` and `max_over_time` over a 1-minute rate subquery across the selected range; the 30-day bars come from the ledger's `usage` lines in Loki |
+| Quality | Round-trip time per target, Gateway round-trip time, Failed-round ratio, WAN and LAN errors and discards, PPPoE session age, PPPoE reconnects | probe latency and loss from rpi5, router error counters, and the PPPoE session sawtooth and reconnect bars |
+| Router | Router CPU per core, Router memory, Router uptime, Interface up or down, PPPoE session traffic | `er605_cpu_percent`, `er605_memory_bytes`, `er605_uptime_seconds`, `er605_if_up`, `er605_pppoe_octets_total` |
+| Outages (30 days, Loki) | Internet outages (home), PPPoE reconnects, Outage events and blips, Router events | the `internet-probe.service` journal on rpi5, and the `pppoe_reconnect`, `router_reboot` and `poll_error` lines of the `er605-poll` container |
+| History, 30 days (Loki) | Downloaded and Uploaded in range (ledger), Hourly volume (ledger), Usage lines | the poller's hourly `usage` lines, for ranges beyond Prometheus's 7 days |
+| WAN `$wan` (one row per WAN) | WAN state, Downloaded, Uploaded, PPPoE reconnects, Path availability, WAN up or down, Path up or down, Throughput, Daily volume, PPPoE session age and reconnects, Path round-trip time and failures | the row repeats for each value of the `$wan` picker (from `er605_wan_info`; `wan1` alone while there is one WAN or before the poller exports it). Byte panels join `er605_if_octets_total{role="wan"}` to `er605_wan_info` on `interface`; path panels read `internet_probe_path_*` of the path named like the WAN and say "no path probe" until one is configured. The overview totals stay summed over all WANs |
+| Monthly history (permanent) | Download and upload per month per WAN, PPPoE reconnects, availability, path availability, Monthly volume per WAN, Outage history (home) | `net.monthly_wan` (a `wan = 'total'` row sums the WANs; the table shows `partial_days`, the days of the month whose data covered less than the whole day), `monthly_internet`, `monthly_path` and `net.outage_events` |
+
+!!! warning "OPNsense WAN is an upper bound for the homelab"
+    OPNsense WAN also carries traffic between the home LAN and the homelab
+    (Plex to a Mac at home, for example), so the homelab share overstates its
+    internet use, and ER605 WAN minus OPNsense WAN is not the rest of the
+    household's share.
+
+!!! info "Rates are smoothed, totals are exact"
+    The ER605 forwards in hardware and syncs its counters tens of seconds late,
+    so panels use 5 minute rates, and the p95 and peak use 1 minute rates, the
+    finest that mean anything. Volumes are exact. Volume panels use binary units
+    (GiB), as the other router dashboards do; the poller's `--report` prints
+    decimal GB.
+
+!!! info "How far back"
+    Panels that read Prometheus reach back 7 days, Loki 30. Beyond that the
+    ledger on ubuntu-dev keeps every hour: `--report hour|day|month|reconnects`,
+    see [the role](https://harshitruwali.github.io/homelab-infra/ansible/reference/playbooks/#er605_snmp).
+    A ledger hour is a UTC hour, so a Loki hourly bar sits up to an hour after
+    its traffic and a daily bar is a UTC day.
+
 ## Suricata Alerts
 
 `uid: suricata-alerts`: what the IDS on the firewall is flagging. Suricata runs

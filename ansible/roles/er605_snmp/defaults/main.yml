@@ -1,0 +1,67 @@
+---
+# Household ISP monitoring: the ER605 home router read over SNMPv3 by a local
+# snmp_exporter, and a stdlib Python poller that turns its counters into
+# textfile metrics, an hourly usage ledger and journal lines. Two containers
+# in one compose project, on a Docker host on the router's LAN. See
+# files/er605-poll.py for what is read and how.
+#
+# OFF BY DEFAULT, ENABLED PER HOST in the local inventory:
+#
+#   er605_snmp_enabled: true
+#
+# The SNMPv3 credentials are NOT managed here. The snmp_exporter auth file is
+# placed on the host once, by hand, root-only. It defines the auth module
+# named er605_snmp_auth_name:
+#
+#   sudo install -d -m 0700 /etc/er605-snmp
+#   sudo install -m 0600 -o root -g root <auth file> /etc/er605-snmp/auth.yml
+#
+# The role fails if it is missing or not root:root 0600/0400, and never
+# templates, copies or prints it.
+#
+# A manual setup (containers named er605-snmp and er605-poll started by hand)
+# blocks the role until it is removed; see er605_snmp_replace_manual.
+er605_snmp_enabled: false
+
+# The router's LAN address; the exporter reads SNMP from it.
+er605_snmp_router: 10.10.0.1
+# The auth module in auth.yml.
+er605_snmp_auth_name: er605
+
+# The WANs the router has, one entry per ISP. interface is the ER605 ifName
+# without the "default/" prefix; pppoe is the ifName of the PPPoE session
+# interface, empty when the WAN is not PPPoE; isp is a free label for the
+# dashboards. Names are lowercase letters, digits and dashes. A second ISP on
+# the ER605's eth2 (DHCP) would add:
+#
+#   - {name: wan2, interface: eth2, pppoe: "", isp: "Second ISP"}
+#
+# Every WAN interface is counted with role="wan", so sum(...{role="wan"}) stays
+# the household total. Ledger history from before this variable is wan1.
+er605_snmp_wans:
+  - {name: wan1, interface: eth1, pppoe: pe-wan1_poe, isp: ""}
+
+# Pinned by tag. Read the release notes before moving: the exporter's flags
+# and its bundled snmp.yml (module names) change between releases.
+er605_snmp_exporter_image: prom/snmp-exporter:v0.29.0
+er605_snmp_poll_image: python:3.13-slim
+
+# host:port the exporter listens on. Loopback: only the poller reads it.
+er605_snmp_listen: 127.0.0.1:9116
+
+# Seconds between polls. The ER605 syncs its counters tens of seconds late,
+# so 30 s is enough and rates under a minute are not meaningful.
+er605_snmp_interval: 30
+# Days of raw CSV kept (gzipped after 2 days). The usage ledger usage.db is
+# never pruned.
+er605_snmp_keep_days: 400
+
+# When true, containers named er605-snmp or er605-poll that are NOT part of
+# this compose project (a manual setup) are removed with `docker rm -f`
+# instead of failing the run. Their data directories are never touched.
+er605_snmp_replace_manual: false
+
+er605_snmp_home: /opt/er605-snmp
+er605_snmp_secret_dir: /etc/er605-snmp
+er605_snmp_data_dir: /var/lib/er605-snmp
+er605_snmp_textfile: "{{ alloy_textfile_dir }}/er605.prom"

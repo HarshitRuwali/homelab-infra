@@ -343,6 +343,19 @@ service configd restart
 
 With the producer gone, `Firewall Stats Stopped` fires after about 10 minutes.
 
+### segflows
+
+A second firewall cron script, `security/opnsense/segflows/`, counts the
+traffic between network segments from the NetFlow records `flowd` already
+keeps. It does not use syslog: it writes Prometheus counters to the
+node_exporter textfile directory and a permanent ledger to `/var/db/segflows`.
+First capture every internal interface with `netflow-capture.php` (dry run, then `--apply`;
+`--revert` puts the list back to `opt1,opt4`), then install it the same way as `pfstats`
+(`sh install.sh`, then `sh install.sh --apply`). The capture step, what it measures, what it
+cannot see and how to read the ledger are in
+[Routers and firewall](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/routers/#inter-segment-traffic).
+`ansible/tests/segflows-test.py` runs it on fixture flows.
+
 ### pve-firewall
 
 The Proxmox firewall drops tenant and lease traffic that breaks its rules, and

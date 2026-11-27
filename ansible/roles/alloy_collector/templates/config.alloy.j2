@@ -522,6 +522,27 @@ loki.process "pve_firewall" {
 }
 {% endif %}
 
+{% for t in alloy_extra_scrape_targets | default([]) %}
+
+// --- Extra scrape target: {{ t.job }} ({{ t.address }}) ---------------------
+// A device that cannot run Alloy (FreeBSD firewall, an exporter container)
+// scraped from this host. host and role are set on the target, as for the
+// firewall syslog above, so the series are not stamped with THIS host's
+// identity by loki.write/remote_write external_labels.
+prometheus.scrape "extra_{{ t.job | regex_replace('[^A-Za-z0-9_]', '_') }}" {
+  targets = [{
+    "__address__" = "{{ t.address }}",
+    "instance"    = "{{ t.instance | default(t.host) }}",
+    "host"        = "{{ t.host }}",
+    "role"        = "{{ t.role }}",
+  }]
+  job_name        = "{{ t.job }}"
+  scrape_interval = "{{ t.interval | default(alloy_scrape_interval) }}"
+  scrape_timeout  = "{{ t.timeout | default('10s') }}"
+  forward_to      = [prometheus.remote_write.central.receiver]
+}
+{% endfor %}
+
 {% if inventory_hostname in groups['wazuh_manager'] | default([]) %}
 
 // --- Wazuh alerts --------------------------------------------------------

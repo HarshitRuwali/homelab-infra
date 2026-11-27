@@ -1,0 +1,34 @@
+---
+# Long-term network history: a 90-day Prometheus tier, permanent daily rows in
+# PostgreSQL with monthly views, Grafana datasources for both, and the nethist
+# client plus agent skill on workstations.
+#
+#   ansible-playbook playbooks/network-history.yml --check --diff
+#   ansible-playbook playbooks/network-history.yml
+#   ansible-playbook playbooks/network-history.yml --limit ubuntu-dev     # the client only
+#
+# Play 1 runs on the central host and delegates the database setup to the
+# PostgreSQL host (network_history_db_host, the memory LXC, which must be in the
+# inventory). In --check mode it prints the SQL it would run, with the passwords
+# masked, and changes nothing. It restarts Grafana when the datasource file
+# changes. Play 2 installs `nethist` and the skill where
+# network_history_client_enabled is set in the host's inventory entry.
+# Passwords are generated on the central host (roles/network_history/defaults/main.yml)
+# and never in git. Docs: monitoring/docs/architecture/data-flow.md.
+
+- name: Deploy the network history tiers on the central host
+  hosts: central
+  become: true
+  gather_facts: false
+  roles:
+    - network_history
+
+- name: Install nethist and the network-history skill
+  hosts: monitored
+  become: false
+  gather_facts: false
+  tasks:
+    - name: Install the client where it is enabled
+      ansible.builtin.import_role:
+        name: network_history
+        tasks_from: client.yml

@@ -1,0 +1,174 @@
+---
+# ER605 monitoring in a compose project. See defaults/main.yml for the
+# per-host settings and the auth file.
+
+- name: Report the resolved ER605 shape
+  ansible.builtin.debug:
+    msg: "{{ inventory_hostname }}: er605_snmp_enabled={{ er605_snmp_enabled }}"
+
+- name: Install the ER605 monitoring
+  when: er605_snmp_enabled | bool
+  block:
+    - name: Check the settings
+      ansible.builtin.assert:
+        that:
+          - er605_snmp_listen is regex('^[0-9.]+:[0-9]+$')
+          - er605_snmp_router is regex('^[0-9.]+$')
+          - er605_snmp_auth_name is regex('^[A-Za-z0-9_-]+$')
+          - er605_snmp_interval | int >= 10
+          - er605_snmp_keep_days | int >= 3
+          - er605_snmp_wans | length > 0
+          - er605_snmp_wans | map(attribute='name') | map('regex_search', '^[a-z0-9-]+$') | select | list | length == er605_snmp_wans | length
+          - er605_snmp_wans | map(attribute='interface') | map('regex_search', '^[A-Za-z0-9._-]+$') | select | list | length == er605_snmp_wans | length
+          - er605_snmp_wans | map(attribute='name') | unique | list | length == er605_snmp_wans | length
+          - er605_snmp_wans | map(attribute='interface') | unique | list | length == er605_snmp_wans | length
+          - er605_snmp_wans | map(attribute='isp', default='') | map('regex_search', '^[A-Za-z0-9 ._-]*$') | select('!=', None) | list | length == er605_snmp_wans | length
+        fail_msg: >-
+          {{ inventory_hostname }}: er605_snmp_listen must be address:port, er605_snmp_router an
+          address, er605_snmp_interval at least 10, er605_snmp_keep_days at least 3, and
+          er605_snmp_wans a non-empty list of {name, interface, pppoe, isp} with unique
+          lowercase names (letters, digits, dashes), unique interfaces and an isp label without commas.
+
+    - name: Check for the SNMPv3 auth file
+      ansible.builtin.stat:
+        path: "{{ er605_snmp_secret_dir }}/auth.yml"
+      register: er605_snmp_secret
+
+    - name: Fail if the auth file is missing
+      ansible.builtin.fail:
+        msg: >-
+          {{ er605_snmp_secret_dir }}/auth.yml is missing on {{ inventory_hostname }}. Place it by hand,
+          root-only (sudo install -d -m 0700 {{ er605_snmp_secret_dir }} and
+          sudo install -m 0600 -o root -g root <auth file> {{ er605_snmp_secret_dir }}/auth.yml);
+          it is never managed by Ansible. See roles/er605_snmp/defaults/main.yml.
+      when: not er605_snmp_secret.stat.exists
+
+    - name: Fail if the auth file is readable by others
+      ansible.builtin.fail:
+        msg: "{{ er605_snmp_secret_dir }}/auth.yml must be root:root 0600 or 0400."
+      when: >-
+        er605_snmp_secret.stat.pw_name != 'root' or
+        er605_snmp_secret.stat.mode not in ['0600', '0400']
+
+    # --format json prints one JSON object per container; Labels is one string
+    # of comma-separated key=value pairs. The name filter is a regex.
+    - name: Look for containers that are not part of this compose project
+      ansible.builtin.command:
+        argv:
+          - docker
+          - ps
+          - --all
+          - --filter
+          - name=^er605-snmp$
+          - --filter
+          - name=^er605-poll$
+          - --format
+          - json
+      register: er605_snmp_existing
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Work out which of them are manual
+      ansible.builtin.set_fact:
+        er605_snmp_manual: >-
+          {{ er605_snmp_existing.stdout_lines | default([]) | map('from_json')
+             | rejectattr('Labels', 'search', 'com.docker.compose.project=er605-snmp(,|$)')
+             | map(attribute='Names') | list }}
+
+    - name: Refuse to start while the manual containers exist
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} already has containers from a manual setup that this role does not
+          own: {{ er605_snmp_manual | join(', ') }}. They hold port {{ er605_snmp_listen }} and the
+          names the role needs. Stop and remove them, then run the playbook again:
+          docker rm -f {{ er605_snmp_manual | join(' ') }}
+          Their data (~/.local/share/er605-snmp) is not touched. Or set er605_snmp_replace_manual: true
+          to let the role remove them.
+      when: er605_snmp_manual | default([]) | length > 0 and not (er605_snmp_replace_manual | bool)
+
+    - name: Remove the manual containers
+      ansible.builtin.command:
+        argv: "{{ ['docker', 'rm', '-f'] + er605_snmp_manual }}"
+      changed_when: true
+      when: er605_snmp_manual | default([]) | length > 0 and er605_snmp_replace_manual | bool and not ansible_check_mode
+
+    - name: Ensure the directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - "{{ er605_snmp_home }}"
+        - "{{ er605_snmp_data_dir }}"
+        - "{{ er605_snmp_textfile | dirname }}"
+
+    - name: Install the poller script
+      ansible.builtin.copy:
+        src: er605-poll.py
+        dest: "{{ er605_snmp_home }}/er605-poll.py"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: /usr/bin/python3 -m py_compile %s
+      notify: Restart er605-poll
+
+    - name: Write the compose file
+      ansible.builtin.template:
+        src: compose.yml.j2
+        dest: "{{ er605_snmp_home }}/compose.yml"
+        owner: root
+        group: root
+        mode: "0644"
+        validate: docker compose --file %s config --quiet
+
+    - name: Start or update the containers
+      ansible.builtin.command:
+        argv: [docker, compose, --file, "{{ er605_snmp_home }}/compose.yml", up, --detach]
+      register: er605_snmp_up
+      changed_when: (er605_snmp_up.stdout ~ er605_snmp_up.stderr) is search('\\b(Started|Created|Recreated)\\b')
+      when: not ansible_check_mode
+
+    - name: Flush handlers so a new script is running before the check
+      ansible.builtin.meta: flush_handlers
+
+    # The first poll runs at start; a successful one proves the exporter, the
+    # auth file and the router in one read.
+    - name: Wait for the first successful poll
+      ansible.builtin.wait_for:
+        path: "{{ er605_snmp_textfile }}"
+        search_regex: '(?m)^er605_poll_success 1$'
+        timeout: 90
+      when: not ansible_check_mode
+
+    - name: Read the first poll result
+      ansible.builtin.command: grep -E '^er605_(poll_success|poll_duration_seconds|uptime_seconds)' {{ er605_snmp_textfile }}
+      register: er605_snmp_first
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Report the first poll result
+      ansible.builtin.debug:
+        msg: "{{ er605_snmp_first.stdout_lines }}"
+      when: not ansible_check_mode
+
+- name: Remove the ER605 monitoring where it is not enabled
+  when: not (er605_snmp_enabled | bool)
+  block:
+    - name: Check for a leftover compose project
+      ansible.builtin.stat:
+        path: "{{ er605_snmp_home }}/compose.yml"
+      register: er605_snmp_leftover
+
+    - name: Stop the leftover containers
+      ansible.builtin.command:
+        argv: [docker, compose, --file, "{{ er605_snmp_home }}/compose.yml", down]
+      changed_when: true
+      when: er605_snmp_leftover.stat.exists and not ansible_check_mode
+
+    - name: Remove the leftover compose directory
+      ansible.builtin.file:
+        path: "{{ er605_snmp_home }}"
+        state: absent
+      when: er605_snmp_leftover.stat.exists

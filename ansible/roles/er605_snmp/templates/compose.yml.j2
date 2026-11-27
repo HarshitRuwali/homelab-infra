@@ -1,0 +1,61 @@
+# Managed by ansible/roles/er605_snmp. Do not edit by hand.
+# ER605 monitoring: snmp_exporter (SNMPv3 credentials in a file placed by hand
+# in {{ er605_snmp_secret_dir }}, mounted read-only) and the poller that reads it.
+#
+# Both containers run as root INSIDE the container with every capability
+# dropped, a read-only root filesystem and no-new-privileges. Root because the
+# auth file is root:root 0600 (a non-root user could not read it) and the
+# textfile directory is root-owned (shared with other collectors).
+name: er605-snmp
+services:
+  er605-snmp:
+    image: {{ er605_snmp_exporter_image }}
+    container_name: er605-snmp
+    restart: unless-stopped
+    network_mode: host
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 64
+    volumes:
+      - {{ er605_snmp_secret_dir }}/auth.yml:/etc/snmp_exporter/auth.yml:ro
+    command:
+      - --config.file=/etc/snmp_exporter/snmp.yml
+      - --config.file=/etc/snmp_exporter/auth.yml
+      - --web.listen-address={{ er605_snmp_listen }}
+
+  er605-poll:
+    image: {{ er605_snmp_poll_image }}
+    container_name: er605-poll
+    restart: unless-stopped
+    network_mode: host
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    pids_limit: 64
+    depends_on: [er605-snmp]
+    tmpfs:
+      - /tmp
+    environment:
+      DATA: /data
+      TEXTFILE: /textfile
+      TEXTFILE_NAME: {{ er605_snmp_textfile | basename }}
+      INTERVAL: "{{ er605_snmp_interval }}"
+      KEEP_DAYS: "{{ er605_snmp_keep_days }}"
+      EXPORTER: "http://{{ er605_snmp_listen }}/snmp?target={{ er605_snmp_router }}&module=if_mib,system,hrDevice,hrStorage,hrSystem&auth={{ er605_snmp_auth_name }}"
+    volumes:
+      - {{ er605_snmp_home }}/er605-poll.py:/app/er605-poll.py:ro
+      - {{ er605_snmp_data_dir }}:/data
+      - {{ er605_snmp_textfile | dirname }}:/textfile
+    command:
+      - python3
+      - -u
+      - /app/er605-poll.py
+{% for w in er605_snmp_wans %}
+      - "--wan={{ w.name }}={{ w.interface }}{% if w.pppoe | default('') | length > 0 %},pppoe={{ w.pppoe }}{% endif %}{% if w.isp | default('') | length > 0 %},isp={{ w.isp }}{% endif %}"
+{% endfor %}
+      - run

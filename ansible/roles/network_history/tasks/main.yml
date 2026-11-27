@@ -1,0 +1,184 @@
+---
+# Long-term network history, central host. See defaults/main.yml for the tiers.
+
+# --- 90-day Prometheus tier -----------------------------------------------------
+- name: Ensure the 90-day Prometheus directories exist
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ network_history_prometheus_group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ network_history_prometheus_config_dir }}", owner: root, mode: "0750" }
+    - { path: "{{ network_history_prometheus_data_dir }}", owner: "{{ network_history_prometheus_user }}", mode: "0750" }
+
+- name: Install the 90-day Prometheus config (federation)
+  ansible.builtin.template:
+    src: prometheus-network.yml.j2
+    dest: "{{ network_history_prometheus_config_dir }}/prometheus.yml"
+    owner: root
+    group: "{{ network_history_prometheus_group }}"
+    mode: "0640"
+  notify: Restart prometheus-network
+
+- name: Install the 90-day Prometheus unit
+  ansible.builtin.template:
+    src: prometheus-network.service.j2
+    dest: /etc/systemd/system/prometheus-network.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart prometheus-network
+
+- name: Enable and start the 90-day Prometheus
+  ansible.builtin.systemd:
+    name: prometheus-network.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: not ansible_check_mode
+
+- name: Flush handlers so the checks below see the running config
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the 90-day Prometheus
+  ansible.builtin.uri:
+    url: "http://{{ network_history_prometheus_listen }}/-/ready"
+    status_code: [200]
+  register: nh_prom_ready
+  retries: 15
+  delay: 2
+  until: nh_prom_ready is succeeded
+  when: not ansible_check_mode
+
+# --- Passwords and the database (on the PostgreSQL host) ------------------------------
+- name: Ensure the secret directory exists
+  ansible.builtin.file:
+    path: "{{ network_history_secret_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# `creates` keeps an existing password; check mode never writes one.
+- name: Generate the database passwords once
+  ansible.builtin.shell: |
+    umask 077
+    /usr/bin/python3 -c 'import secrets; print(secrets.token_urlsafe(32))' > {{ network_history_secret_dir }}/{{ item }}.password
+  args:
+    creates: "{{ network_history_secret_dir }}/{{ item }}.password"
+  loop:
+    - writer
+    - reader
+  no_log: true
+
+- name: Set up the database and roles on the PostgreSQL host
+  ansible.builtin.include_tasks: database.yml
+
+# --- Grafana datasources ------------------------------------------------------------------
+- name: Read the reader password
+  ansible.builtin.slurp:
+    src: "{{ network_history_secret_dir }}/reader.password"
+  register: nh_reader_pw
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Install the Grafana datasources (90-day Prometheus and the history database)
+  ansible.builtin.template:
+    src: network-history-datasources.yml.j2
+    dest: "{{ network_history_grafana_provisioning_dir }}/network-history.yml"
+    owner: root
+    group: "{{ network_history_grafana_group }}"
+    mode: "0640"
+  vars:
+    network_history_reader_password: "{{ (nh_reader_pw.content | b64decode | trim) if nh_reader_pw.content is defined else '<reader password>' }}"
+  no_log: true
+  notify: Restart grafana-server
+
+# --- Aggregator ---------------------------------------------------------------------------------
+- name: Ensure the aggregator directory exists
+  ansible.builtin.file:
+    path: "{{ network_history_home }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# A virtualenv, not system packages: pg8000 stays out of the host's Python.
+- name: Install the PostgreSQL driver into a virtualenv
+  ansible.builtin.pip:
+    name: "{{ network_history_pg8000 }}"
+    virtualenv: "{{ network_history_home }}/venv"
+    virtualenv_command: python3 -m venv
+
+- name: Install the aggregator script
+  ansible.builtin.copy:
+    src: net-history.py
+    dest: "{{ network_history_home }}/net-history.py"
+    owner: root
+    group: root
+    mode: "0755"
+    validate: /usr/bin/python3 -m py_compile %s
+
+- name: Install the aggregator service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - net-history.service
+    - net-history.timer
+  notify: Reload systemd for net-history
+
+- name: Flush handlers so the unit files are loaded
+  ansible.builtin.meta: flush_handlers
+
+- name: Seed the daily rows from the central Prometheus once
+  ansible.builtin.command:
+    argv:
+      - "{{ network_history_home }}/venv/bin/python"
+      - "{{ network_history_home }}/net-history.py"
+      - --prometheus
+      - "http://{{ network_history_prometheus_listen }}"
+      - --central-prometheus
+      - "http://{{ network_history_central_prometheus }}"
+      - --loki
+      - "{{ network_history_loki_url }}"
+      - --er605-selector
+      - "{{ network_history_er605_selector }}"
+      - --db-host
+      - "{{ network_history_db_address }}"
+      - --db-port
+      - "{{ network_history_db_port }}"
+      - --db-name
+      - "{{ network_history_db_name }}"
+      - --db-user
+      - "{{ network_history_db_writer }}"
+      - --password-file
+      - "{{ network_history_secret_dir }}/writer.password"
+      - --backfill
+      - "{{ network_history_seed_days }}"
+      - --textfile
+      - "{{ network_history_textfile }}"
+    creates: "{{ network_history_secret_dir }}/.seeded"
+  register: nh_seed
+  when: network_history_seed_from_central | bool and not ansible_check_mode
+
+- name: Remember that the seed ran
+  ansible.builtin.file:
+    path: "{{ network_history_secret_dir }}/.seeded"
+    state: touch
+    mode: "0600"
+    modification_time: preserve
+    access_time: preserve
+  when: nh_seed is changed
+
+- name: Enable the aggregator timer
+  ansible.builtin.systemd:
+    name: net-history.timer
+    enabled: true
+    state: started
+  when: not ansible_check_mode

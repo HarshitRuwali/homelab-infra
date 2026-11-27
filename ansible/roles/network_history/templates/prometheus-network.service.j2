@@ -1,0 +1,39 @@
+# Managed by ansible/roles/network_history. Do not edit by hand.
+[Unit]
+Description=Prometheus, 90-day network tier (federates from the central Prometheus)
+Documentation=https://prometheus.io/docs/prometheus/latest/federation/
+After=network-online.target prometheus.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ network_history_prometheus_user }}
+Group={{ network_history_prometheus_group }}
+ExecStart={{ network_history_prometheus_bin }} \
+  --config.file={{ network_history_prometheus_config_dir }}/prometheus.yml \
+  --storage.tsdb.path={{ network_history_prometheus_data_dir }} \
+  --storage.tsdb.retention.time={{ network_history_retention_time }} \
+  --storage.tsdb.retention.size={{ network_history_retention_size }} \
+  --web.listen-address={{ network_history_prometheus_listen }}
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+# Reads one config file, writes one directory, talks to loopback only.
+CapabilityBoundingSet=
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+ReadWritePaths={{ network_history_prometheus_data_dir }}
+MemoryMax={{ network_history_memory_max }}
+
+[Install]
+WantedBy=multi-user.target

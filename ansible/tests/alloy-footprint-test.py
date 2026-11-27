@@ -66,6 +66,7 @@ def env():
     e = jinja2.Environment(keep_trailing_newline=True, undefined=jinja2.StrictUndefined)
     e.filters["to_json"] = json.dumps
     e.filters["bool"] = lambda v: str(v).lower() in ("1", "true", "yes")
+    e.filters["regex_replace"] = lambda v, pattern, repl="": re.sub(pattern, repl, str(v))
     return e
 
 

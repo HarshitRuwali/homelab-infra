@@ -224,6 +224,16 @@ all:
           hosts:
             monitor-lxc: {}
 
+    # The PostgreSQL host that stores the permanent network history. The
+    # network_history role (playbooks/network-history.yml) delegates the database
+    # and role setup here; the host does not need to be monitored. Set
+    # network_history_db_host / network_history_db_address if yours differs.
+    memory_db:
+      hosts:
+        memory:
+          ansible_host: 10.0.1.126   # the address clients and Grafana use too (network_history_db_address)
+          ansible_user: root
+
     # ---------------------------------------------------------------------
     # Patching policy
     # ---------------------------------------------------------------------

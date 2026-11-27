@@ -1,0 +1,15 @@
+# Managed by ansible/roles/tplink_router_poll. Do not edit by hand.
+# Pulls {{ tplink_router_poll_mirror_from }}:{{ tplink_router_poll_mirror_src.tplink_router_poll_data_dir | default(tplink_router_poll_data_dir) }}
+# (JSONL days and the ledger snapshot) into {{ tplink_router_poll_mirror_dir }}.
+# The live usage.db is skipped: usage-snapshot.db is its consistent daily copy.
+# Nothing is deleted here when the poller host prunes old days.
+[Unit]
+Description=Copy the TP-Link router {{ tplink_router_poll_mirror_src.tplink_router_poll_name }} data from {{ tplink_router_poll_mirror_from }}
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rsync -a --exclude usage.db --exclude "*.tmp" --exclude "*.tmp.*" \
+  -e "ssh -o BatchMode=yes -o ConnectTimeout=20 -i {{ tplink_router_poll_mirror_src.ansible_ssh_private_key_file | default('~/.ssh/id_ed25519') }}" \
+  {{ tplink_router_poll_mirror_src.ansible_user }}@{{ tplink_router_poll_mirror_src.ansible_host }}:{{ tplink_router_poll_mirror_src.tplink_router_poll_data_dir | default(tplink_router_poll_data_dir) }}/ \
+  {{ tplink_router_poll_mirror_dir }}/

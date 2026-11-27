@@ -1,0 +1,43 @@
+---
+# Prometheus metrics from the OPNsense API, by AthennaMind/opnsense-exporter
+# in a container on a Docker host on the firewall's LAN. The firewall itself is
+# FreeBSD and outside Ansible; files/opnsense/ holds the scripts that prepared
+# it, run once by hand (see the role docs).
+#
+# OFF BY DEFAULT, ENABLED PER HOST in the local inventory:
+#
+#   opnsense_exporter_enabled: true
+#   opnsense_exporter_listen: "10.10.50.125:9201"   # this host's LAN address
+#
+# The API key and secret are NOT managed here. Put them on the host once,
+# readable only by the container's user (nobody, 65534):
+#
+#   sudo install -d -m 0755 /etc/opnsense-exporter
+#   sudo install -m 0400 -o 65534 -g 65534 <key file> /etc/opnsense-exporter/api_key
+#   sudo install -m 0400 -o 65534 -g 65534 <secret file> /etc/opnsense-exporter/api_secret
+opnsense_exporter_enabled: false
+
+# Pinned: 0.0.19 (2026-10-21). Read its --help before moving: flags and env
+# names have changed between releases.
+opnsense_exporter_image: ghcr.io/athennamind/opnsense-exporter:0.0.19
+
+# The firewall's LAN address. Its web GUI and API listen on port 80 there.
+opnsense_exporter_address: 10.10.50.1
+opnsense_exporter_protocol: http
+opnsense_exporter_instance: opnsense
+
+# host:port this exporter listens on; required. A LAN address, so the central
+# Alloy can scrape it (see alloy_extra_scrape_targets in group_vars/central).
+opnsense_exporter_listen: ""
+
+# Collectors for features this firewall does not run. Each would answer 403
+# or nothing on every scrape, and the API user is not granted their pages.
+opnsense_exporter_disable:
+  - wireguard
+  - openvpn
+  - ipsec
+  - carp
+  - kea-dhcpv6
+
+opnsense_exporter_home: /opt/opnsense-exporter
+opnsense_exporter_secret_dir: /etc/opnsense-exporter

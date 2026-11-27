@@ -24,6 +24,7 @@ For how variable precedence works at all, see
 | `alloy_process_keep_regex` | see file | the per-process metric names kept where `alloy_enable_process` is on; empty keeps all. The default keeps what the Host processes dashboard reads |
 | `alloy_process_drop_memtypes` | `virtual\|swapped\|proportionalResident\|proportionalSwapped` | `memtype` values of `namedprocess_namegroup_memory_bytes` dropped; empty keeps all |
 | `alloy_syslog_listener_port` | `""` | empty means no listener; `5514` in `group_vars/central` for the firewall's syslog (Suricata, filter log, resolver log, `pfstats`; any other program name is stored as `job="firewall-other"`) |
+| `alloy_extra_scrape_targets` | `[]` | devices that cannot run Alloy, scraped by this host: `job`, `address`, `host`, `role`, optional `instance`, `interval`, `timeout`. `group_vars/central` lists the firewall's two exporters |
 | `alloy_syslog_drop_filterlog_rules` | `[]` | filterlog rule labels dropped on arrival at the listener, on one interface only (the next row); empty keeps everything; `group_vars/central` lists OPNsense's default deny |
 | `alloy_syslog_drop_filterlog_iface` | `vtnet0` | the interface the drop list applies to, as written in field 5 of a `filterlog` line: the firewall's WAN; must not be empty |
 | `alloy_syslog_ratelimit_filterlog_rules` | `[]` | filterlog rule labels whose lines are kept at a few a second (rate 5, burst 20) and dropped beyond that; empty keeps everything; `group_vars/central` lists OPNsense's `<virusprot>` ban rule |
@@ -259,6 +260,138 @@ bare metal in general. The role fails loudly if the host has no `/proc/i8k`.
 
 The role refuses to install unless off < on < guard, and fails loudly if the
 host has no `/proc/i8k` or no manual control on the chosen channel.
+
+## TP-Link router poller
+
+`roles/tplink_router_poll/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `tplink_router_poll_enabled` | `false` | **the switch**; set it in the host's inventory entry, not in git |
+| `tplink_router_poll_name` | `""` | the `router` label, for example `blr`; required |
+| `tplink_router_poll_url` | `http://192.168.0.1` | the router's web address on the LAN |
+| `tplink_router_poll_username` | `admin` | the web login name |
+| `tplink_router_poll_expected_mac` | `""` | the router's LAN MAC; required, and the password is only sent to it |
+| `tplink_router_poll_interval` | `60` | seconds; each poll is a full login of about 1.2 s |
+| `tplink_router_poll_syslog_port` | `0` | UDP port for the router's own log; `0` is off. The router's remote log setting must point here |
+| `tplink_router_poll_keep_days` | `365` | days of raw JSONL kept on the host; the usage ledger is never pruned |
+| `tplink_router_poll_library` | `tplinkrouterc6u==5.41.0` | pinned; the API is undocumented and encrypted |
+| `tplink_router_poll_home` | `/opt/tplink-router-poll` | script and virtualenv |
+| `tplink_router_poll_secret_dir` | `/etc/tplink-router-poll` | holds `password`, root:root 0600, placed by hand |
+| `tplink_router_poll_data_dir` | `/var/lib/tplink-router-poll` | the JSONL days, the ledger `usage.db` and its daily `usage-snapshot.db` |
+| `tplink_router_poll_textfile` | `{{ alloy_textfile_dir }}/tplink-router-{{ tplink_router_poll_name }}.prom` | the metrics file Alloy reads |
+| `tplink_router_poll_mirror_from` | `""` | set on a **receiving** host to the poller host's inventory name; it then pulls the data dir nightly |
+| `tplink_router_poll_mirror_dir` | `~/.local/share/tplink-router-<name>` | where the receiving host keeps the copy |
+
+The router's MAC and address are site details, so they live in the local
+inventory, not in `host_vars` in git.
+
+## Internet outage probe
+
+`roles/internet_probe/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `internet_probe_enabled` | `false` | **the switch**; set it in the host's inventory entry, not in git |
+| `internet_probe_site` | `""` | the `site` label, for example `home`; required, lowercase letters, digits and dashes |
+| `internet_probe_interval` | `5` | seconds between rounds |
+| `internet_probe_timeout` | `2` | seconds each probe may take |
+| `internet_probe_confirm_rounds` | `2` | consecutive failed rounds that confirm an outage; fewer are a blip |
+| `internet_probe_targets` | `[]` | `KIND:HOST:PORT` targets (`tcp`, `dns`, `http`); setting any replaces the built-in set, empty keeps it |
+| `internet_probe_lan_targets` | `[]` | `NAME=HOST:PORT` LAN targets (inter-LAN connectivity), set per host in the inventory; up when a TCP connect succeeds or is refused, never decides internet up/down |
+| `internet_probe_paths` | `[]` | named internet paths, `NAME=KIND:HOST:PORT[,KIND:HOST:PORT...]` with `KIND` `tcp` or `dns`, set per host in the inventory; the role refuses malformed entries and repeated names; a path is up when any of its targets answers, and it never decides internet up/down |
+| `internet_probe_gateway` | `""` | `HOST:PORT` of the gateway to probe; empty follows the default route, port 80 |
+| `internet_probe_dns_name` | `one.one.one.one` | the name the `dns` probes ask for |
+| `internet_probe_textfile_every` | `15` | seconds between metrics writes, the Alloy scrape interval |
+| `internet_probe_home` | `/opt/internet-probe` | the script |
+| `internet_probe_data_dir` | `/var/lib/internet-probe` | the ledger `outages.db`, never pruned or removed by the role |
+| `internet_probe_textfile` | `{{ alloy_textfile_dir }}/internet-probe.prom` | the metrics file Alloy reads |
+
+## Network history (90-day tier, PostgreSQL, nethist)
+
+`roles/network_history/defaults/main.yml`. Run by `playbooks/network-history.yml`; see
+[playbooks and roles](playbooks.md#network_history).
+
+| Variable | Default | Notes |
+|---|---|---|
+| `network_history_prometheus_bin` | `/usr/bin/prometheus` | the system Prometheus binary the 90-day tier reuses |
+| `network_history_prometheus_listen` | `127.0.0.1:9091` | where the 90-day Prometheus listens (loopback only) |
+| `network_history_central_prometheus` | `127.0.0.1:9090` | the central Prometheus it federates from |
+| `network_history_prometheus_user` | `prometheus` | the user the 90-day Prometheus runs as |
+| `network_history_prometheus_group` | `prometheus` | its group, also the group of the config directory |
+| `network_history_prometheus_config_dir` | `/etc/prometheus-network` | holds `prometheus.yml` |
+| `network_history_prometheus_data_dir` | `/var/lib/prometheus-network` | the 90-day TSDB |
+| `network_history_retention_time` | `90d` | `--storage.tsdb.retention.time` |
+| `network_history_retention_size` | `4GB` | `--storage.tsdb.retention.size`, a cap in case the series count grows |
+| `network_history_scrape_interval` | `30s` | the federation interval, so the finest resolution of the 90-day tier |
+| `network_history_memory_max` | `256M` | `MemoryMax` of the 90-day Prometheus |
+| `network_history_federation_selectors` | `a list of `match[]` selectors` | exactly the metrics the network dashboards and the aggregator read; keep it narrow (the `node_network_*` selectors name the devices); `tests/network-history-test.py` checks the dashboards against it |
+| `network_history_grafana_provisioning_dir` | `/etc/grafana/provisioning/datasources` | where `network-history.yml` goes |
+| `network_history_grafana_group` | `grafana` | group of the datasource file (root:grafana 0640, it holds the reader password) |
+| `network_history_db_host` | `memory` | inventory name of the PostgreSQL host; the database setup runs there (delegated) |
+| `network_history_db_address` | the `ansible_host` of `network_history_db_host` (its inventory name if it has none) | the address Grafana, the aggregator and `nethist` connect to; set it only when clients reach the database on a different address than Ansible does |
+| `network_history_db_port` | `5432` | PostgreSQL port |
+| `network_history_db_name` | `net_history` | the database the role creates; it never touches any other |
+| `network_history_db_writer` | `net_history_writer` | owns schema `net`; used by the aggregator |
+| `network_history_db_reader` | `net_history_reader` | SELECT only, read-only sessions; used by Grafana and agents |
+| `network_history_db_container` | `postgres` | the docker container running PostgreSQL on the database host |
+| `network_history_db_superuser` | `jarvis` | the superuser the setup SQL runs as, over the container's local socket |
+| `network_history_db_admin_database` | `postgres` | the database that superuser connects to first; psql would otherwise pick one named after the user, which need not exist |
+| `network_history_secret_dir` | `/etc/net-history` | `writer.password` and `reader.password`, generated once, root 0700; never in git |
+| `network_history_central_host` | `monitor-lxc` | inventory name of the host that holds the passwords; the client fetches the reader password from it |
+| `network_history_home` | `/opt/net-history` | the aggregator script and its virtualenv |
+| `network_history_pg8000` | `pg8000==1.31.6` | the pure-python PostgreSQL driver installed into the virtualenv |
+| `network_history_loki_url` | `http://127.0.0.1:3100` | Loki, for the outage events |
+| `network_history_timer_minute` | `"07"` | the minute of every hour the aggregator runs |
+| `network_history_boot_delay` | `2min` | how long after boot the aggregator first runs |
+| `network_history_textfile` | `{{ alloy_textfile_dir }}/net-history.prom` | the metrics file Alloy reads |
+| `network_history_er605_selector` | `{host="ubuntu-dev", container="er605-poll"}` | Loki stream selector of the ER605 poller's journal lines (`wan_up` events) |
+| `network_history_seed_from_central` | `true` | once after install, fill the daily rows from the central Prometheus |
+| `network_history_seed_days` | `7` | how many days that seed covers (the central retention) |
+| `network_history_client_enabled` | `false` | **the switch for the client**; set it in the host's inventory entry to install `nethist` and the skill |
+| `network_history_client_user` | `{{ ansible_user }}` | the login user whose home gets `nethist` and the skills |
+| `network_history_client_home` | `/home/{{ network_history_client_user }}` | that user's home |
+| `network_history_client_fetch_password` | `true` | copy the reader password from the central host; false means you place `~/.config/net-history/reader.password` yourself (0600) |
+| `network_history_client_image` | `postgres:16-alpine` | the pinned image `nethist` runs `psql` from |
+| `network_history_skill_dirs` | `[.claude/skills, .agents/skills]` | skill directories under the home that get `network-history/SKILL.md` |
+| `network_history_hermes_skill_dir` | `.hermes/skills` | added to the list when it exists on the client |
+
+## OPNsense API exporter
+
+`roles/opnsense_exporter/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `opnsense_exporter_enabled` | `false` | **the switch**; set it in the host's inventory entry |
+| `opnsense_exporter_image` | `ghcr.io/athennamind/opnsense-exporter:0.0.19` | pinned; flags change between releases |
+| `opnsense_exporter_address` | `10.10.50.1` | the firewall's LAN address, where its API listens on port 80 |
+| `opnsense_exporter_protocol` | `http` | |
+| `opnsense_exporter_instance` | `opnsense` | the `opnsense_instance` label |
+| `opnsense_exporter_listen` | `""` | `address:port` on this host; required, and scraped by the central Alloy |
+| `opnsense_exporter_disable` | `[wireguard, openvpn, ipsec, carp, kea-dhcpv6]` | collectors for features the firewall does not run |
+| `opnsense_exporter_home` | `/opt/opnsense-exporter` | the compose file |
+| `opnsense_exporter_secret_dir` | `/etc/opnsense-exporter` | `api_key` and `api_secret`, owner 65534, mode 0400, placed by hand |
+
+## ER605 SNMP monitoring
+
+`roles/er605_snmp/defaults/main.yml`
+
+| Variable | Default | Notes |
+|---|---|---|
+| `er605_snmp_enabled` | `false` | **the switch**; set it in the host's inventory entry |
+| `er605_snmp_router` | `10.10.0.1` | the ER605's LAN address, where SNMP is read |
+| `er605_snmp_auth_name` | `er605` | the auth module in `auth.yml` |
+| `er605_snmp_wans` | `[{name: wan1, interface: eth1, pppoe: pe-wan1_poe, isp: ""}]` | the router's WANs, one entry per ISP: `interface` is the ER605 ifName without `default/`, `pppoe` the session interface (empty when the WAN is not PPPoE), `isp` a label. Names are lowercase letters, digits and dashes; names and interfaces must be unique. Ledger history from before this variable is `wan1` |
+| `er605_snmp_exporter_image` | `prom/snmp-exporter:v0.29.0` | pinned by tag; flags and module names change between releases |
+| `er605_snmp_poll_image` | `python:3.13-slim` | runs the stdlib poller |
+| `er605_snmp_listen` | `127.0.0.1:9116` | where the exporter listens; loopback, only the poller reads it |
+| `er605_snmp_interval` | `30` | seconds between polls; at least 10 |
+| `er605_snmp_keep_days` | `400` | days of raw CSV kept (gzipped after 2); the ledger `usage.db` is never pruned |
+| `er605_snmp_replace_manual` | `false` | `true` lets the role `docker rm -f` containers named `er605-snmp` or `er605-poll` that are not part of its compose project; otherwise it stops and prints the command |
+| `er605_snmp_home` | `/opt/er605-snmp` | the poller script and the compose file |
+| `er605_snmp_secret_dir` | `/etc/er605-snmp` | holds `auth.yml`, `root:root` 0600, placed by hand |
+| `er605_snmp_data_dir` | `/var/lib/er605-snmp` | the raw CSV days and the ledger `usage.db` |
+| `er605_snmp_textfile` | `{{ alloy_textfile_dir }}/er605.prom` | the metrics file Alloy reads |
 
 ## Proxmox guest NIC names
 
@@ -522,7 +655,7 @@ here.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `grafana_admin_user` | `admin` | **override this**; `lxc-install.sh` writes a real username |
+| `grafana_admin_user` | `""` | empty reads `GF_SECURITY_ADMIN_USER` from `grafana_env_file` on the box, which `lxc-install.sh` wrote; set it only to override |
 | `grafana_api_url` | `http://127.0.0.1:3000` | |
 | `central_host_label` | from `host_vars` | must match `MONITOR_HOSTNAME` |
 | `grafana_alerting_static_files` | every committed rules file, plus contact points, templates, policies and mute timings | `rules-availability.yaml` is templated, not listed |

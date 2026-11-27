@@ -1,0 +1,8 @@
+---
+# The poller script is bind-mounted, so a new script needs a container restart;
+# `compose up` only recreates a container when the compose file changed.
+- name: Restart er605-poll
+  ansible.builtin.command:
+    argv: [docker, restart, er605-poll]
+  changed_when: true
+  when: not ansible_check_mode

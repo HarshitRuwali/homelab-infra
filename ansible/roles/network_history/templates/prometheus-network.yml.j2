@@ -1,0 +1,23 @@
+# Managed by ansible/roles/network_history. Do not edit by hand.
+# The 90-day network tier: federates the network metrics from the central Prometheus
+# ({{ network_history_central_prometheus }}) every {{ network_history_scrape_interval }}. Labels are kept as they are (honor_labels).
+global:
+  scrape_interval: {{ network_history_scrape_interval }}
+  scrape_timeout: 25s
+
+scrape_configs:
+  - job_name: federate-central
+    honor_labels: true
+    # Federated samples carry the source's timestamps, so no stale markers are written when a series
+    # disappears; this makes Prometheus end such a series at its last sample instead of 5 minutes later
+    # (a replaced guest NIC's info series would otherwise overlap its successor).
+    track_timestamps_staleness: true
+    metrics_path: /federate
+    params:
+      'match[]':
+{% for sel in network_history_federation_selectors %}
+        - {{ sel | to_json }}
+{% endfor %}
+    static_configs:
+      - targets:
+          - {{ network_history_central_prometheus | to_json }}
