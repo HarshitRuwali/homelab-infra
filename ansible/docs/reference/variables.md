@@ -485,6 +485,7 @@ here.
 | `docker_update_randomized_delay` | `1800` | registry rate limits are per source IP |
 | `docker_update_skip_projects` | `[]` | by Compose project name |
 | `docker_update_prune` | `true` | dangling images only |
+| `docker_update_build_cache_max_age` | `"168h"` | unused build cache older than this is pruned after a successful update; `""` turns it off |
 | `docker_update_health_wait_seconds` | `60` | settle time before the host-wide unhealthy/restarting check; skipped when no image changed |
 | `docker_update_pull_retry_delay_seconds` | `120` | one retry of a failed pull or build |
 | `docker_update_minor_step_images` | `[qdrant/qdrant:latest]` | may advance one minor release per run |
