@@ -1,0 +1,7 @@
+---
+- name: Restart internet-probe
+  ansible.builtin.systemd:
+    name: internet-probe.service
+    state: restarted
+    daemon_reload: true
+  when: not ansible_check_mode

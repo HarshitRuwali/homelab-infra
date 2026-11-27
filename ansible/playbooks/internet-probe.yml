@@ -1,0 +1,17 @@
+---
+# Internet outage tracker: probes the internet and the local gateway every few
+# seconds from one host per site, keeps a ledger of outages and writes metrics.
+#
+#   ansible-playbook playbooks/internet-probe.yml --limit rpi5 --check --diff
+#   ansible-playbook playbooks/internet-probe.yml --limit rpi5
+#
+# Inert unless the host's inventory entry sets internet_probe_enabled and
+# internet_probe_site (see roles/internet_probe/defaults/main.yml). No secrets.
+# Dashboard: monitoring/grafana/dashboards/fleet/internet-usage.json (playbooks/dashboards.yml).
+
+- name: Deploy the internet outage probe
+  hosts: monitored
+  become: true
+  gather_facts: false
+  roles:
+    - internet_probe

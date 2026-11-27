@@ -1,0 +1,59 @@
+---
+# Internet outage tracker: a stdlib Python poller that probes the internet and
+# the local gateway every few seconds, keeps a ledger of outages and writes
+# textfile metrics. See files/internet-probe.py for what is probed and how.
+#
+# OFF BY DEFAULT, ENABLED PER HOST. Set these in the host's inventory entry,
+# not in git:
+#
+#   internet_probe_enabled: true
+#   internet_probe_site: home        # the `site` label: home, blr, homelab
+#
+# Nothing is installed besides /usr/bin/python3's standard library; there is no
+# virtualenv and no secret.
+internet_probe_enabled: false
+
+internet_probe_site: ""
+
+# Seconds between rounds, and how long each probe may take.
+internet_probe_interval: 5
+internet_probe_timeout: 2
+# Consecutive failed rounds that confirm an outage. One failed round followed
+# by a good one is a blip: logged and counted, never stored.
+internet_probe_confirm_rounds: 2
+
+# Probe targets as "KIND:HOST:PORT" (KIND tcp, dns or http). Setting any
+# REPLACES the script's built-in set (three tcp, two dns, one http); empty
+# keeps the built-in set.
+internet_probe_targets: []
+# LAN targets as "NAME=HOST:PORT" (NAME lowercase letters, digits, dashes):
+# inter-LAN connectivity from this host. Each is probed every round with a TCP
+# connect, up when it succeeds or is refused, and has its own outage ledger.
+# They never decide whether the internet is up. Set per host in the inventory:
+#
+#   internet_probe_lan_targets:
+#     - er605=10.10.0.1:80
+#     - opnsense-wan=10.10.0.114:80
+internet_probe_lan_targets: []
+# Named internet paths as "NAME=KIND:HOST:PORT[,KIND:HOST:PORT...]" (NAME
+# lowercase letters, digits, dashes; KIND tcp or dns). A path is up in a round
+# when any of its targets answers; it has its own outage ledger and never
+# decides internet_probe_up. With a multi-WAN router, a path measures one WAN
+# when the router sends its targets out that WAN (see the role docs). Use
+# target IPs that are not in the built-in set.
+#
+#   internet_probe_paths:
+#     - wan1=tcp:1.0.0.1:443,dns:8.8.4.4:53
+#     - wan2=tcp:149.112.112.112:443,dns:208.67.222.222:53
+internet_probe_paths: []
+# HOST:PORT of the gateway to probe. Empty follows the default route, port 80.
+internet_probe_gateway: ""
+# The name the dns probes ask for.
+internet_probe_dns_name: one.one.one.one
+# Seconds between metrics writes; the Alloy scrape interval.
+internet_probe_textfile_every: 15
+
+internet_probe_home: /opt/internet-probe
+# The ledger outages.db lives here and is never pruned or removed by the role.
+internet_probe_data_dir: /var/lib/internet-probe
+internet_probe_textfile: "{{ alloy_textfile_dir }}/internet-probe.prom"
