@@ -87,6 +87,7 @@ the fleet or the dashboard:
 | `provision-security-stack.sh` | Creates the four guests on Proxmox. Dry run by default. |
 | `install/` | One installer per guest, same dry-run convention. |
 | `opnsense/pfstats/` | The per-minute `pfstats` line the firewall writes to syslog, and its installer. Run on the firewall, not on a guest. See [Wiring](docs/wiring/index.md#pfstats). |
+| `opnsense/segflows/` | Inter-segment traffic accounting from the firewall's NetFlow: Prometheus counters through node_exporter and a permanent ledger on the firewall, with its installer and removal. Run on the firewall, not on a guest. See [Routers and firewall](https://harshitruwali.github.io/homelab-infra/monitoring/monitoring/routers/#inter-segment-traffic). |
 | `docs/` | The MkDocs site published at the link below. |
 
 ## Documentation
