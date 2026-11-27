@@ -1,0 +1,18 @@
+---
+# Household ISP monitoring: the ER605 home router over SNMPv3.
+#
+#   ansible-playbook playbooks/er605-snmp.yml --limit ubuntu-dev --check --diff
+#   ansible-playbook playbooks/er605-snmp.yml --limit ubuntu-dev
+#
+# Inert unless the host's inventory entry sets er605_snmp_enabled. The SNMPv3
+# auth file is placed on the host by hand, never by Ansible, and containers
+# started by hand under the same names must be removed first
+# (roles/er605_snmp/defaults/main.yml).
+# Dashboard: monitoring/grafana/dashboards/fleet/home-isp.json (playbooks/dashboards.yml).
+
+- name: Deploy the ER605 SNMP monitoring
+  hosts: monitored
+  become: true
+  gather_facts: false
+  roles:
+    - er605_snmp
