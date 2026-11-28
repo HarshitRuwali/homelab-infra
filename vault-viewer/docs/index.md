@@ -15,7 +15,9 @@ input. See [Security](security.md) for the model.
   `.py`; `.zip` archives, which download instead of previewing. Obsidian
   canvases and bases render too; see [Canvases and bases](#canvases-and-bases).
 - **Navigates it.** A file tree with a "recent" list and search on the left,
-  the selected file on the right. The page picks up changes on disk within
+  the selected file on the right. Each file opened is a step in the browser's
+  history, and back from an image or a linked note returns to the note where
+  you left it. The page picks up changes on disk within
   about 12 seconds (it checks every 10 s, skips the check while its tab is
   hidden and checks at once when the tab is shown again; the server reuses one
   vault scan for 2 s). Any diagram opens full screen with pan and zoom. Every code

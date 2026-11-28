@@ -2552,6 +2552,7 @@ const ICON = { note: "≣", html: "◈", svg: "◇", image: "▣", text: "≡", 
 let items = [], byId = new Map(), current = null, seen = new Set(), firstLoad = true, overlay = false;
 let open = new Set(JSON.parse(localStorage.getItem("vault-open") || "[]"));
 let scrolls = {}, zoom = { s: 1, x: 0, y: 0 }, hits = null, searchTimer = null, retryTimer = null;
+let frameDoc = null;  // the file version the frame holds; an image or archive only hides the frame
 const phone = matchMedia("(max-width: 760px)");
 // Desktop: the sidebar collapses. Phone: it's a drawer over the page.
 const toggleSidebar = (force) => $("app").classList.toggle(phone.matches ? "drawer" : "collapsed", force);
@@ -2729,6 +2730,10 @@ function show(it, opts = {}) {
     const f = $("frame");
     f.classList.toggle("light", it.kind === "html");
     const base = (["note", "text", "canvas", "base"].includes(it.kind) ? "/view/" : "/raw/") + enc(it.id) + v;
+    // Back or forward to the file the frame still holds (an image opened from
+    // a note only hid the frame): reloading it would lose its scroll position.
+    if (opts.restore && frameDoc === base && !opts.anchor) return;
+    frameDoc = base;
     const y = opts.keep && scrolls[it.id] ? "&y=" + scrolls[it.id] : "";
     // replace(), not src =: a frame navigation would add a browser history
     // entry of its own, and back would step through the frame instead of files.
@@ -2753,7 +2758,7 @@ function select(it, anchor, how) {
   }
   if (phone.matches) toggleSidebar(false);
   $("obsbar").classList.add("hidden");
-  show(it, { anchor }); render();
+  show(it, { anchor, restore: how === "history" }); render();
 }
 
 // The Obsidian app. A web page cannot tell whether an app is installed, so

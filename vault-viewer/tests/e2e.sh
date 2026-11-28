@@ -8,8 +8,9 @@
 #
 # Checks: the page loads with the note path in the URL hash written with plain
 # or %2F-encoded slashes, says it is loading until the file list arrives, and
-# shows a refused file list and retries on its own; the Obsidian button, the
-# per-device "open links in Obsidian" setting and its fallback to this page.
+# shows a refused file list and retries on its own; back from an image or a
+# linked note returns to the note where it was scrolled; the Obsidian button,
+# the per-device "open links in Obsidian" setting and its fallback to this page.
 #
 # Bench: opens NOTE (a vault id such as personal/agent-notes/x.md) in a fresh
 # browser context RUNS times (default 3) per hash form and prints one JSON line
@@ -53,6 +54,10 @@ printf '# README\n\nHome note.\n' > "$TMP/vault/README.md"
 printf '# Deep Note\n\nA note in a subfolder, with a space in its name.\n' > "$TMP/vault/sub/Deep Note.md"
 printf '# Fresh\n\nJust written.\n' > "$TMP/vault/sub/Fresh.md"
 printf '<!doctype html><title>Art</title><p>An artifact.</p>\n' > "$TMP/vault/art.html"
+# A long note with an image and a link half way down, for the back-keeps-the-scroll checks.
+python3 -c 'import base64, sys; open(sys.argv[1], "wb").write(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="))' "$TMP/vault/pic.png"
+{ printf '# Long\n\n'; for i in $(seq 80); do printf 'Paragraph %s.\n\n' "$i"; done
+  printf '![[pic.png]]\n\n[[README]]\n\n'; for i in $(seq 81 160); do printf 'Paragraph %s.\n\n' "$i"; done; } > "$TMP/vault/Long.md"
 # Older than the viewer's 10-minute "may not have synced yet" window; Fresh.md is inside it.
 touch -d '1 hour ago' "$TMP/vault/README.md" "$TMP/vault/sub/Deep Note.md"
 
