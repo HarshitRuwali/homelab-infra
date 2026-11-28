@@ -101,7 +101,40 @@ def run_checks(browser, base):
           f"the page retries on its own and opens the note (after {time.monotonic() - t0:.1f} s, poll is 10 s)")
     page.close()
 
+    run_back_checks(browser, base)
     run_obsidian_checks(browser, base)
+
+
+def run_back_checks(browser, base):
+    """Back from a file opened inside a long note returns to the note where it was scrolled."""
+    print("back keeps the scroll")
+    page = browser.new_page()
+    page.navigate(base + "/#vault%2FLong.md")
+    title_is(page, "Long")
+    page.wait(lambda: page.frame_eval("!!document.querySelector('img.embed')"), 10)
+    # Scroll so the image is on screen, then let the frame report its position (150 ms debounce).
+    page.frame_eval("document.querySelector('img.embed').scrollIntoView({block: 'center'})")
+    y0 = page.frame_eval("Math.round(scrollY)")
+    page.b.pump(0.5)
+    page.frame_eval("document.body.dataset.e2e = 'same-document'")
+    page.frame_eval("document.querySelector('img.embed').click()")
+    check(title_is(page, "pic.png"), "clicking the image in the note opens it full screen")
+    page.eval("history.back()")
+    check(title_is(page, "Long"), "back from the image returns to the note")
+    page.b.pump(0.5)
+    y1 = page.frame_eval("Math.round(scrollY)")
+    kept = page.frame_eval("document.body.dataset.e2e")
+    check(y0 > 500 and abs(y1 - y0) <= 2 and kept == "same-document",
+          f"the note is not reloaded and keeps its scroll (was {y0}, now {y1}, marker {kept!r})")
+    # A linked note replaces the frame; back returns to the note where it was left.
+    page.frame_eval("document.querySelector('a[data-id=\"vault/README.md\"]').click()")
+    check(title_is(page, "README"), "the link in the note opens the other note")
+    page.eval("history.back()")
+    check(title_is(page, "Long"), "back from the linked note returns to the note")
+    page.wait(lambda: (page.frame_eval("Math.round(scrollY)") or 0) > 500, 5)
+    y2 = page.frame_eval("Math.round(scrollY)")
+    check(abs(y2 - y0) <= 2, f"the note is back where it was left (was {y0}, now {y2})")
+    page.close()
 
 
 def obsbar(page):
